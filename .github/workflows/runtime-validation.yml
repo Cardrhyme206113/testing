@@ -33,13 +33,41 @@ jobs:
         run: |
           ls -l rootfs/usr/bin/java rootfs/usr/bin/git rootfs/usr/bin/mvn rootfs/bin/bash rootfs/bin/sh
           file rootfs/usr/lib/jvm/java-21-openjdk/bin/java rootfs/usr/bin/git rootfs/bin/bash
-      - name: Test Bash
-        run: sudo chroot rootfs /bin/bash --version
-      - name: Test Java 21
-        run: sudo chroot rootfs /usr/bin/java -version
-      - name: Test Java 17
-        run: sudo chroot rootfs /usr/lib/jvm/java-17-openjdk/bin/java -version
-      - name: Test Git
-        run: sudo chroot rootfs /usr/bin/git --version
-      - name: Test Maven
-        run: sudo chroot rootfs /usr/bin/mvn -version
+      - name: Test Bash and Java
+        shell: bash
+        run: |
+          sudo chroot rootfs /bin/bash --version
+          sudo chroot rootfs /usr/bin/java -version
+          sudo chroot rootfs /usr/lib/jvm/java-17-openjdk/bin/java -version
+      - name: Capture Git diagnostics
+        shell: bash
+        run: |
+          set +e
+          {
+            echo '=== loader list ==='
+            sudo chroot rootfs /lib/ld-musl-aarch64.so.1 --list /usr/bin/git
+            echo "loader_status=$?"
+            echo '=== normal run ==='
+            sudo chroot rootfs /usr/bin/git --version
+            echo "git_status=$?"
+            echo '=== qemu strace ==='
+            sudo env QEMU_STRACE=1 chroot rootfs /usr/bin/git --version
+            echo "strace_status=$?"
+          } > git-diagnostics.log 2>&1
+          cat git-diagnostics.log
+      - name: Capture Maven diagnostics
+        shell: bash
+        run: |
+          set +e
+          {
+            sudo chroot rootfs /usr/bin/mvn -version
+            echo "maven_status=$?"
+          } > maven-diagnostics.log 2>&1
+          cat maven-diagnostics.log
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-validation-diagnostics
+          path: |
+            git-diagnostics.log
+            maven-diagnostics.log
