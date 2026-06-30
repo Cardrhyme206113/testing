@@ -21,6 +21,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y patchelf
       - name: Fetch ARM64 PRoot launcher
         run: bash scripts/fetch-proot.sh
+      - name: Apply Android compatibility patch
+        run: python3 scripts/patch-android-compat.py
       - name: Build debug APK
         shell: bash
         run: |
