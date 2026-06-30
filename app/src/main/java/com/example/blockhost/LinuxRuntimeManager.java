@@ -25,17 +25,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Creates an app-private Alpine Linux environment and executes it through the bundled Termux PRoot binary.
- * The rootfs and all Minecraft data live under Context.getFilesDir(), so Android removes them on uninstall.
- */
+/** App-private Alpine/Java runtime used by the Minecraft server backend. */
 public final class LinuxRuntimeManager {
     public interface ProgressListener {
         void onProgress(String phase, int percent, String message);
     }
 
-    private static final String ALPINE_RELEASES_URL = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/latest-releases.yaml";
-    private static final String ALPINE_RELEASES_BASE = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/";
+    private static final String ALPINE_RELEASES_URL =
+            "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/latest-releases.yaml";
+    private static final String ALPINE_RELEASES_BASE =
+            "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/";
 
     private final Context context;
     private final File runtimeDir;
@@ -46,7 +45,7 @@ public final class LinuxRuntimeManager {
         this.context = context.getApplicationContext();
         runtimeDir = repository.getRuntimeDir();
         rootfsDir = new File(runtimeDir, "alpine");
-        readyMarker = new File(runtimeDir, ".ready-v3");
+        readyMarker = new File(runtimeDir, ".ready-v4");
     }
 
     public boolean isReady() {
@@ -80,13 +79,15 @@ public final class LinuxRuntimeManager {
             archive.delete();
         }
 
-        // Alpine's archive permissions are correct for a real root user, but Android runs PRoot as the app UID.
-        // Ensure that the app UID can update APK's database and can clean up a partial installation later.
-        repairPermissions(rootfsDir);
+        /*
+         * apk-tools downloads repository indexes as the unprivileged _apk user.
+         * The previous build changed the entire rootfs to 0700/0600, which made
+         * CA certificates, repositories and cache directories inaccessible to _apk.
+         */
+        repairPublicPermissions(rootfsDir);
+        prepareWritableApkPaths();
         writeRuntimeConfiguration();
 
-        // A previous attempt may have installed all tools but failed only while committing APK's database.
-        // Reuse those tools instead of entering a download/extract loop.
         if (validateRuntime()) {
             FileIo.writeUtf8(readyMarker, "ready\n");
             listener.onProgress("runtime", 100, "Existing Java runtime repaired and ready");
@@ -95,27 +96,30 @@ public final class LinuxRuntimeManager {
 
         listener.onProgress("runtime-packages", 70, "Installing Java, Git and build tools (first install only)");
         String installCommand =
-                "mkdir -p /lib/apk/db /var/cache/apk /var/lib/apk; "
-                        + "chmod u+rwx / /lib /lib/apk /lib/apk/db /var /var/cache /var/cache/apk /var/lib /var/lib/apk 2>/dev/null || true; "
-                        + "apk update && "
-                        + "(apk add --no-cache bash curl ca-certificates git maven openjdk21-jdk openjdk17-jdk "
-                        + "|| apk add --no-cache bash curl ca-certificates git maven openjdk21-jdk)";
+                "mkdir -p /tmp /var/tmp /var/cache/apk /lib/apk/db /var/lib/apk; "
+                        + "chmod 755 / /bin /sbin /etc /etc/apk /lib /lib/apk /usr /var /var/cache /var/lib 2>/dev/null || true; "
+                        + "chmod 1777 /tmp /var/tmp /var/cache/apk 2>/dev/null || true; "
+                        + "chmod 777 /lib/apk/db /var/lib/apk 2>/dev/null || true; "
+                        + "chmod 644 /etc/apk/repositories /etc/resolv.conf /etc/hosts 2>/dev/null || true; "
+                        + "apk --no-progress update && "
+                        + "(apk --no-progress add --no-cache bash curl ca-certificates git maven openjdk21-jdk openjdk17-jdk "
+                        + "|| apk --no-progress add --no-cache bash curl ca-certificates git maven openjdk21-jdk)";
 
         Process process = startShell(null, installCommand);
-        String output = ProcessIo.consume(process, line -> listener.onProgress("runtime-packages", 80, line));
+        String output = ProcessIo.consume(process,
+                line -> listener.onProgress("runtime-packages", 80, line));
         int exit = process.waitFor();
 
-        repairPermissions(rootfsDir);
+        repairPublicPermissions(rootfsDir);
+        prepareWritableApkPaths();
         boolean toolsWork = validateRuntime();
-        if (exit != 0 && !toolsWork) {
-            throw new IOException("Runtime package installation failed (exit " + exit + "): " + tail(output, 1200));
-        }
         if (!toolsWork) {
-            throw new IOException("Runtime packages finished, but Java/Git/Maven validation failed");
+            throw new IOException("Runtime package installation failed (exit " + exit + "): " + tail(output, 1600));
         }
 
         if (exit != 0) {
-            listener.onProgress("runtime-packages", 96, "Packages are usable; ignoring APK database finalization warning");
+            listener.onProgress("runtime-packages", 96,
+                    "Packages are usable; ignoring APK database finalization warning");
         }
         FileIo.writeUtf8(readyMarker, "ready\n");
         listener.onProgress("runtime", 100, "Linux Java runtime ready");
@@ -130,6 +134,7 @@ public final class LinuxRuntimeManager {
         command.add("LANG=C.UTF-8");
         command.add("TERM=xterm-256color");
         command.add("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+        command.add("SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt");
 
         String shell = existsNoFollow(new File(rootfsDir, "bin/bash")) ? "/bin/bash" : "/bin/sh";
         command.add("SHELL=" + shell);
@@ -154,12 +159,8 @@ public final class LinuxRuntimeManager {
     public String javaCommandForVersion(String version) {
         int major = SpigotVersionProvider.requiredJavaMajor(version);
         if (major >= 21) return "/usr/lib/jvm/java-21-openjdk/bin/java";
-        if (major >= 17 && existsNoFollow(new File(rootfsDir, "usr/lib/jvm/java-17-openjdk/bin/java"))) {
-            return "/usr/lib/jvm/java-17-openjdk/bin/java";
-        }
-        if (major < 17 && existsNoFollow(new File(rootfsDir, "usr/lib/jvm/java-17-openjdk/bin/java"))) {
-            return "/usr/lib/jvm/java-17-openjdk/bin/java";
-        }
+        File java17 = new File(rootfsDir, "usr/lib/jvm/java-17-openjdk/bin/java");
+        if (existsNoFollow(java17)) return "/usr/lib/jvm/java-17-openjdk/bin/java";
         return "/usr/bin/java";
     }
 
@@ -194,7 +195,6 @@ public final class LinuxRuntimeManager {
         args.add("-b"); args.add("/dev");
         args.add("-b"); args.add("/proc");
         args.add("-b"); args.add("/sys");
-        args.add("-b"); args.add("/sdcard");
         if (serverDir != null) {
             serverDir.mkdirs();
             args.add("-b"); args.add(serverDir.getAbsolutePath() + ":/server");
@@ -205,12 +205,32 @@ public final class LinuxRuntimeManager {
         return args;
     }
 
+    private void prepareWritableApkPaths() {
+        chmodPath(new File(rootfsDir, "tmp"), 01777, true);
+        chmodPath(new File(rootfsDir, "var/tmp"), 01777, true);
+        chmodPath(new File(rootfsDir, "var/cache/apk"), 01777, true);
+        chmodPath(new File(rootfsDir, "lib/apk/db"), 0777, true);
+        chmodPath(new File(rootfsDir, "var/lib/apk"), 0777, true);
+        chmodPath(new File(rootfsDir, "etc/apk/repositories"), 0644, false);
+        chmodPath(new File(rootfsDir, "etc/resolv.conf"), 0644, false);
+        chmodPath(new File(rootfsDir, "etc/hosts"), 0644, false);
+    }
+
+    private static void chmodPath(File file, int mode, boolean directory) {
+        try {
+            if (!existsNoFollow(file)) {
+                if (directory) file.mkdirs();
+                else return;
+            }
+            if (!Files.isSymbolicLink(file.toPath())) Os.chmod(file.getAbsolutePath(), mode);
+        } catch (Exception ignored) {}
+    }
+
     private void verifyArchitecture() {
-        boolean arm64 = false;
         for (String abi : Build.SUPPORTED_ABIS) {
-            if ("arm64-v8a".equals(abi)) arm64 = true;
+            if ("arm64-v8a".equals(abi)) return;
         }
-        if (!arm64) throw new IllegalStateException("This experimental backend currently supports ARM64 Android devices only");
+        throw new IllegalStateException("This experimental backend currently supports ARM64 Android devices only");
     }
 
     private String discoverAlpineArchive() throws Exception {
@@ -258,7 +278,6 @@ public final class LinuxRuntimeManager {
         byte[] buffer = new byte[128 * 1024];
         long done = 0;
         int lastPercent = -1;
-
         try (InputStream input = new BufferedInputStream(connection.getInputStream());
              BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(partial))) {
             int read;
@@ -276,7 +295,6 @@ public final class LinuxRuntimeManager {
         } finally {
             connection.disconnect();
         }
-
         if (!partial.renameTo(output)) {
             Files.move(partial.toPath(), output.toPath(), StandardCopyOption.REPLACE_EXISTING);
         }
@@ -286,7 +304,6 @@ public final class LinuxRuntimeManager {
         long processed = 0;
         File canonicalDestination = destination.getCanonicalFile();
         String destinationPath = canonicalDestination.getPath();
-
         try (InputStream fileInput = new BufferedInputStream(new FileInputStream(archive));
              GzipCompressorInputStream gzip = new GzipCompressorInputStream(fileInput);
              TarArchiveInputStream tar = new TarArchiveInputStream(gzip)) {
@@ -298,47 +315,38 @@ public final class LinuxRuntimeManager {
                     processed++;
                     continue;
                 }
-
                 File target = resolveArchivePath(canonicalDestination, destinationPath, name, originalName);
                 if (entry.isDirectory()) {
                     target.mkdirs();
-                    setSafeMode(target, true, true);
+                    chmodPath(target, 0755, true);
                 } else if (entry.isSymbolicLink()) {
                     File parent = target.getParentFile();
-                    if (parent != null) {
-                        parent.mkdirs();
-                        setSafeMode(parent, true, true);
-                    }
+                    if (parent != null) { parent.mkdirs(); chmodPath(parent, 0755, true); }
                     try { Os.symlink(entry.getLinkName(), target.getAbsolutePath()); }
                     catch (ErrnoException ignored) {}
                 } else if (entry.isLink()) {
                     String linkName = normalizeArchiveName(entry.getLinkName());
                     File linked = resolveArchivePath(canonicalDestination, destinationPath, linkName, entry.getLinkName());
                     File parent = target.getParentFile();
-                    if (parent != null) {
-                        parent.mkdirs();
-                        setSafeMode(parent, true, true);
-                    }
+                    if (parent != null) { parent.mkdirs(); chmodPath(parent, 0755, true); }
                     try { Os.link(linked.getAbsolutePath(), target.getAbsolutePath()); }
                     catch (ErrnoException ignored) {}
-                    setSafeMode(target, false, (entry.getMode() & 0111) != 0);
+                    chmodPath(target, (entry.getMode() & 0111) != 0 ? 0755 : 0644, false);
                 } else {
                     File parent = target.getParentFile();
-                    if (parent != null) {
-                        parent.mkdirs();
-                        setSafeMode(parent, true, true);
-                    }
+                    if (parent != null) { parent.mkdirs(); chmodPath(parent, 0755, true); }
                     try (BufferedOutputStream outputStream = new BufferedOutputStream(new FileOutputStream(target))) {
                         byte[] buffer = new byte[64 * 1024];
                         int read;
                         while ((read = tar.read(buffer)) >= 0) outputStream.write(buffer, 0, read);
                     }
-                    setSafeMode(target, false, (entry.getMode() & 0111) != 0);
+                    chmodPath(target, (entry.getMode() & 0111) != 0 ? 0755 : 0644, false);
                 }
-
                 processed++;
                 if (processed % 200 == 0) {
-                    listener.onProgress("runtime-extract", 45 + (int) Math.min(20, processed / 250), "Extracting Linux runtime…");
+                    listener.onProgress("runtime-extract",
+                            45 + (int) Math.min(20, processed / 250),
+                            "Extracting Linux runtime…");
                 }
             }
         }
@@ -360,7 +368,8 @@ public final class LinuxRuntimeManager {
         }
         File target = new File(destination, normalizedName).getCanonicalFile();
         String targetPath = target.getPath();
-        if (!targetPath.equals(destinationPath) && !targetPath.startsWith(destinationPath + File.separator)) {
+        if (!targetPath.equals(destinationPath)
+                && !targetPath.startsWith(destinationPath + File.separator)) {
             throw new SecurityException("Unsafe archive path: " + displayName);
         }
         return target;
@@ -369,9 +378,13 @@ public final class LinuxRuntimeManager {
     private void writeRuntimeConfiguration() throws Exception {
         File etc = new File(rootfsDir, "etc");
         etc.mkdirs();
-        setSafeMode(etc, true, true);
-        FileIo.writeUtf8(new File(etc, "resolv.conf"), "nameserver 1.1.1.1\nnameserver 8.8.8.8\n");
-        FileIo.writeUtf8(new File(etc, "hosts"), "127.0.0.1 localhost\n::1 localhost\n");
+        chmodPath(etc, 0755, true);
+        FileIo.writeUtf8(new File(etc, "resolv.conf"),
+                "nameserver 1.1.1.1\nnameserver 8.8.8.8\n");
+        FileIo.writeUtf8(new File(etc, "hosts"),
+                "127.0.0.1 localhost\n::1 localhost\n");
+        chmodPath(new File(etc, "resolv.conf"), 0644, false);
+        chmodPath(new File(etc, "hosts"), 0644, false);
     }
 
     private static boolean existsNoFollow(File file) {
@@ -382,50 +395,41 @@ public final class LinuxRuntimeManager {
         }
     }
 
-    private static void setSafeMode(File file, boolean directory, boolean executable) {
-        try {
-            if (Files.isSymbolicLink(file.toPath())) return;
-            Os.chmod(file.getAbsolutePath(), directory ? 0700 : (executable ? 0700 : 0600));
-        } catch (Exception ignored) {}
-    }
-
-    private static void repairPermissions(File file) {
+    private static void repairPublicPermissions(File file) {
         if (file == null || !existsNoFollow(file)) return;
         try {
             if (Files.isSymbolicLink(file.toPath())) return;
         } catch (Exception ignored) {}
 
         if (file.isDirectory()) {
-            setSafeMode(file, true, true);
+            chmodPath(file, 0755, true);
             File[] children = file.listFiles();
             if (children != null) {
-                for (File child : children) repairPermissions(child);
+                for (File child : children) repairPublicPermissions(child);
             }
-            setSafeMode(file, true, true);
+            chmodPath(file, 0755, true);
         } else {
-            boolean executable = file.canExecute();
-            setSafeMode(file, false, executable);
+            chmodPath(file, file.canExecute() ? 0755 : 0644, false);
         }
     }
 
     private static void deleteRecursively(File file) throws IOException {
         if (file == null || !existsNoFollow(file)) return;
-
         File parent = file.getParentFile();
-        if (parent != null && existsNoFollow(parent)) setSafeMode(parent, true, true);
+        if (parent != null && existsNoFollow(parent)) chmodPath(parent, 0755, true);
 
         boolean symlink = false;
         try { symlink = Files.isSymbolicLink(file.toPath()); }
         catch (Exception ignored) {}
 
         if (!symlink && file.isDirectory()) {
-            setSafeMode(file, true, true);
+            chmodPath(file, 0755, true);
             File[] children = file.listFiles();
             if (children != null) {
                 for (File child : children) deleteRecursively(child);
             }
         } else if (!symlink) {
-            setSafeMode(file, false, file.canExecute());
+            chmodPath(file, file.canExecute() ? 0755 : 0644, false);
         }
 
         try {
@@ -442,10 +446,8 @@ public final class LinuxRuntimeManager {
         double value = bytes;
         String[] units = {"KB", "MB", "GB"};
         int unit = -1;
-        do {
-            value /= 1024.0;
-            unit++;
-        } while (value >= 1024 && unit < units.length - 1);
+        do { value /= 1024.0; unit++; }
+        while (value >= 1024 && unit < units.length - 1);
         return String.format(java.util.Locale.US, "%.1f %s", value, units[unit]);
     }
 
