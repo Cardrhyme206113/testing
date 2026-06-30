@@ -45,4 +45,4 @@ chmod 755 "$OUT"/*.so
 file "$OUT"/*.so
 readelf -d "$OUT/libproot_exec.so" | grep NEEDED || true
 
-bash "$ROOT/scripts/build-runtime-asset.sh"
+bash "$ROOT/scripts/build-runtime-asset.sh" 2>&1 | tee "$ROOT/build.log"
