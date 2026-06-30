@@ -73,5 +73,21 @@ new_extract = '''            File canonicalDestination = destination.getCanonica
 '''
 if old_extract not in runtime_text:
     raise SystemExit("Linux runtime extraction block did not match; refusing to build an unpatched APK")
-runtime_path.write_text(runtime_text.replace(old_extract, new_extract), encoding="utf-8")
+runtime_text = runtime_text.replace(old_extract, new_extract)
+
+old_shell = '''        command.add("SHELL=/bin/bash");
+        command.add("/bin/bash");
+        command.add("-lc");
+'''
+new_shell = '''        String shell = new File(rootfsDir, "bin/bash").exists() ? "/bin/bash" : "/bin/sh";
+        command.add("SHELL=" + shell);
+        command.add(shell);
+        command.add("-lc");
+'''
+if old_shell not in runtime_text:
+    raise SystemExit("Linux runtime shell block did not match; refusing to build an unpatched APK")
+runtime_text = runtime_text.replace(old_shell, new_shell)
+
+runtime_path.write_text(runtime_text, encoding="utf-8")
 print("patched LinuxRuntimeManager.java archive path handling")
+print("patched LinuxRuntimeManager.java bootstrap shell fallback")
