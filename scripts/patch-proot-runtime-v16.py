@@ -3,6 +3,9 @@ from pathlib import Path
 path = Path('app/src/main/java/com/example/blockhost/LinuxRuntimeManager.java')
 text = path.read_text(encoding='utf-8')
 
+if 'import java.util.concurrent.TimeUnit;' not in text:
+    text = text.replace('import java.util.Map;\n', 'import java.util.Map;\nimport java.util.concurrent.TimeUnit;\n', 1)
+
 if 'private String lastValidationOutput' not in text:
     text = text.replace(
         '    private final File archiveFile;\n',
@@ -10,13 +13,18 @@ if 'private String lastValidationOutput' not in text:
         1,
     )
 
+text = text.replace(
+    'if (isReady() && validateRuntime())',
+    'if (isReady() && validateRuntime(listener))',
+)
+
 old = '''        ensureStorageAvailable();
         listener.onProgress("runtime-check", 1, "Checking runtime package");
 '''
 new = '''        if (rootfsDir.isDirectory()) {
             listener.onProgress("runtime-repair", 1, "Repairing extracted Java runtime");
             repairRuntimeCompatibility();
-            if (validateRuntime()) {
+            if (validateRuntime(listener)) {
                 FileIo.writeUtf8(readyMarker, "ready\\n");
                 archiveFile.delete();
                 removeOldRuntime(new File(runtimeDir, "alpine"));
@@ -25,6 +33,7 @@ new = '''        if (rootfsDir.isDirectory()) {
                 listener.onProgress("runtime", 100, "Java runtime ready");
                 return;
             }
+            throw new IOException("Existing Java runtime failed validation:\\n" + lastValidationOutput);
         }
 
         ensureStorageAvailable();
@@ -33,6 +42,11 @@ new = '''        if (rootfsDir.isDirectory()) {
 if old in text:
     text = text.replace(old, new, 1)
 
+text = text.replace(
+    'if (!validateRuntime()) {',
+    'if (!validateRuntime(listener)) {',
+    1,
+)
 text = text.replace(
     '            throw new IOException("Downloaded Java runtime failed validation");',
     '            throw new IOException("Downloaded Java runtime failed validation:\\n" + lastValidationOutput);',
@@ -63,7 +77,29 @@ text = text.replace('args.add("-b"); args.add("/dev");', 'args.add("-b"); args.a
 text = text.replace('args.add("-b"); args.add("/proc");', 'args.add("-b"); args.add("/proc:/proc");')
 text = text.replace('args.add("-b"); args.add("/sys");', 'args.add("-b"); args.add("/sys:/sys");')
 
-start = text.index('    private boolean validateRuntime() {')
+finalize_needle = '''        for (PendingHardLink hardLink : pendingHardLinks) {
+'''
+if 'Finalizing runtime links' not in text and finalize_needle in text:
+    text = text.replace(
+        finalize_needle,
+        '''        listener.onProgress("runtime-finalize", 97, "Finalizing runtime links");
+        for (PendingHardLink hardLink : pendingHardLinks) {
+''',
+        1,
+    )
+
+permissions_needle = '''        directoryModes.sort(Comparator.comparingInt((DirectoryMode mode) -> mode.depth).reversed());
+'''
+if 'Applying runtime permissions' not in text and permissions_needle in text:
+    text = text.replace(
+        permissions_needle,
+        '''        listener.onProgress("runtime-finalize", 98, "Applying runtime permissions");
+        directoryModes.sort(Comparator.comparingInt((DirectoryMode mode) -> mode.depth).reversed());
+''',
+        1,
+    )
+
+start = text.index('    private boolean validateRuntime')
 end = text.index('    private List<String> baseProotCommand', start)
 replacement = '''    private void repairRuntimeCompatibility() {
         try {
@@ -108,8 +144,12 @@ replacement = '''    private void repairRuntimeCompatibility() {
         } catch (Exception ignored) {}
     }
 
-    private boolean validateRuntime() {
+    private boolean validateRuntime(ProgressListener listener) {
+        Process process = null;
         try {
+            if (listener != null) {
+                listener.onProgress("runtime-validate", 99, "Starting runtime validation");
+            }
             String diagnostics = "set +e; fail=0; "
                     + "echo '[validate] dev'; /bin/busybox ls -l /dev/null /dev/urandom 2>&1 || fail=1; "
                     + "echo '[validate] bash'; /bin/bash --version 2>&1 || fail=1; "
@@ -118,15 +158,44 @@ replacement = '''    private void repairRuntimeCompatibility() {
                     + "echo '[validate] git'; /usr/bin/git --version 2>&1 || fail=1; "
                     + "echo '[validate] maven'; /usr/bin/mvn -version 2>&1 || fail=1; "
                     + "echo '[validate] result='$fail; exit $fail";
-            Process process = startShell(null, diagnostics);
-            String output = ProcessIo.consume(process, null);
-            int exit = process.waitFor();
-            lastValidationOutput = output.trim();
+            process = startShell(null, diagnostics);
+            final Process running = process;
+            final String[] outputHolder = {""};
+            final Exception[] readError = {null};
+            Thread reader = new Thread(() -> {
+                try {
+                    outputHolder[0] = ProcessIo.consume(running, line -> {
+                        if (listener != null && !line.trim().isEmpty()) {
+                            listener.onProgress("runtime-validate", 99, line);
+                        }
+                    });
+                } catch (Exception error) {
+                    readError[0] = error;
+                }
+            }, "BlockHost-runtime-validation");
+            reader.setDaemon(true);
+            reader.start();
+
+            boolean finished = process.waitFor(60, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroy();
+                if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly();
+                reader.join(2000);
+                lastValidationOutput = "Validation timed out after 60 seconds.\\n" + outputHolder[0].trim();
+                return false;
+            }
+
+            reader.join(3000);
+            lastValidationOutput = outputHolder[0].trim();
+            if (readError[0] != null) {
+                lastValidationOutput += "\\nReader error: " + readError[0].getMessage();
+            }
             if (lastValidationOutput.length() > 6000) {
                 lastValidationOutput = lastValidationOutput.substring(lastValidationOutput.length() - 6000);
             }
-            return exit == 0;
+            return process.exitValue() == 0;
         } catch (Exception error) {
+            if (process != null) process.destroyForcibly();
             lastValidationOutput = error.getClass().getSimpleName() + ": " + error.getMessage();
             return false;
         }
@@ -136,4 +205,4 @@ replacement = '''    private void repairRuntimeCompatibility() {
 text = text[:start] + replacement + text[end:]
 
 path.write_text(text, encoding='utf-8')
-print('Patched PRoot runtime validation and compatibility repair')
+print('Patched PRoot runtime validation, timeout, and progress reporting')
