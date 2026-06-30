@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#eff4ef" />
 <title>BlockHost</title>
-<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="styles-native.css" />
 </head>
 <body>
 <div class="backendBanner" id="backendBanner">Native backend unavailable.</div>
@@ -34,5 +34,5 @@
 <div class="modalShade" id="restartModal"><div class="sheet confirmSheet"><h2>Restart server?</h2><p id="restartMessage"></p><ul class="changeList" id="restartChangeList"></ul><div class="sheetActions"><button class="secondary" id="cancelRestartSave">Cancel</button><button class="primary" id="confirmRestartSave">Save & restart</button></div></div></div>
 <div class="modalShade" id="importModal"><div class="sheet"><h2>Import files</h2><p>Files are copied into the current server folder.</p><div class="importChoiceGrid"><button class="choice" id="chooseFiles"><strong>Files</strong><small>Select one or more files</small></button><button class="choice" id="chooseFolder"><strong>Folder</strong><small>Select a folder</small></button></div><div class="sheetActions"><button class="secondary" id="cancelImport">Cancel</button></div></div></div>
 <div class="toast" id="toast"></div><input type="file" id="fileInput" multiple class="hidden" /><input type="file" id="folderInput" webkitdirectory directory multiple class="hidden" />
-<script src="api-client.js"></script><script src="app.js"></script>
+<script src="api-client.js"></script><script src="app-native.js"></script>
 </body></html>
