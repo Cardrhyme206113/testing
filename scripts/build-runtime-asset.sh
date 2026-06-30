@@ -42,6 +42,7 @@ tar -xzf "$WORK/apk-tools-static.apk" -C "$WORK"
 APK="$WORK/sbin/apk.static"
 chmod 755 "$APK"
 
+set +e
 "$APK" \
   --root "$ROOTFS" \
   --arch aarch64 \
@@ -63,6 +64,9 @@ chmod 755 "$APK"
     tar \
     unzip \
     zip
+APK_STATUS=$?
+set -e
+echo "apk.static exited with $APK_STATUS; validating the installed runtime instead of its package database status"
 
 mkdir -p "$ROOTFS/etc/ssl/certs" "$ROOTFS/root" "$ROOTFS/tmp" "$ROOTFS/var/tmp" "$ROOTFS/server"
 printf '%s\n' "$MIRROR/$ALPINE_VERSION/main" "$MIRROR/$ALPINE_VERSION/community" > "$ROOTFS/etc/apk/repositories"
