@@ -2,6 +2,7 @@ package com.example.blockhost;
 
 import android.content.Context;
 import android.os.Build;
+import android.os.StatFs;
 import android.system.Os;
 
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
@@ -11,38 +12,49 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
-/** Runs an ARM64 Alpine/JDK runtime prepared at APK build time. */
+/** Downloads a prebuilt ARM64 Alpine/JDK runtime through Android networking. */
 public final class LinuxRuntimeManager {
     public interface ProgressListener {
         void onProgress(String phase, int percent, String message);
     }
 
-    private static final String RUNTIME_ASSET = "runtime-aarch64.tar.gz";
-    private static final String RUNTIME_FOLDER = "alpine-bundled-v1";
+    private static final String RUNTIME_URL =
+            "https://github.com/Cardrhyme206113/hosting/releases/download/blockhost-runtime-v1/runtime-aarch64.tar.gz";
+    private static final String RUNTIME_SHA_URL = RUNTIME_URL + ".sha256";
+    private static final String RUNTIME_FOLDER = "alpine-download-v1";
     private static final String READY_MARKER = ".blockhost-runtime-ready-v1";
+    private static final long MIN_FREE_BYTES = 1_100_000_000L;
 
     private final Context context;
     private final File runtimeDir;
     private final File rootfsDir;
     private final File readyMarker;
+    private final File archiveFile;
 
     public LinuxRuntimeManager(Context context, ServerRepository repository) {
         this.context = context.getApplicationContext();
         runtimeDir = repository.getRuntimeDir();
         rootfsDir = new File(runtimeDir, RUNTIME_FOLDER);
         readyMarker = new File(rootfsDir, READY_MARKER);
+        archiveFile = new File(runtimeDir, "runtime-aarch64-v1.tar.gz");
     }
 
     public boolean isReady() {
@@ -58,12 +70,31 @@ public final class LinuxRuntimeManager {
         runtimeDir.mkdirs();
 
         if (isReady() && validateRuntime()) {
-            listener.onProgress("runtime", 100, "Bundled Java runtime ready");
+            listener.onProgress("runtime", 100, "Java runtime ready");
             return;
         }
 
+        ensureStorageAvailable();
+        listener.onProgress("runtime-check", 1, "Checking runtime package");
+        String expectedSha = downloadText(RUNTIME_SHA_URL).trim().split("\\s+")[0].toLowerCase(Locale.US);
+        if (!expectedSha.matches("[0-9a-f]{64}")) {
+            throw new IOException("Runtime checksum file is invalid");
+        }
+
+        if (!archiveFile.isFile() || !expectedSha.equals(sha256(archiveFile))) {
+            archiveFile.delete();
+            downloadRuntime(listener);
+        }
+
+        listener.onProgress("runtime-verify", 61, "Verifying downloaded runtime");
+        String actualSha = sha256(archiveFile);
+        if (!expectedSha.equals(actualSha)) {
+            archiveFile.delete();
+            throw new IOException("Runtime download checksum mismatch");
+        }
+
         File staging = new File(runtimeDir, RUNTIME_FOLDER + ".partial");
-        listener.onProgress("runtime-reset", 1, "Preparing bundled Java runtime");
+        listener.onProgress("runtime-reset", 63, "Preparing Java runtime");
         deleteRecursively(staging);
         deleteRecursively(rootfsDir);
         if (!staging.mkdirs() && !staging.isDirectory()) {
@@ -71,14 +102,14 @@ public final class LinuxRuntimeManager {
         }
         chmod(staging, 0700);
 
-        listener.onProgress("runtime-extract", 3, "Extracting bundled Java, Git and Maven");
-        try (InputStream asset = new BufferedInputStream(context.getAssets().open(RUNTIME_ASSET));
-             GzipCompressorInputStream gzip = new GzipCompressorInputStream(asset);
+        listener.onProgress("runtime-extract", 65, "Extracting Java, Git and Maven");
+        try (InputStream input = new BufferedInputStream(new FileInputStream(archiveFile));
+             GzipCompressorInputStream gzip = new GzipCompressorInputStream(input);
              TarArchiveInputStream tar = new TarArchiveInputStream(gzip)) {
             extractTar(tar, staging, listener);
         } catch (Exception error) {
             deleteRecursively(staging);
-            throw new IOException("Bundled runtime extraction failed: " + error.getMessage(), error);
+            throw new IOException("Runtime extraction failed: " + error.getMessage(), error);
         }
 
         writeRuntimeConfiguration(staging);
@@ -87,21 +118,21 @@ public final class LinuxRuntimeManager {
                 Files.move(staging.toPath(), rootfsDir.toPath(), StandardCopyOption.ATOMIC_MOVE);
             } catch (Exception moveError) {
                 deleteRecursively(staging);
-                throw new IOException("Unable to activate bundled runtime", moveError);
+                throw new IOException("Unable to activate downloaded runtime", moveError);
             }
         }
 
         FileIo.writeUtf8(readyMarker, "ready\n");
         if (!validateRuntime()) {
             readyMarker.delete();
-            throw new IOException("Bundled Java runtime failed validation");
+            throw new IOException("Downloaded Java runtime failed validation");
         }
 
-        // v8-v13 used this path. Remove it only after the replacement works.
-        File oldRuntime = new File(runtimeDir, "alpine");
-        try { deleteRecursively(oldRuntime); } catch (Exception ignored) {}
+        archiveFile.delete();
+        removeOldRuntime(new File(runtimeDir, "alpine"));
+        removeOldRuntime(new File(runtimeDir, "alpine-bundled-v1"));
         deleteLegacyMarkers();
-        listener.onProgress("runtime", 100, "Bundled Java runtime ready");
+        listener.onProgress("runtime", 100, "Java runtime ready");
     }
 
     public Process startShell(File serverDir, String shellCommand) throws IOException {
@@ -140,6 +171,85 @@ public final class LinuxRuntimeManager {
         return "/usr/bin/java";
     }
 
+    private void downloadRuntime(ProgressListener listener) throws Exception {
+        File partial = new File(archiveFile.getParentFile(), archiveFile.getName() + ".part");
+        partial.delete();
+
+        HttpURLConnection connection = openConnection(RUNTIME_URL);
+        long total = connection.getContentLengthLong();
+        if (total <= 0) total = -1;
+
+        byte[] buffer = new byte[256 * 1024];
+        long done = 0;
+        int lastPercent = -1;
+        try (InputStream input = new BufferedInputStream(connection.getInputStream());
+             BufferedOutputStream output = new BufferedOutputStream(new FileOutputStream(partial))) {
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                output.write(buffer, 0, read);
+                done += read;
+                int percent = total > 0 ? 2 + (int) Math.min(58, done * 58 / total) : 20;
+                if (percent != lastPercent) {
+                    lastPercent = percent;
+                    listener.onProgress("runtime-download", percent,
+                            "Downloading Java runtime: " + humanBytes(done)
+                                    + (total > 0 ? " / " + humanBytes(total) : ""));
+                }
+            }
+        } finally {
+            connection.disconnect();
+        }
+
+        if (!partial.renameTo(archiveFile)) {
+            Files.move(partial.toPath(), archiveFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private String downloadText(String url) throws Exception {
+        HttpURLConnection connection = openConnection(url);
+        try (InputStream input = new BufferedInputStream(connection.getInputStream())) {
+            byte[] bytes = input.readAllBytes();
+            return new String(bytes, StandardCharsets.UTF_8);
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private HttpURLConnection openConnection(String url) throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        connection.setConnectTimeout(30_000);
+        connection.setReadTimeout(120_000);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("User-Agent", "BlockHost-Android/0.3");
+        connection.setRequestProperty("Accept", "application/octet-stream,*/*");
+        int code = connection.getResponseCode();
+        if (code < 200 || code >= 300) {
+            connection.disconnect();
+            throw new IOException("Runtime download failed with HTTP " + code);
+        }
+        return connection;
+    }
+
+    private String sha256(File file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream input = new BufferedInputStream(new FileInputStream(file))) {
+            byte[] buffer = new byte[256 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) digest.update(buffer, 0, read);
+        }
+        StringBuilder result = new StringBuilder(64);
+        for (byte value : digest.digest()) result.append(String.format(Locale.US, "%02x", value & 0xff));
+        return result.toString();
+    }
+
+    private void ensureStorageAvailable() throws IOException {
+        StatFs statFs = new StatFs(runtimeDir.getAbsolutePath());
+        long available = statFs.getAvailableBytes();
+        if (available < MIN_FREE_BYTES) {
+            throw new IOException("At least 1.1 GB of free storage is required for the Java runtime");
+        }
+    }
+
     private boolean validateRuntime() {
         try {
             Process process = startShell(null,
@@ -161,7 +271,7 @@ public final class LinuxRuntimeManager {
             throw new IOException("Bundled PRoot executable is missing for this CPU architecture");
         }
         if (!rootfsDir.isDirectory()) {
-            throw new IOException("Bundled Linux runtime has not been extracted");
+            throw new IOException("Linux runtime has not been installed");
         }
 
         List<String> args = new ArrayList<>();
@@ -243,9 +353,9 @@ public final class LinuxRuntimeManager {
 
             processed++;
             if (processed % 400 == 0) {
-                int progress = Math.min(96, 3 + (int) (processed / 80));
+                int progress = 65 + Math.min(32, (int) (processed / 180));
                 listener.onProgress("runtime-extract", progress,
-                        "Extracting bundled runtime… " + processed + " files");
+                        "Extracting Java runtime… " + processed + " files");
             }
         }
 
@@ -257,7 +367,6 @@ public final class LinuxRuntimeManager {
             createHardLinkOrCopy(hardLink.source, hardLink.target, hardLink.mode);
         }
 
-        // Apply restrictive directory modes last, after all children have been written.
         directoryModes.sort(Comparator.comparingInt((DirectoryMode mode) -> mode.depth).reversed());
         for (DirectoryMode mode : directoryModes) chmod(mode.directory, mode.mode);
         chmod(destination, rootMode == 0 ? 0755 : rootMode);
@@ -344,6 +453,12 @@ public final class LinuxRuntimeManager {
         throw new IllegalStateException("This backend currently supports ARM64 Android devices only");
     }
 
+    private void removeOldRuntime(File oldRuntime) {
+        try {
+            if (!oldRuntime.equals(rootfsDir)) deleteRecursively(oldRuntime);
+        } catch (Exception ignored) {}
+    }
+
     private void deleteLegacyMarkers() {
         File[] files = runtimeDir.listFiles();
         if (files == null) return;
@@ -395,6 +510,18 @@ public final class LinuxRuntimeManager {
                 throw new IOException("Unable to delete " + file, error);
             }
         }
+    }
+
+    private static String humanBytes(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        double value = bytes;
+        String[] units = {"KB", "MB", "GB"};
+        int unit = -1;
+        do {
+            value /= 1024.0;
+            unit++;
+        } while (value >= 1024 && unit < units.length - 1);
+        return String.format(Locale.US, "%.1f %s", value, units[unit]);
     }
 
     private static final class DirectoryMode {
