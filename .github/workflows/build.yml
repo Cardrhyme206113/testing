@@ -42,14 +42,21 @@ jobs:
             s = s.replace(old, new)
           p.write_text(s)
           p = root / 'MinecraftServerService.java'
-          s = p.read_text().replace('processStats.sample(process.pid())', 'processStats.sample(ProcessId.get(process))')
-          p.write_text(s)
+          p.write_text(p.read_text().replace('processStats.sample(process.pid())', 'processStats.sample(ProcessId.get(process))'))
           PY
       - name: Build debug APK
         shell: bash
         run: |
           set -o pipefail
           gradle --no-daemon :app:assembleDebug 2>&1 | tee build.log
+      - name: Verify small APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          ! unzip -l "$apk" | grep -q 'runtime-aarch64'
+          test "$(stat -c%s "$apk")" -lt 50000000
+          ls -lh "$apk"
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
