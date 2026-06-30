@@ -25,24 +25,25 @@ public final class ProcessStats {
             if (previousAtMs > 0 && ticks >= previousTicks && now > previousAtMs) {
                 long hz;
                 try { hz = Os.sysconf(OsConstants._SC_CLK_TCK); } catch (Exception e) { hz = 100; }
-                cpu = ((ticks - previousTicks) / (double) hz) / ((now - previousAtMs) / 1000.0) * 100.0;
+                cpu = ((ticks - previousTicks) / (double)hz) / ((now - previousAtMs) / 1000.0) * 100.0;
             }
-            previousTicks = ticks; previousAtMs = now;
+            previousTicks = ticks;
+            previousAtMs = now;
             result.put("ramBytes", rssKb * 1024L).put("cpuPercent", Math.max(0, Math.min(999, cpu))).put("processCount", pids.size());
         } catch (Exception e) {
-            try { result.put("ramBytes", 0L).put("cpuPercent", 0.0).put("processCount", 0); } catch (Exception ignored) {}
+            try { result.put("ramBytes",0L).put("cpuPercent",0.0).put("processCount",0); } catch (Exception ignored) {}
         }
         return result;
     }
 
-    private static void collectTree(long pid, Set<Long> out) {
+    private static void collectTree(long pid,Set<Long> out) {
         if (pid <= 0 || out.contains(pid)) return;
         File proc = new File("/proc/" + pid);
         if (!proc.exists()) return;
         out.add(pid);
         try {
-            String text = Files.readString(new File(proc, "task/" + pid + "/children").toPath(), StandardCharsets.UTF_8).trim();
-            if (!text.isEmpty()) for (String token : text.split("\\s+")) collectTree(Long.parseLong(token), out);
+            String text = FileIo.readUtf8(new File(proc,"task/" + pid + "/children")).trim();
+            if (!text.isEmpty()) for (String token : text.split("\\s+")) collectTree(Long.parseLong(token),out);
         } catch (Exception ignored) {}
     }
 
@@ -50,7 +51,7 @@ public final class ProcessStats {
         try {
             for (String line : Files.readAllLines(new File("/proc/" + pid + "/status").toPath(), StandardCharsets.UTF_8)) {
                 if (line.startsWith("VmRSS:")) {
-                    String numeric = line.replaceAll("[^0-9]", "");
+                    String numeric = line.replaceAll("[^0-9]","");
                     return numeric.isEmpty() ? 0 : Long.parseLong(numeric);
                 }
             }
@@ -60,7 +61,7 @@ public final class ProcessStats {
 
     private static long readCpuTicks(long pid) {
         try {
-            String text = Files.readString(new File("/proc/" + pid + "/stat").toPath(), StandardCharsets.UTF_8);
+            String text = FileIo.readUtf8(new File("/proc/" + pid + "/stat"));
             int close = text.lastIndexOf(')');
             if (close < 0) return 0;
             String[] fields = text.substring(close + 2).split("\\s+");
