@@ -45,6 +45,7 @@ jobs:
           p.write_text(p.read_text().replace('processStats.sample(process.pid())', 'processStats.sample(ProcessId.get(process))'))
           PY
           python3 scripts/patch-proot-runtime-v16.py
+          python3 scripts/patch-maven-launcher-v18.py
       - name: Build debug APK
         shell: bash
         run: |
