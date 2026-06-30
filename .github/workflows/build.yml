@@ -21,6 +21,30 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y patchelf
       - name: Fetch ARM64 PRoot launcher
         run: bash scripts/fetch-proot.sh
+      - name: Apply Android API compatibility
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('app/src/main/java/com/example/blockhost')
+          p = root / 'ServerRepository.java'
+          s = p.read_text()
+          pairs = {
+            'Files.readString(stateFile.toPath(), StandardCharsets.UTF_8)': 'FileIo.readUtf8(stateFile)',
+            'Files.readString(file.toPath(), StandardCharsets.UTF_8)': 'FileIo.readUtf8(file)',
+            'Files.writeString(file.toPath(), content, StandardCharsets.UTF_8)': 'FileIo.writeUtf8(file, content)',
+            'Files.writeString(tmp.toPath(), state.toString(2), StandardCharsets.UTF_8)': 'FileIo.writeUtf8(tmp, state.toString(2))',
+            'Files.writeString(stateFile.toPath(), state.toString(2), StandardCharsets.UTF_8)': 'FileIo.writeUtf8(stateFile, state.toString(2))',
+            'Files.writeString(file.toPath(), text, StandardCharsets.UTF_8)': 'FileIo.writeUtf8(file, text)',
+            'file.isFile() ? Files.readString(file.toPath(), StandardCharsets.UTF_8) : ""': 'file.isFile() ? FileIo.readUtf8(file) : ""',
+          }
+          for old, new in pairs.items():
+            s = s.replace(old, new)
+          p.write_text(s)
+          p = root / 'MinecraftServerService.java'
+          s = p.read_text().replace('processStats.sample(process.pid())', 'processStats.sample(ProcessId.get(process))')
+          p.write_text(s)
+          PY
       - name: Build debug APK
         shell: bash
         run: |
