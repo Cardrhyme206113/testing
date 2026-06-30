@@ -22,8 +22,19 @@ jobs:
       - name: Fetch ARM64 PRoot launcher
         run: bash scripts/fetch-proot.sh
       - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
-      - uses: actions/upload-artifact@v4
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon :app:assembleDebug 2>&1 | tee build.log
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlockHost-native-build-log
+          path: build.log
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
           name: BlockHost-native-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
