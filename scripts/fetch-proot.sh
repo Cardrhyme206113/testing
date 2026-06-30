@@ -46,3 +46,9 @@ file "$OUT"/*.so
 readelf -d "$OUT/libproot_exec.so" | grep NEEDED || true
 
 TAR_OPTIONS=--ignore-failed-read bash "$ROOT/scripts/build-runtime-asset.sh" 2>&1 | tee "$ROOT/build.log"
+
+JAVA_FILE="$ROOT/app/src/main/java/com/example/blockhost/LinuxRuntimeManager.java"
+sed -i 's/runtime-aarch64\.tar\.gz/runtime-aarch64.tar/' "$JAVA_FILE"
+sed -i '/compressors\.gzip\.GzipCompressorInputStream/d' "$JAVA_FILE"
+sed -i '/GzipCompressorInputStream gzip = new GzipCompressorInputStream(asset);/d' "$JAVA_FILE"
+sed -i 's/new TarArchiveInputStream(gzip)/new TarArchiveInputStream(asset)/' "$JAVA_FILE"
