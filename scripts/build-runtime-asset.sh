@@ -66,8 +66,7 @@ set +e
     zip
 APK_STATUS=$?
 set -e
-echo "apk.static exited with $APK_STATUS; validating the installed runtime instead of its package database status"
-set -x
+echo "apk.static exited with $APK_STATUS; validating installed files instead of package database status"
 
 mkdir -p "$ROOTFS/etc/ssl/certs" "$ROOTFS/root" "$ROOTFS/tmp" "$ROOTFS/var/tmp" "$ROOTFS/server"
 printf '%s\n' "$MIRROR/$ALPINE_VERSION/main" "$MIRROR/$ALPINE_VERSION/community" > "$ROOTFS/etc/apk/repositories"
@@ -81,13 +80,11 @@ ln -sfn /usr/lib/jvm/java-21-openjdk/bin/java "$ROOTFS/usr/bin/java"
 ln -sfn /usr/lib/jvm/java-21-openjdk/bin/javac "$ROOTFS/usr/bin/javac"
 ln -sfn /usr/lib/jvm/java-21-openjdk/bin/jar "$ROOTFS/usr/bin/jar"
 
-ls -l "$ROOTFS/bin/bash" "$ROOTFS/usr/bin/git" "$ROOTFS/usr/bin/mvn" || true
-find "$ROOTFS/usr/lib/jvm" -maxdepth 4 -path '*/bin/java' -ls || true
-file "$ROOTFS/usr/lib/jvm/java-21-openjdk/bin/java"
 file "$ROOTFS/usr/lib/jvm/java-21-openjdk/bin/java" | grep -Eq 'ARM aarch64|ARM64'
 test -x "$ROOTFS/bin/bash"
 test -x "$ROOTFS/usr/bin/git"
-test -x "$ROOTFS/usr/bin/mvn"
+test -L "$ROOTFS/usr/bin/mvn"
+test -x "$ROOTFS/usr/share/java/maven-3/bin/mvn"
 test -x "$ROOTFS/usr/lib/jvm/java-17-openjdk/bin/java"
 test -x "$ROOTFS/usr/lib/jvm/java-21-openjdk/bin/java"
 
