@@ -21,7 +21,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y patchelf
       - name: Fetch ARM64 PRoot launcher
         run: bash scripts/fetch-proot.sh
-      - name: Apply Android API compatibility
+      - name: Apply Android and PRoot compatibility
         shell: bash
         run: |
           python3 - <<'PY'
@@ -44,6 +44,7 @@ jobs:
           p = root / 'MinecraftServerService.java'
           p.write_text(p.read_text().replace('processStats.sample(process.pid())', 'processStats.sample(ProcessId.get(process))'))
           PY
+          python3 scripts/patch-proot-runtime-v16.py
       - name: Build debug APK
         shell: bash
         run: |
