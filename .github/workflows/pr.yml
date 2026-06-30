@@ -16,3 +16,4 @@ jobs:
         with:
           gradle-version: 8.9
       - run: gradle :app:assembleDebug
+      - uses: ./.github/actions/upload-apk
