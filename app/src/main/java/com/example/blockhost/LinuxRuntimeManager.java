@@ -19,6 +19,8 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -44,11 +46,14 @@ public final class LinuxRuntimeManager {
         this.context = context.getApplicationContext();
         runtimeDir = repository.getRuntimeDir();
         rootfsDir = new File(runtimeDir, "alpine");
-        readyMarker = new File(runtimeDir, ".ready-v2");
+        readyMarker = new File(runtimeDir, ".ready-v3");
     }
 
     public boolean isReady() {
-        return readyMarker.isFile() && new File(rootfsDir, "usr/bin/java").exists();
+        return readyMarker.isFile()
+                && existsNoFollow(new File(rootfsDir, "usr/bin/java"))
+                && existsNoFollow(new File(rootfsDir, "usr/bin/git"))
+                && existsNoFollow(new File(rootfsDir, "usr/bin/mvn"));
     }
 
     public synchronized void ensureReady(ProgressListener listener) throws Exception {
@@ -56,28 +61,62 @@ public final class LinuxRuntimeManager {
             listener.onProgress("runtime", 100, "Linux Java runtime ready");
             return;
         }
+
         verifyArchitecture();
         runtimeDir.mkdirs();
-        if (!new File(rootfsDir, "bin/sh").exists()) {
+
+        File guestShell = new File(rootfsDir, "bin/sh");
+        File busybox = new File(rootfsDir, "bin/busybox");
+        if (!existsNoFollow(guestShell) && !busybox.isFile()) {
             listener.onProgress("runtime-download", 1, "Finding the current Alpine ARM64 image");
             String archiveName = discoverAlpineArchive();
             File archive = new File(runtimeDir, archiveName);
             download(ALPINE_RELEASES_BASE + archiveName, archive, "runtime-download", listener);
+
             listener.onProgress("runtime-extract", 45, "Extracting Linux runtime");
             deleteRecursively(rootfsDir);
             rootfsDir.mkdirs();
             extractTarGz(archive, rootfsDir, listener);
             archive.delete();
-            writeRuntimeConfiguration();
         }
+
+        // Alpine's archive permissions are correct for a real root user, but Android runs PRoot as the app UID.
+        // Ensure that the app UID can update APK's database and can clean up a partial installation later.
+        repairPermissions(rootfsDir);
+        writeRuntimeConfiguration();
+
+        // A previous attempt may have installed all tools but failed only while committing APK's database.
+        // Reuse those tools instead of entering a download/extract loop.
+        if (validateRuntime()) {
+            FileIo.writeUtf8(readyMarker, "ready\n");
+            listener.onProgress("runtime", 100, "Existing Java runtime repaired and ready");
+            return;
+        }
+
         listener.onProgress("runtime-packages", 70, "Installing Java, Git and build tools (first install only)");
-        String installCommand = "apk update && " +
-                "apk add --no-cache bash curl ca-certificates git maven openjdk21-jdk openjdk17-jdk || " +
-                "apk add --no-cache bash curl ca-certificates git maven openjdk21-jdk";
+        String installCommand =
+                "mkdir -p /lib/apk/db /var/cache/apk /var/lib/apk; "
+                        + "chmod u+rwx / /lib /lib/apk /lib/apk/db /var /var/cache /var/cache/apk /var/lib /var/lib/apk 2>/dev/null || true; "
+                        + "apk update && "
+                        + "(apk add --no-cache bash curl ca-certificates git maven openjdk21-jdk openjdk17-jdk "
+                        + "|| apk add --no-cache bash curl ca-certificates git maven openjdk21-jdk)";
+
         Process process = startShell(null, installCommand);
         String output = ProcessIo.consume(process, line -> listener.onProgress("runtime-packages", 80, line));
         int exit = process.waitFor();
-        if (exit != 0) throw new IOException("Runtime package installation failed (exit " + exit + "): " + tail(output, 1200));
+
+        repairPermissions(rootfsDir);
+        boolean toolsWork = validateRuntime();
+        if (exit != 0 && !toolsWork) {
+            throw new IOException("Runtime package installation failed (exit " + exit + "): " + tail(output, 1200));
+        }
+        if (!toolsWork) {
+            throw new IOException("Runtime packages finished, but Java/Git/Maven validation failed");
+        }
+
+        if (exit != 0) {
+            listener.onProgress("runtime-packages", 96, "Packages are usable; ignoring APK database finalization warning");
+        }
         FileIo.writeUtf8(readyMarker, "ready\n");
         listener.onProgress("runtime", 100, "Linux Java runtime ready");
     }
@@ -91,10 +130,13 @@ public final class LinuxRuntimeManager {
         command.add("LANG=C.UTF-8");
         command.add("TERM=xterm-256color");
         command.add("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-        command.add("SHELL=/bin/bash");
-        command.add("/bin/bash");
+
+        String shell = existsNoFollow(new File(rootfsDir, "bin/bash")) ? "/bin/bash" : "/bin/sh";
+        command.add("SHELL=" + shell);
+        command.add(shell);
         command.add("-lc");
         command.add(shellCommand);
+
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectErrorStream(true);
         Map<String, String> env = builder.environment();
@@ -112,11 +154,29 @@ public final class LinuxRuntimeManager {
     public String javaCommandForVersion(String version) {
         int major = SpigotVersionProvider.requiredJavaMajor(version);
         if (major >= 21) return "/usr/lib/jvm/java-21-openjdk/bin/java";
-        if (major >= 17 && new File(rootfsDir, "usr/lib/jvm/java-17-openjdk/bin/java").exists()) {
+        if (major >= 17 && existsNoFollow(new File(rootfsDir, "usr/lib/jvm/java-17-openjdk/bin/java"))) {
             return "/usr/lib/jvm/java-17-openjdk/bin/java";
         }
-        if (major < 17) return "/usr/lib/jvm/java-17-openjdk/bin/java";
+        if (major < 17 && existsNoFollow(new File(rootfsDir, "usr/lib/jvm/java-17-openjdk/bin/java"))) {
+            return "/usr/lib/jvm/java-17-openjdk/bin/java";
+        }
         return "/usr/bin/java";
+    }
+
+    private boolean validateRuntime() {
+        try {
+            if (!existsNoFollow(new File(rootfsDir, "usr/bin/java"))
+                    || !existsNoFollow(new File(rootfsDir, "usr/bin/git"))
+                    || !existsNoFollow(new File(rootfsDir, "usr/bin/mvn"))) {
+                return false;
+            }
+            Process validation = startShell(null,
+                    "java -version >/dev/null 2>&1 && git --version >/dev/null 2>&1 && mvn -version >/dev/null 2>&1");
+            ProcessIo.consume(validation, null);
+            return validation.waitFor() == 0;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private List<String> baseProotCommand(File serverDir) throws IOException {
@@ -124,6 +184,7 @@ public final class LinuxRuntimeManager {
         File proot = new File(nativeDir, "libproot_exec.so");
         if (!proot.isFile()) throw new IOException("Bundled PRoot executable is missing for this CPU architecture");
         if (!rootfsDir.isDirectory()) throw new IOException("Linux runtime has not been installed");
+
         List<String> args = new ArrayList<>();
         args.add(proot.getAbsolutePath());
         args.add("--kill-on-exit");
@@ -146,7 +207,9 @@ public final class LinuxRuntimeManager {
 
     private void verifyArchitecture() {
         boolean arm64 = false;
-        for (String abi : Build.SUPPORTED_ABIS) if ("arm64-v8a".equals(abi)) arm64 = true;
+        for (String abi : Build.SUPPORTED_ABIS) {
+            if ("arm64-v8a".equals(abi)) arm64 = true;
+        }
         if (!arm64) throw new IllegalStateException("This experimental backend currently supports ARM64 Android devices only");
     }
 
@@ -188,11 +251,14 @@ public final class LinuxRuntimeManager {
         connection.setInstanceFollowRedirects(true);
         int code = connection.getResponseCode();
         if (code < 200 || code >= 300) throw new IOException("Download failed with HTTP " + code);
+
         long total = connection.getContentLengthLong();
         output.getParentFile().mkdirs();
         File partial = new File(output.getParentFile(), output.getName() + ".part");
         byte[] buffer = new byte[128 * 1024];
         long done = 0;
+        int lastPercent = -1;
+
         try (InputStream input = new BufferedInputStream(connection.getInputStream());
              BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(partial))) {
             int read;
@@ -200,64 +266,175 @@ public final class LinuxRuntimeManager {
                 out.write(buffer, 0, read);
                 done += read;
                 int percent = total > 0 ? (int) Math.min(44, 2 + done * 42 / total) : 10;
-                listener.onProgress(phase, percent, "Downloading Linux runtime: " + humanBytes(done) + (total > 0 ? " / " + humanBytes(total) : ""));
+                if (percent != lastPercent) {
+                    lastPercent = percent;
+                    listener.onProgress(phase, percent,
+                            "Downloading Linux runtime: " + humanBytes(done)
+                                    + (total > 0 ? " / " + humanBytes(total) : ""));
+                }
             }
         } finally {
             connection.disconnect();
         }
+
         if (!partial.renameTo(output)) {
-            Files.move(partial.toPath(), output.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            Files.move(partial.toPath(), output.toPath(), StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
     private void extractTarGz(File archive, File destination, ProgressListener listener) throws Exception {
         long processed = 0;
+        File canonicalDestination = destination.getCanonicalFile();
+        String destinationPath = canonicalDestination.getPath();
+
         try (InputStream fileInput = new BufferedInputStream(new FileInputStream(archive));
              GzipCompressorInputStream gzip = new GzipCompressorInputStream(fileInput);
              TarArchiveInputStream tar = new TarArchiveInputStream(gzip)) {
             TarArchiveEntry entry;
             while ((entry = tar.getNextTarEntry()) != null) {
-                String name = entry.getName();
-                File target = new File(destination, name).getCanonicalFile();
-                String destinationPath = destination.getCanonicalPath();
-                if (!target.getPath().startsWith(destinationPath + File.separator) && !target.equals(destination)) {
-                    throw new SecurityException("Unsafe archive path: " + name);
+                String originalName = entry.getName();
+                String name = normalizeArchiveName(originalName);
+                if (name.isEmpty() || ".".equals(name)) {
+                    processed++;
+                    continue;
                 }
+
+                File target = resolveArchivePath(canonicalDestination, destinationPath, name, originalName);
                 if (entry.isDirectory()) {
                     target.mkdirs();
+                    setSafeMode(target, true, true);
                 } else if (entry.isSymbolicLink()) {
                     File parent = target.getParentFile();
-                    if (parent != null) parent.mkdirs();
+                    if (parent != null) {
+                        parent.mkdirs();
+                        setSafeMode(parent, true, true);
+                    }
                     try { Os.symlink(entry.getLinkName(), target.getAbsolutePath()); }
                     catch (ErrnoException ignored) {}
                 } else if (entry.isLink()) {
-                    File linked = new File(destination, entry.getLinkName()).getCanonicalFile();
+                    String linkName = normalizeArchiveName(entry.getLinkName());
+                    File linked = resolveArchivePath(canonicalDestination, destinationPath, linkName, entry.getLinkName());
                     File parent = target.getParentFile();
-                    if (parent != null) parent.mkdirs();
+                    if (parent != null) {
+                        parent.mkdirs();
+                        setSafeMode(parent, true, true);
+                    }
                     try { Os.link(linked.getAbsolutePath(), target.getAbsolutePath()); }
                     catch (ErrnoException ignored) {}
+                    setSafeMode(target, false, (entry.getMode() & 0111) != 0);
                 } else {
                     File parent = target.getParentFile();
-                    if (parent != null) parent.mkdirs();
+                    if (parent != null) {
+                        parent.mkdirs();
+                        setSafeMode(parent, true, true);
+                    }
                     try (BufferedOutputStream outputStream = new BufferedOutputStream(new FileOutputStream(target))) {
                         byte[] buffer = new byte[64 * 1024];
                         int read;
                         while ((read = tar.read(buffer)) >= 0) outputStream.write(buffer, 0, read);
                     }
+                    setSafeMode(target, false, (entry.getMode() & 0111) != 0);
                 }
-                try { Os.chmod(target.getAbsolutePath(), entry.getMode()); }
-                catch (Exception ignored) {}
+
                 processed++;
-                if (processed % 200 == 0) listener.onProgress("runtime-extract", 45 + (int) Math.min(20, processed / 250), "Extracting Linux runtime…");
+                if (processed % 200 == 0) {
+                    listener.onProgress("runtime-extract", 45 + (int) Math.min(20, processed / 250), "Extracting Linux runtime…");
+                }
             }
         }
+    }
+
+    private static String normalizeArchiveName(String name) {
+        String normalized = name == null ? "" : name.replace('\\', '/');
+        while (normalized.startsWith("./")) normalized = normalized.substring(2);
+        return normalized;
+    }
+
+    private static File resolveArchivePath(File destination, String destinationPath,
+                                           String normalizedName, String displayName) throws Exception {
+        if (normalizedName.startsWith("/")
+                || "..".equals(normalizedName)
+                || normalizedName.startsWith("../")
+                || normalizedName.contains("/../")) {
+            throw new SecurityException("Unsafe archive path: " + displayName);
+        }
+        File target = new File(destination, normalizedName).getCanonicalFile();
+        String targetPath = target.getPath();
+        if (!targetPath.equals(destinationPath) && !targetPath.startsWith(destinationPath + File.separator)) {
+            throw new SecurityException("Unsafe archive path: " + displayName);
+        }
+        return target;
     }
 
     private void writeRuntimeConfiguration() throws Exception {
         File etc = new File(rootfsDir, "etc");
         etc.mkdirs();
+        setSafeMode(etc, true, true);
         FileIo.writeUtf8(new File(etc, "resolv.conf"), "nameserver 1.1.1.1\nnameserver 8.8.8.8\n");
         FileIo.writeUtf8(new File(etc, "hosts"), "127.0.0.1 localhost\n::1 localhost\n");
+    }
+
+    private static boolean existsNoFollow(File file) {
+        try {
+            return Files.exists(file.toPath(), LinkOption.NOFOLLOW_LINKS);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private static void setSafeMode(File file, boolean directory, boolean executable) {
+        try {
+            if (Files.isSymbolicLink(file.toPath())) return;
+            Os.chmod(file.getAbsolutePath(), directory ? 0700 : (executable ? 0700 : 0600));
+        } catch (Exception ignored) {}
+    }
+
+    private static void repairPermissions(File file) {
+        if (file == null || !existsNoFollow(file)) return;
+        try {
+            if (Files.isSymbolicLink(file.toPath())) return;
+        } catch (Exception ignored) {}
+
+        if (file.isDirectory()) {
+            setSafeMode(file, true, true);
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) repairPermissions(child);
+            }
+            setSafeMode(file, true, true);
+        } else {
+            boolean executable = file.canExecute();
+            setSafeMode(file, false, executable);
+        }
+    }
+
+    private static void deleteRecursively(File file) throws IOException {
+        if (file == null || !existsNoFollow(file)) return;
+
+        File parent = file.getParentFile();
+        if (parent != null && existsNoFollow(parent)) setSafeMode(parent, true, true);
+
+        boolean symlink = false;
+        try { symlink = Files.isSymbolicLink(file.toPath()); }
+        catch (Exception ignored) {}
+
+        if (!symlink && file.isDirectory()) {
+            setSafeMode(file, true, true);
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) deleteRecursively(child);
+            }
+        } else if (!symlink) {
+            setSafeMode(file, false, file.canExecute());
+        }
+
+        try {
+            Files.deleteIfExists(file.toPath());
+        } catch (Exception first) {
+            if (!file.delete() && existsNoFollow(file)) {
+                throw new IOException("Unable to delete " + file, first);
+            }
+        }
     }
 
     private static String humanBytes(long bytes) {
@@ -265,21 +442,15 @@ public final class LinuxRuntimeManager {
         double value = bytes;
         String[] units = {"KB", "MB", "GB"};
         int unit = -1;
-        do { value /= 1024.0; unit++; } while (value >= 1024 && unit < units.length - 1);
+        do {
+            value /= 1024.0;
+            unit++;
+        } while (value >= 1024 && unit < units.length - 1);
         return String.format(java.util.Locale.US, "%.1f %s", value, units[unit]);
     }
 
     private static String tail(String text, int max) {
         if (text == null) return "";
         return text.length() <= max ? text : text.substring(text.length() - max);
-    }
-
-    private static void deleteRecursively(File file) throws IOException {
-        if (file == null || !file.exists()) return;
-        if (file.isDirectory() && !Files.isSymbolicLink(file.toPath())) {
-            File[] children = file.listFiles();
-            if (children != null) for (File child : children) deleteRecursively(child);
-        }
-        if (!file.delete() && file.exists()) throw new IOException("Unable to delete " + file);
     }
 }
