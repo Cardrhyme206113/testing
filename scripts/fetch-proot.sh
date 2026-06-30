@@ -37,7 +37,10 @@ cp "$PROOT" "$OUT/libproot_exec.so"
 cp "$LOADER" "$OUT/libproot_loader.so"
 if [[ -n "$LOADER32" ]]; then cp "$LOADER32" "$OUT/libproot_loader32.so"; fi
 cp "$TALLOC" "$OUT/libtalloc.so"
-cp "$TALLOC" "$OUT/libtalloc.so.2"
 cp "$SHMEM" "$OUT/libandroid-shmem.so"
-chmod 755 "$OUT"/*
-file "$OUT"/*
+if readelf -d "$OUT/libproot_exec.so" | grep -q 'libtalloc.so.2'; then
+  patchelf --replace-needed libtalloc.so.2 libtalloc.so "$OUT/libproot_exec.so"
+fi
+chmod 755 "$OUT"/*.so
+file "$OUT"/*.so
+readelf -d "$OUT/libproot_exec.so" | grep NEEDED || true
