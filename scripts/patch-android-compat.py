@@ -39,3 +39,55 @@ for name, pairs in replacements.items():
         print(f"patched {name}")
     else:
         print(f"no changes needed for {name}")
+
+runtime_path = root / "LinuxRuntimeManager.java"
+runtime_text = runtime_path.read_text(encoding="utf-8")
+old_extract = '''            TarArchiveEntry entry;
+            while ((entry = tar.getNextTarEntry()) != null) {
+                String name = entry.getName();
+                File target = new File(destination, name).getCanonicalFile();
+                String destinationPath = destination.getCanonicalPath();
+                if (!target.getPath().startsWith(destinationPath + File.separator) && !target.equals(destination)) {
+                    throw new SecurityException("Unsafe archive path: " + name);
+                }
+'''
+new_extract = '''            File canonicalDestination = destination.getCanonicalFile();
+            String destinationPath = canonicalDestination.getPath();
+            TarArchiveEntry entry;
+            while ((entry = tar.getNextTarEntry()) != null) {
+                String originalName = entry.getName();
+                String name = originalName == null ? "" : originalName.replace('\\\\', '/');
+                while (name.startsWith("./")) name = name.substring(2);
+                if (name.isEmpty() || ".".equals(name)) {
+                    processed++;
+                    continue;
+                }
+                if (name.startsWith("/") || "..".equals(name) || name.startsWith("../") || name.contains("/../")) {
+                    throw new SecurityException("Unsafe archive path: " + originalName);
+                }
+                File target = new File(canonicalDestination, name).getCanonicalFile();
+                String targetPath = target.getPath();
+                if (!targetPath.equals(destinationPath) && !targetPath.startsWith(destinationPath + File.separator)) {
+                    throw new SecurityException("Unsafe archive path: " + originalName);
+                }
+'''
+if old_extract not in runtime_text:
+    raise SystemExit("Linux runtime extraction block did not match; refusing to build an unpatched APK")
+runtime_text = runtime_text.replace(old_extract, new_extract)
+
+old_shell = '''        command.add("SHELL=/bin/bash");
+        command.add("/bin/bash");
+        command.add("-lc");
+'''
+new_shell = '''        String shell = new File(rootfsDir, "bin/bash").exists() ? "/bin/bash" : "/bin/sh";
+        command.add("SHELL=" + shell);
+        command.add(shell);
+        command.add("-lc");
+'''
+if old_shell not in runtime_text:
+    raise SystemExit("Linux runtime shell block did not match; refusing to build an unpatched APK")
+runtime_text = runtime_text.replace(old_shell, new_shell)
+
+runtime_path.write_text(runtime_text, encoding="utf-8")
+print("patched LinuxRuntimeManager.java archive path handling")
+print("patched LinuxRuntimeManager.java bootstrap shell fallback")
