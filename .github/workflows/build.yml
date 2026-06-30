@@ -46,6 +46,7 @@ jobs:
           PY
           python3 scripts/patch-proot-runtime-v16.py
           python3 scripts/patch-maven-launcher-v18.py
+          python3 scripts/patch-proot-runtime-v19.py
       - name: Build debug APK
         shell: bash
         run: |
