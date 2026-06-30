@@ -29,12 +29,7 @@ method = '''    private void installDirectMavenLauncher() throws Exception {
                 + "set -- ${MAVEN_HOME}/boot/plexus-classworlds-*.jar \\\"$@\\\"\\n"
                 + "BOOT_JAR=$1\\n"
                 + "shift\\n"
-                + "exec \\\"${JAVA_HOME}/bin/java\\\" \\\\\n"
-                + "  -Dmaven.home=\\\"${MAVEN_HOME}\\\" \\\\\n"
-                + "  -Dclassworlds.conf=\\\"${MAVEN_HOME}/bin/m2.conf\\\" \\\\\n"
-                + "  -Dmaven.multiModuleProjectDirectory=\\\"${MAVEN_PROJECTBASEDIR:-$PWD}\\\" \\\\\n"
-                + "  -classpath \\\"${BOOT_JAR}\\\" \\\\\n"
-                + "  org.codehaus.plexus.classworlds.launcher.Launcher \\\"$@\\\"\\n";
+                + "exec \\\"${JAVA_HOME}/bin/java\\\" -Dmaven.home=\\\"${MAVEN_HOME}\\\" -Dclassworlds.conf=\\\"${MAVEN_HOME}/bin/m2.conf\\\" -Dmaven.multiModuleProjectDirectory=\\\"${MAVEN_PROJECTBASEDIR:-$PWD}\\\" -classpath \\\"${BOOT_JAR}\\\" org.codehaus.plexus.classworlds.launcher.Launcher \\\"$@\\\"\\n";
         FileIo.writeUtf8(launcher, script);
         chmod(launcher, 0755);
     }
