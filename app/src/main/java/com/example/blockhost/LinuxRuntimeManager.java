@@ -103,8 +103,8 @@ public final class LinuxRuntimeManager {
                 line -> listener.onProgress("runtime-packages", 80, line));
         int exit = process.waitFor();
 
-        // The old build installed all packages and only failed while finalizing apk's DB.
-        // Treat it as success when Java/Git/Maven actually execute.
+        // Some Alpine/PRoot combinations report a final apk DB write warning even
+        // though every required tool is already installed and usable.
         if (!validateRuntime()) {
             throw new IOException("Runtime package installation failed (exit " + exit + "): " + tail(output, 1600));
         }
@@ -197,18 +197,24 @@ public final class LinuxRuntimeManager {
         chmodChildren(new File(rootfsDir, "lib/apk/db"), 0666);
     }
 
+    /**
+     * The server tree is app-private Android storage, so 0777 here does not expose
+     * it to Minecraft clients or other apps. It only avoids script/native-plugin
+     * execution issues inside the PRoot guest.
+     */
     private static void makeServerTreeFullyWritable(File file) {
         if (file == null || !existsNoFollow(file)) return;
         try {
             if (Files.isSymbolicLink(file.toPath())) return;
         } catch (Exception ignored) {}
+
+        chmodPath(file, 0777, file.isDirectory());
         if (file.isDirectory()) {
-            chmodPath(file, 0777, true);
             File[] children = file.listFiles();
-            if (children != null) for (File child : children) makeServerTreeFullyWritable(child);
+            if (children != null) {
+                for (File child : children) makeServerTreeFullyWritable(child);
+            }
             chmodPath(file, 0777, true);
-        } else {
-            chmodPath(file, 0666, false);
         }
     }
 
