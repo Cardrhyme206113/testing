@@ -17,6 +17,14 @@ replacements = {
     },
     "MinecraftServerService.java": {
         "processStats.sample(process.pid())": "processStats.sample(ProcessId.get(process))",
+        "String action=intent.getAction(),serverId=intent.getStringExtra(EXTRA_SERVER_ID);": "repository=new ServerRepository(this);runtime=new LinuxRuntimeManager(this,repository);String action=intent.getAction(),serverId=intent.getStringExtra(EXTRA_SERVER_ID);",
+        "JSONObject server=repository.getServer(serverId);if(server==null)throw new IllegalArgumentException(\"Server not found\");if(!server.optBoolean(\"eulaAccepted\",false))throw new IllegalStateException(\"Accept the Minecraft EULA before installing\");": "JSONObject server=EulaManager.reconcile(repository,serverId);if(server==null)throw new IllegalArgumentException(\"Server not found\");if(!server.optBoolean(\"eulaAccepted\",false))throw new IllegalStateException(\"Accept the Minecraft EULA before installing\");",
+        "JSONObject server=repository.getServer(serverId);if(server==null)throw new IllegalArgumentException(\"Server not found\");File serverDir=repository.getServerDir(serverId);": "JSONObject server=EulaManager.reconcile(repository,serverId);if(server==null)throw new IllegalArgumentException(\"Server not found\");if(!server.optBoolean(\"eulaAccepted\",false))throw new IllegalStateException(\"Accept the Minecraft EULA before starting\");File serverDir=repository.getServerDir(serverId);",
+        "updateNotification(\"Install failed: \"+shorten(e.getMessage(),70),false);}": "updateNotification(\"Install failed: \"+shorten(e.getMessage(),70),false);stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}",
+        "updateNotification(\"Server failed: \"+shorten(e.getMessage(),70),false);}": "updateNotification(\"Server failed: \"+shorten(e.getMessage(),70),false);stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}",
+    },
+    "BlockHostActivity.java": {
+        "webView.setWebViewClient(new WebViewClient());": "webView.setWebViewClient(new WebViewClient() { @Override public void onPageFinished(WebView view, String url) { view.evaluateJavascript(\"(function(){if(document.getElementById('eulaFixV6'))return;var s=document.createElement('script');s.id='eulaFixV6';s.src='file:///android_asset/eula-fix-v6.js';document.body.appendChild(s);})()\", null); } });",
     },
 }
 
