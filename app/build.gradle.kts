@@ -5,4 +5,11 @@ plugins {
 android {
     namespace = "com.example.blockhost"
     compileSdk = 35
+
+    defaultConfig {
+        minSdk = 26
+        targetSdk = 35
+        versionCode = 1
+        versionName = "0.1.0"
+    }
 }
