@@ -1,6 +1,9 @@
-name: Android build
+name: Build BlockHost native APK
 
-on: push
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
 
 jobs:
   build:
@@ -14,8 +17,26 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - run: gradle :app:assembleDebug
-      - uses: actions/upload-artifact@v4
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y patchelf
+      - name: Fetch ARM64 PRoot launcher
+        run: bash scripts/fetch-proot.sh
+      - name: Apply Android compatibility patch
+        run: python3 scripts/patch-android-compat.py
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon :app:assembleDebug 2>&1 | tee build.log
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: apk
+          name: BlockHost-native-build-log
+          path: build.log
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlockHost-native-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
