@@ -1,0 +1,45 @@
+name: Validate published ARM64 runtime
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static binfmt-support
+      - name: Download and extract runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 4 \
+            https://github.com/Cardrhyme206113/hosting/releases/download/blockhost-runtime-v1/runtime-aarch64.tar.gz \
+            -o runtime.tar.gz
+          curl -L --fail --retry 4 \
+            https://github.com/Cardrhyme206113/hosting/releases/download/blockhost-runtime-v1/runtime-aarch64.tar.gz.sha256 \
+            -o runtime.sha256
+          echo "$(cat runtime.sha256)  runtime.tar.gz" | sha256sum -c -
+          mkdir rootfs
+          tar -xzf runtime.tar.gz -C rootfs
+          sudo cp /usr/bin/qemu-aarch64-static rootfs/usr/bin/
+      - name: Show runtime structure
+        run: |
+          ls -l rootfs/usr/bin/java rootfs/usr/bin/git rootfs/usr/bin/mvn rootfs/bin/bash rootfs/bin/sh
+          file rootfs/usr/lib/jvm/java-21-openjdk/bin/java rootfs/usr/bin/git rootfs/bin/bash
+      - name: Test Bash
+        run: sudo chroot rootfs /bin/bash --version
+      - name: Test Java 21
+        run: sudo chroot rootfs /usr/bin/java -version
+      - name: Test Java 17
+        run: sudo chroot rootfs /usr/lib/jvm/java-17-openjdk/bin/java -version
+      - name: Test Git
+        run: sudo chroot rootfs /usr/bin/git --version
+      - name: Test Maven
+        run: sudo chroot rootfs /usr/bin/mvn -version
