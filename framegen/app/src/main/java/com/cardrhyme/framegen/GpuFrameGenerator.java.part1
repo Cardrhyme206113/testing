@@ -34,7 +34,7 @@ final class GpuFrameGenerator {
     }
 
     private static final String TAG = "FrameLiftGL";
-    private static final int MIP_LEVEL = 3; // 1/8 width and height.
+    private static final int MIP_LEVEL = 3;
     private static final int FLOW_BLOCK = 4;
 
     private final Callback callback;
@@ -115,6 +115,23 @@ final class GpuFrameGenerator {
 
     void setPaused(boolean value) {
         paused.set(value);
+    }
+
+    void resizeCaptureBuffer(int newWidth, int newHeight) {
+        final int safeWidth = Math.max(1, newWidth);
+        final int safeHeight = Math.max(1, newHeight);
+        Handler localHandler = handler;
+        if (localHandler == null) return;
+        localHandler.post(() -> {
+            if (captureTexture == null || stopped) return;
+            captureTexture.setDefaultBufferSize(safeWidth, safeHeight);
+            framePending = false;
+            sourceFrames = 0;
+            hasFlow = false;
+            nextSourceSampleNs = 0L;
+            acceptedSourcesWindow = 0;
+            generatedWindow = 0;
+        });
     }
 
     void stop() {
