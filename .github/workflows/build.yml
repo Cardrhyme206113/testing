@@ -71,7 +71,11 @@ jobs:
           ! unzip -l "$apk" | grep -q 'libproot'
           ! unzip -l "$apk" | grep -q 'runtime-aarch64'
           test "$(stat -c%s "$apk")" -lt 50000000
-          strings "$apk" | grep -q 'server-process-state.json'
+          unzip -p "$apk" 'classes*.dex' > /tmp/blockhost-classes.dex
+          strings /tmp/blockhost-classes.dex | grep -q 'server-process-state.json'
+          strings /tmp/blockhost-classes.dex | grep -q 'JVM/native headroom'
+          unzip -p "$apk" AndroidManifest.xml > /tmp/blockhost-manifest.xml
+          strings /tmp/blockhost-manifest.xml | grep -q ':server'
           ls -lh "$apk"
       - name: Upload build log
         if: always()
