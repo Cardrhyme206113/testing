@@ -232,13 +232,11 @@ public final class FrameGenService extends Service implements OverlayController.
         if (overlay != null) overlay.setOutputVisible(false);
 
         final int thisRendererEpoch = ++rendererEpoch;
-        final GpuFrameGenerator candidate = new GpuFrameGenerator(
+        GpuFrameGenerator candidate = new GpuFrameGenerator(
                 inputFps,
                 new GpuFrameGenerator.Callback() {
                     private boolean isCurrent() {
-                        return !shuttingDown
-                                && renderer == candidate
-                                && rendererEpoch == thisRendererEpoch;
+                        return !shuttingDown && rendererEpoch == thisRendererEpoch;
                     }
 
                     @Override
@@ -285,7 +283,6 @@ public final class FrameGenService extends Service implements OverlayController.
                     @Override
                     public void onFatalError(String message) {
                         mainHandler.post(() -> handleRendererFailure(
-                                candidate,
                                 thisRendererEpoch,
                                 message
                         ));
@@ -297,19 +294,15 @@ public final class FrameGenService extends Service implements OverlayController.
         candidate.resizeCaptureBuffer(captureWidth, captureHeight);
     }
 
-    private void handleRendererFailure(
-            GpuFrameGenerator failedRenderer,
-            int failedEpoch,
-            String message
-    ) {
-        if (shuttingDown) return;
-        if (renderer != failedRenderer || rendererEpoch != failedEpoch) return;
+    private void handleRendererFailure(int failedEpoch, String message) {
+        if (shuttingDown || rendererEpoch != failedEpoch) return;
 
+        GpuFrameGenerator failedRenderer = renderer;
         renderer = null;
         rendererEpoch++;
         outputReady = false;
         if (overlay != null) overlay.setOutputVisible(false);
-        failedRenderer.stopAndWait(700L);
+        if (failedRenderer != null) failedRenderer.stopAndWait(700L);
 
         boolean transientEglFailure = message.contains("eglCreateWindowSurface")
                 || message.contains("eglMakeCurrent")
