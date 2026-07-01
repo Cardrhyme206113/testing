@@ -1,0 +1,246 @@
+package com.cardrhyme.framegen;
+
+import android.graphics.SurfaceTexture;
+import android.opengl.EGL14;
+import android.opengl.EGLConfig;
+import android.opengl.EGLContext;
+import android.opengl.EGLDisplay;
+import android.opengl.EGLExt;
+import android.opengl.EGLSurface;
+import android.opengl.GLES11Ext;
+import android.opengl.GLES30;
+import android.opengl.GLES31;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.util.Log;
+import android.view.Choreographer;
+import android.view.Surface;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
+final class GpuFrameGenerator {
+    interface Callback {
+        void onCaptureSurfaceReady(Surface surface);
+        void onFirstOutputFrame();
+        void onFatalError(String message);
+    }
+
+    private static final String TAG = "FrameLiftGL";
+    private static final int MIP_LEVEL = 3; // 1/8 width and height.
+    private static final int FLOW_BLOCK = 4;
+
+    private final Callback callback;
+    private final AtomicInteger inputFps;
+    private final AtomicBoolean paused = new AtomicBoolean(false);
+
+    private HandlerThread thread;
+    private Handler handler;
+    private Choreographer choreographer;
+    private Surface outputSurface;
+    private int width;
+    private int height;
+    private int lowWidth;
+    private int lowHeight;
+    private int flowWidth;
+    private int flowHeight;
+
+    private EGLDisplay eglDisplay = EGL14.EGL_NO_DISPLAY;
+    private EGLContext eglContext = EGL14.EGL_NO_CONTEXT;
+    private EGLSurface eglSurface = EGL14.EGL_NO_SURFACE;
+
+    private SurfaceTexture captureTexture;
+    private int externalTex;
+    private final float[] textureMatrix = new float[16];
+    private volatile boolean framePending;
+    private boolean stopped;
+
+    private int copyProgram;
+    private int flowProgram;
+    private int smoothProgram;
+    private int interpolateProgram;
+    private int vao;
+
+    private int prevTex;
+    private int currTex;
+    private int prevFbo;
+    private int currFbo;
+    private int rawFlowTex;
+    private int smoothFlowTex;
+
+    private int sourceFrames;
+    private boolean hasFlow;
+    private long latestSourceArrivalNs;
+    private boolean firstOutputReported;
+
+    GpuFrameGenerator(int inputFps, Callback callback) {
+        this.inputFps = new AtomicInteger(Math.max(1, Math.min(120, inputFps)));
+        this.callback = callback;
+    }
+
+    void start(Surface outputSurface, int width, int height) {
+        this.outputSurface = outputSurface;
+        this.width = width;
+        this.height = height;
+        lowWidth = Math.max(1, width >> MIP_LEVEL);
+        lowHeight = Math.max(1, height >> MIP_LEVEL);
+        flowWidth = (lowWidth + FLOW_BLOCK - 1) / FLOW_BLOCK;
+        flowHeight = (lowHeight + FLOW_BLOCK - 1) / FLOW_BLOCK;
+
+        thread = new HandlerThread("FrameLift-GLES");
+        thread.start();
+        handler = new Handler(thread.getLooper());
+        handler.post(this::initializeSafely);
+    }
+
+    void setInputFps(int fps) {
+        inputFps.set(Math.max(1, Math.min(120, fps)));
+    }
+
+    void setPaused(boolean value) {
+        paused.set(value);
+    }
+
+    void stop() {
+        Handler localHandler = handler;
+        if (localHandler == null) return;
+        localHandler.post(() -> {
+            stopped = true;
+            releaseGl();
+            if (thread != null) thread.quitSafely();
+        });
+        handler = null;
+    }
+
+    private void initializeSafely() {
+        try {
+            initializeEgl();
+            initializeGlObjects();
+            initializeCapture();
+            choreographer = Choreographer.getInstance();
+            choreographer.postFrameCallback(frameCallback);
+        } catch (Throwable error) {
+            Log.e(TAG, "Initialization failed", error);
+            callback.onFatalError(shortError(error));
+            releaseGl();
+        }
+    }
+
+    private void initializeEgl() {
+        eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
+        if (eglDisplay == EGL14.EGL_NO_DISPLAY) throw new IllegalStateException("No EGL display");
+
+        int[] versions = new int[2];
+        if (!EGL14.eglInitialize(eglDisplay, versions, 0, versions, 1)) {
+            throw new IllegalStateException("eglInitialize failed");
+        }
+
+        int[] configAttrs = {
+                EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
+                EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
+                EGL14.EGL_RED_SIZE, 8,
+                EGL14.EGL_GREEN_SIZE, 8,
+                EGL14.EGL_BLUE_SIZE, 8,
+                EGL14.EGL_ALPHA_SIZE, 8,
+                EGL14.EGL_NONE
+        };
+        EGLConfig[] configs = new EGLConfig[1];
+        int[] count = new int[1];
+        if (!EGL14.eglChooseConfig(eglDisplay, configAttrs, 0, configs, 0, 1, count, 0)
+                || count[0] == 0) {
+            throw new IllegalStateException("No GLES 3 EGL config");
+        }
+
+        int[] contextAttrs = {
+                EGL14.EGL_CONTEXT_CLIENT_VERSION, 3,
+                EGL14.EGL_NONE
+        };
+        eglContext = EGL14.eglCreateContext(
+                eglDisplay,
+                configs[0],
+                EGL14.EGL_NO_CONTEXT,
+                contextAttrs,
+                0
+        );
+        checkEgl("eglCreateContext");
+
+        int[] surfaceAttrs = {EGL14.EGL_NONE};
+        eglSurface = EGL14.eglCreateWindowSurface(
+                eglDisplay,
+                configs[0],
+                outputSurface,
+                surfaceAttrs,
+                0
+        );
+        checkEgl("eglCreateWindowSurface");
+
+        if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+            throw new IllegalStateException("eglMakeCurrent failed");
+        }
+        EGL14.eglSwapInterval(eglDisplay, 1);
+
+        String version = GLES30.glGetString(GLES30.GL_VERSION);
+        Log.i(TAG, "GL version: " + version);
+        if (version == null || (!version.contains("OpenGL ES 3.1") && !version.contains("OpenGL ES 3.2"))) {
+            throw new IllegalStateException("GLES 3.1 compute is unavailable");
+        }
+    }
+
+    private void initializeGlObjects() {
+        copyProgram = linkGraphics(VERTEX_SHADER, COPY_EXTERNAL_SHADER);
+        flowProgram = linkCompute(FLOW_COMPUTE_SHADER);
+        smoothProgram = linkCompute(SMOOTH_COMPUTE_SHADER);
+        interpolateProgram = linkGraphics(VERTEX_SHADER, INTERPOLATE_SHADER);
+
+        int[] ids = new int[1];
+        GLES30.glGenVertexArrays(1, ids, 0);
+        vao = ids[0];
+        GLES30.glBindVertexArray(vao);
+
+        prevTex = createFrameTexture();
+        currTex = createFrameTexture();
+        prevFbo = createFbo(prevTex);
+        currFbo = createFbo(currTex);
+        rawFlowTex = createFlowTexture();
+        smoothFlowTex = createFlowTexture();
+
+        checkGl("initializeGlObjects");
+    }
+
+    private void initializeCapture() {
+        int[] ids = new int[1];
+        GLES30.glGenTextures(1, ids, 0);
+        externalTex = ids[0];
+        GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, externalTex);
+        GLES30.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+                GLES30.GL_TEXTURE_MIN_FILTER,
+                GLES30.GL_LINEAR
+        );
+        GLES30.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+                GLES30.GL_TEXTURE_MAG_FILTER,
+                GLES30.GL_LINEAR
+        );
+        GLES30.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+                GLES30.GL_TEXTURE_WRAP_S,
+                GLES30.GL_CLAMP_TO_EDGE
+        );
+        GLES30.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+                GLES30.GL_TEXTURE_WRAP_T,
+                GLES30.GL_CLAMP_TO_EDGE
+        );
+
+        captureTexture = new SurfaceTexture(externalTex);
+        captureTexture.setDefaultBufferSize(width, height);
+        captureTexture.setOnFrameAvailableListener(texture -> framePending = true, handler);
+        callback.onCaptureSurfaceReady(new Surface(captureTexture));
+    }
+
+    private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
+        @Override
+        public void doFrame(long frameTimeNanos) {
+            if (stopped) return;
+            try {
