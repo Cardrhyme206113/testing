@@ -78,7 +78,7 @@ jobs:
       - name: Upload Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ppocrv6-tiny-screen-translator-arm64
+          name: ppocrv6-tiny-screen-translator-arm64-v0.1.2
           path: vendor/PaddleOCR/deploy/ppocr-android/screen-translator/build/outputs/apk/debug/screen-translator-debug.apk
           if-no-files-found: error
 
@@ -88,8 +88,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           SOURCE="$GITHUB_WORKSPACE/vendor/PaddleOCR/deploy/ppocr-android/screen-translator/build/outputs/apk/debug/screen-translator-debug.apk"
-          APK="$GITHUB_WORKSPACE/PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.1.apk"
-          TAG="screen-translator-v0.1.1"
+          APK="$GITHUB_WORKSPACE/PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.2.apk"
+          TAG="screen-translator-v0.1.2"
           cp "$SOURCE" "$APK"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -97,6 +97,6 @@ jobs:
           else
             gh release create "$TAG" "$APK" \
               --target feature/paddle-screen-translator \
-              --title "PP-OCRv6 Tiny Screen Translator v0.1.1" \
-              --notes "Compact arm64 Android build under 40 MB. Uses PP-OCRv6 Tiny and Google ML Kit offline Japanese-to-English translation. Xiaomi 14T Pro and nearly all modern Android phones are arm64."
+              --title "PP-OCRv6 Tiny Screen Translator v0.1.2" \
+              --notes "Shows every OCR region. Japanese text is covered with English; non-Japanese text is highlighted. Includes an always-visible OCR/JP counter and remains under 40 MB."
           fi
