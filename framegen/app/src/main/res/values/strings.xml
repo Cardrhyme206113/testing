@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">FrameLift</string>
+    <string name="accessibility_service_description">Shows the generated frame surface as a trusted, touch-through overlay. FrameLift does not read screen text or app content through accessibility.</string>
 </resources>
