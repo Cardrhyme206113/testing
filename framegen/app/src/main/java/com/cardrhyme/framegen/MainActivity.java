@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -70,7 +71,7 @@ public final class MainActivity extends Activity {
         root.addView(title, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
 
         TextView subtitle = text(
-                "GPU frame interpolation for one selected app. Output stays at 120 FPS.",
+                "Full-display GPU frame interpolation. Output targets 120 FPS.",
                 16,
                 Color.rgb(190, 201, 196)
         );
@@ -103,7 +104,7 @@ public final class MainActivity extends Activity {
         root.addView(output, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
 
         Button start = new Button(this);
-        start.setText("Select app and start");
+        start.setText("Share full display and start");
         start.setTextSize(18);
         start.setAllCaps(false);
         start.setTextColor(Color.rgb(8, 25, 15));
@@ -115,9 +116,9 @@ public final class MainActivity extends Activity {
         ));
 
         TextView note = text(
-                "First launch asks you to enable FrameLift's accessibility overlay. "
-                        + "It is used only so the generated image stays fully opaque while touches pass to the selected app. "
-                        + "Then choose Roblox or the video app in Android's capture picker.",
+                "FrameLift now captures the whole display instead of one app. This prevents "
+                        + "YouTube fullscreen from changing the capture geometry. The generated "
+                        + "surface and control panel are secure, so they are excluded from capture.",
                 14,
                 Color.rgb(150, 164, 157)
         );
@@ -154,8 +155,16 @@ public final class MainActivity extends Activity {
     private void requestCapture() {
         MediaProjectionManager manager =
                 (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-        startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_CAPTURE);
-        Toast.makeText(this, "Select a single app, not the whole screen.", Toast.LENGTH_LONG).show();
+        Intent captureIntent;
+        if (Build.VERSION.SDK_INT >= 34) {
+            captureIntent = manager.createScreenCaptureIntent(
+                    MediaProjectionConfig.createConfigForDefaultDisplay()
+            );
+        } else {
+            captureIntent = manager.createScreenCaptureIntent();
+        }
+        startActivityForResult(captureIntent, REQUEST_CAPTURE);
+        Toast.makeText(this, "Allow full-display sharing.", Toast.LENGTH_LONG).show();
     }
 
     @Override
