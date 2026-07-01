@@ -8,6 +8,12 @@ on:
     paths:
       - "screen-translator/**"
       - ".github/workflows/build-screen-translator.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "screen-translator/**"
+      - ".github/workflows/build-screen-translator.yml"
 
 jobs:
   build:
