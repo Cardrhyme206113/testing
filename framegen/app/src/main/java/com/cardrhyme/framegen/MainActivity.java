@@ -6,7 +6,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -59,7 +58,6 @@ public final class MainActivity extends Activity {
 
     private View buildUi() {
         int pad = dp(22);
-
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -71,7 +69,7 @@ public final class MainActivity extends Activity {
         root.addView(title, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
 
         TextView subtitle = text(
-                "Full-display GPU frame interpolation. Output targets 120 FPS.",
+                "Single-app GPU frame interpolation. Output targets 120 FPS.",
                 16,
                 Color.rgb(190, 201, 196)
         );
@@ -104,7 +102,7 @@ public final class MainActivity extends Activity {
         root.addView(output, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
 
         Button start = new Button(this);
-        start.setText("Share full display and start");
+        start.setText("Select app and start");
         start.setTextSize(18);
         start.setAllCaps(false);
         start.setTextColor(Color.rgb(8, 25, 15));
@@ -116,15 +114,12 @@ public final class MainActivity extends Activity {
         ));
 
         TextView note = text(
-                "FrameLift now captures the whole display instead of one app. This prevents "
-                        + "YouTube fullscreen from changing the capture geometry. The generated "
-                        + "surface and control panel are secure, so they are excluded from capture.",
+                "Choose YouTube or Roblox in the capture picker. Do not choose the full display.",
                 14,
                 Color.rgb(150, 164, 157)
         );
         note.setPadding(0, dp(22), 0, 0);
         root.addView(note, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
-
         return root;
     }
 
@@ -135,7 +130,7 @@ public final class MainActivity extends Activity {
             startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
             Toast.makeText(
                     this,
-                    "Enable ‘FrameLift touch-through overlay’, then return.",
+                    "Enable FrameLift touch-through overlay, then return.",
                     Toast.LENGTH_LONG
             ).show();
             return;
@@ -155,37 +150,28 @@ public final class MainActivity extends Activity {
     private void requestCapture() {
         MediaProjectionManager manager =
                 (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-        Intent captureIntent;
-        if (Build.VERSION.SDK_INT >= 34) {
-            captureIntent = manager.createScreenCaptureIntent(
-                    MediaProjectionConfig.createConfigForDefaultDisplay()
-            );
-        } else {
-            captureIntent = manager.createScreenCaptureIntent();
-        }
-        startActivityForResult(captureIntent, REQUEST_CAPTURE);
-        Toast.makeText(this, "Allow full-display sharing.", Toast.LENGTH_LONG).show();
+        startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_CAPTURE);
+        Toast.makeText(this, "Select one app.", Toast.LENGTH_LONG).show();
     }
 
     @Override
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_CAPTURE) return;
 
-        if (requestCode == REQUEST_CAPTURE) {
-            if (resultCode != RESULT_OK || data == null) {
-                Toast.makeText(this, "Capture cancelled.", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
-            Intent serviceIntent = new Intent(this, FrameGenService.class);
-            serviceIntent.setAction(FrameGenService.ACTION_START);
-            serviceIntent.putExtra(FrameGenService.EXTRA_RESULT_CODE, resultCode);
-            serviceIntent.putExtra(FrameGenService.EXTRA_RESULT_DATA, data);
-            serviceIntent.putExtra(FrameGenService.EXTRA_INPUT_FPS, pendingFps);
-            startForegroundService(serviceIntent);
-            moveTaskToBack(true);
+        if (resultCode != RESULT_OK || data == null) {
+            Toast.makeText(this, "Capture cancelled.", Toast.LENGTH_SHORT).show();
+            return;
         }
+
+        Intent serviceIntent = new Intent(this, FrameGenService.class);
+        serviceIntent.setAction(FrameGenService.ACTION_START);
+        serviceIntent.putExtra(FrameGenService.EXTRA_RESULT_CODE, resultCode);
+        serviceIntent.putExtra(FrameGenService.EXTRA_RESULT_DATA, data);
+        serviceIntent.putExtra(FrameGenService.EXTRA_INPUT_FPS, pendingFps);
+        startForegroundService(serviceIntent);
+        moveTaskToBack(true);
     }
 
     private TextView text(String value, float sizeSp, int color) {
