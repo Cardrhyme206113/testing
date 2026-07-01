@@ -29,6 +29,7 @@ public final class FrameGenService extends Service implements OverlayController.
     static final String EXTRA_RESULT_CODE = "result_code";
     static final String EXTRA_RESULT_DATA = "result_data";
     static final String EXTRA_INPUT_FPS = "input_fps";
+    static final String EXTRA_OUTPUT_FPS = "output_fps";
 
     private static final int NOTIFICATION_ID = 4102;
     private static final String CHANNEL_ID = "framelift_running";
@@ -53,6 +54,7 @@ public final class FrameGenService extends Service implements OverlayController.
     private int pendingCaptureHeight;
     private int densityDpi;
     private int inputFps = 60;
+    private int outputFps = 120;
     private int surfaceEpoch;
     private int rendererEpoch;
     private int eglRetryCount;
@@ -121,7 +123,12 @@ public final class FrameGenService extends Service implements OverlayController.
             return START_NOT_STICKY;
         }
 
-        inputFps = Math.max(1, Math.min(120, intent.getIntExtra(EXTRA_INPUT_FPS, 60)));
+        inputFps = clampFps(intent.getIntExtra(EXTRA_INPUT_FPS, 60));
+        outputFps = Math.max(
+                inputFps,
+                clampFps(intent.getIntExtra(EXTRA_OUTPUT_FPS, 120))
+        );
+
         int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0);
         Intent resultData;
         if (Build.VERSION.SDK_INT >= 33) {
@@ -160,7 +167,7 @@ public final class FrameGenService extends Service implements OverlayController.
         pendingCaptureWidth = displayWidth;
         pendingCaptureHeight = displayHeight;
 
-        overlay = new OverlayController(accessibility, inputFps, this);
+        overlay = new OverlayController(accessibility, inputFps, outputFps, this);
         overlay.attach(new SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(SurfaceHolder holder) {
@@ -193,6 +200,7 @@ public final class FrameGenService extends Service implements OverlayController.
             }
         }, 0, 0, displayWidth, displayHeight);
 
+        updateNotification();
         return START_NOT_STICKY;
     }
 
@@ -234,6 +242,7 @@ public final class FrameGenService extends Service implements OverlayController.
         final int thisRendererEpoch = ++rendererEpoch;
         GpuFrameGenerator candidate = new GpuFrameGenerator(
                 inputFps,
+                outputFps,
                 new GpuFrameGenerator.Callback() {
                     private boolean isCurrent() {
                         return !shuttingDown && rendererEpoch == thisRendererEpoch;
@@ -263,7 +272,7 @@ public final class FrameGenService extends Service implements OverlayController.
                     @Override
                     public void onStats(
                             float sourceFps,
-                            float outputFps,
+                            float measuredOutputFps,
                             float generatedFps,
                             float captureFps,
                             boolean flowActive
@@ -272,7 +281,7 @@ public final class FrameGenService extends Service implements OverlayController.
                             if (!isCurrent() || overlay == null) return;
                             overlay.setStats(
                                     sourceFps,
-                                    outputFps,
+                                    measuredOutputFps,
                                     generatedFps,
                                     captureFps,
                                     flowActive
@@ -368,9 +377,24 @@ public final class FrameGenService extends Service implements OverlayController.
 
     @Override
     public void onInputFpsChanged(int fps) {
-        inputFps = Math.max(1, Math.min(120, fps));
-        if (renderer != null) renderer.setInputFps(inputFps);
-        if (overlay != null) overlay.setInputFps(inputFps);
+        inputFps = clampFps(fps);
+        if (outputFps < inputFps) outputFps = inputFps;
+        if (renderer != null) {
+            renderer.setInputFps(inputFps);
+            renderer.setOutputFps(outputFps);
+        }
+        if (overlay != null) {
+            overlay.setInputFps(inputFps);
+            overlay.setOutputFps(outputFps);
+        }
+        updateNotification();
+    }
+
+    @Override
+    public void onOutputFpsChanged(int fps) {
+        outputFps = Math.max(inputFps, clampFps(fps));
+        if (renderer != null) renderer.setOutputFps(outputFps);
+        if (overlay != null) overlay.setOutputFps(outputFps);
         updateNotification();
     }
 
@@ -455,7 +479,7 @@ public final class FrameGenService extends Service implements OverlayController.
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(com.cardrhyme.framegen.R.drawable.ic_stat_fg)
                 .setContentTitle(paused ? "FrameLift bypassed" : "FrameLift active")
-                .setContentText(inputFps + " → 120 FPS · selected app")
+                .setContentText(inputFps + " → " + outputFps + " FPS · selected app")
                 .setContentIntent(open)
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
@@ -467,5 +491,9 @@ public final class FrameGenService extends Service implements OverlayController.
     private void updateNotification() {
         NotificationManager manager = getSystemService(NotificationManager.class);
         manager.notify(NOTIFICATION_ID, buildNotification());
+    }
+
+    private static int clampFps(int value) {
+        return Math.max(1, Math.min(120, value));
     }
 }
