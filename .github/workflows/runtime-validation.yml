@@ -1,0 +1,73 @@
+name: Validate published ARM64 runtime
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static binfmt-support
+      - name: Download and extract runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 4 \
+            https://github.com/Cardrhyme206113/hosting/releases/download/blockhost-runtime-v1/runtime-aarch64.tar.gz \
+            -o runtime.tar.gz
+          curl -L --fail --retry 4 \
+            https://github.com/Cardrhyme206113/hosting/releases/download/blockhost-runtime-v1/runtime-aarch64.tar.gz.sha256 \
+            -o runtime.sha256
+          echo "$(cat runtime.sha256)  runtime.tar.gz" | sha256sum -c -
+          mkdir rootfs
+          tar -xzf runtime.tar.gz -C rootfs
+          sudo cp /usr/bin/qemu-aarch64-static rootfs/usr/bin/
+      - name: Show runtime structure
+        run: |
+          ls -l rootfs/usr/bin/java rootfs/usr/bin/git rootfs/usr/bin/mvn rootfs/bin/bash rootfs/bin/sh
+          file rootfs/usr/lib/jvm/java-21-openjdk/bin/java rootfs/usr/bin/git rootfs/bin/bash
+      - name: Test Bash and Java
+        shell: bash
+        run: |
+          sudo chroot rootfs /bin/bash --version
+          sudo chroot rootfs /usr/bin/java -version
+          sudo chroot rootfs /usr/lib/jvm/java-17-openjdk/bin/java -version
+      - name: Capture Git diagnostics
+        shell: bash
+        run: |
+          set +e
+          {
+            echo '=== loader list ==='
+            sudo chroot rootfs /lib/ld-musl-aarch64.so.1 --list /usr/bin/git
+            echo "loader_status=$?"
+            echo '=== normal run ==='
+            sudo chroot rootfs /usr/bin/git --version
+            echo "git_status=$?"
+            echo '=== qemu strace ==='
+            sudo env QEMU_STRACE=1 chroot rootfs /usr/bin/git --version
+            echo "strace_status=$?"
+          } > git-diagnostics.log 2>&1
+          cat git-diagnostics.log
+      - name: Capture Maven diagnostics
+        shell: bash
+        run: |
+          set +e
+          {
+            sudo chroot rootfs /usr/bin/mvn -version
+            echo "maven_status=$?"
+          } > maven-diagnostics.log 2>&1
+          cat maven-diagnostics.log
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-validation-diagnostics
+          path: |
+            git-diagnostics.log
+            maven-diagnostics.log
