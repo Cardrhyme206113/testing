@@ -34,6 +34,7 @@ public final class FrameGenService extends Service implements OverlayController.
     private static final String CHANNEL_ID = "framelift_running";
     private static final long RESIZE_DEBOUNCE_MS = 260L;
     private static final long PRODUCER_RESIZE_DELAY_MS = 70L;
+    private static final long SURFACE_START_DELAY_MS = 150L;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -52,6 +53,9 @@ public final class FrameGenService extends Service implements OverlayController.
     private int pendingCaptureHeight;
     private int densityDpi;
     private int inputFps = 60;
+    private int surfaceEpoch;
+    private int rendererEpoch;
+    private int eglRetryCount;
 
     private boolean paused;
     private boolean outputReady;
@@ -66,9 +70,9 @@ public final class FrameGenService extends Service implements OverlayController.
 
         captureWidth = newWidth;
         captureHeight = newHeight;
-
-        if (renderer != null) {
-            renderer.resizeCaptureBuffer(captureWidth, captureHeight);
+        GpuFrameGenerator activeRenderer = renderer;
+        if (activeRenderer != null) {
+            activeRenderer.resizeCaptureBuffer(captureWidth, captureHeight);
         }
 
         mainHandler.postDelayed(() -> {
@@ -161,7 +165,7 @@ public final class FrameGenService extends Service implements OverlayController.
             @Override
             public void surfaceCreated(SurfaceHolder holder) {
                 outputSurface = holder.getSurface();
-                startRendererIfNeeded();
+                scheduleRendererStart(SURFACE_START_DELAY_MS);
             }
 
             @Override
@@ -172,17 +176,20 @@ public final class FrameGenService extends Service implements OverlayController.
                     int newHeight
             ) {
                 outputSurface = holder.getSurface();
-                startRendererIfNeeded();
+                scheduleRendererStart(SURFACE_START_DELAY_MS);
             }
 
             @Override
             public void surfaceDestroyed(SurfaceHolder holder) {
+                surfaceEpoch++;
                 outputSurface = null;
-                if (renderer != null) {
-                    renderer.stop();
-                    renderer = null;
-                }
                 outputReady = false;
+                GpuFrameGenerator oldRenderer = renderer;
+                renderer = null;
+                rendererEpoch++;
+                if (oldRenderer != null) {
+                    oldRenderer.stopAndWait(700L);
+                }
             }
         }, 0, 0, displayWidth, displayHeight);
 
@@ -206,63 +213,119 @@ public final class FrameGenService extends Service implements OverlayController.
         mainHandler.postDelayed(applyPendingResize, RESIZE_DEBOUNCE_MS);
     }
 
+    private void scheduleRendererStart(long delayMs) {
+        final int expectedSurfaceEpoch = surfaceEpoch;
+        mainHandler.postDelayed(() -> {
+            if (shuttingDown || expectedSurfaceEpoch != surfaceEpoch) return;
+            startRendererIfNeeded();
+        }, delayMs);
+    }
+
     private void startRendererIfNeeded() {
         if (renderer != null) return;
-        if (outputSurface == null || !outputSurface.isValid()) return;
+        if (outputSurface == null || !outputSurface.isValid()) {
+            scheduleRendererStart(120L);
+            return;
+        }
 
         outputReady = false;
         if (overlay != null) overlay.setOutputVisible(false);
 
-        renderer = new GpuFrameGenerator(inputFps, new GpuFrameGenerator.Callback() {
-            @Override
-            public void onCaptureSurfaceReady(Surface newCaptureSurface) {
-                mainHandler.post(() -> connectVirtualDisplay(newCaptureSurface));
-            }
-
-            @Override
-            public void onFirstOutputFrame() {
-                mainHandler.post(() -> {
-                    outputReady = true;
-                    if (!paused && overlay != null) overlay.setOutputVisible(true);
-                });
-            }
-
-            @Override
-            public void onStats(
-                    float sourceFps,
-                    float outputFps,
-                    float generatedFps,
-                    float captureFps,
-                    boolean flowActive
-            ) {
-                mainHandler.post(() -> {
-                    if (overlay != null) {
-                        overlay.setStats(
-                                sourceFps,
-                                outputFps,
-                                generatedFps,
-                                captureFps,
-                                flowActive
-                        );
+        final int thisRendererEpoch = ++rendererEpoch;
+        final GpuFrameGenerator candidate = new GpuFrameGenerator(
+                inputFps,
+                new GpuFrameGenerator.Callback() {
+                    private boolean isCurrent() {
+                        return !shuttingDown
+                                && renderer == candidate
+                                && rendererEpoch == thisRendererEpoch;
                     }
-                });
-            }
 
-            @Override
-            public void onFatalError(String message) {
-                mainHandler.post(() -> {
-                    paused = true;
-                    if (overlay != null) {
-                        overlay.setOutputVisible(false);
-                        overlay.setPaused(true);
-                        overlay.setError(message);
+                    @Override
+                    public void onCaptureSurfaceReady(Surface newCaptureSurface) {
+                        mainHandler.post(() -> {
+                            if (!isCurrent()) {
+                                newCaptureSurface.release();
+                                return;
+                            }
+                            connectVirtualDisplay(newCaptureSurface);
+                        });
                     }
-                    updateNotification();
-                });
-            }
-        });
-        renderer.start(outputSurface, displayWidth, displayHeight);
-        renderer.resizeCaptureBuffer(captureWidth, captureHeight);
+
+                    @Override
+                    public void onFirstOutputFrame() {
+                        mainHandler.post(() -> {
+                            if (!isCurrent()) return;
+                            eglRetryCount = 0;
+                            outputReady = true;
+                            if (!paused && overlay != null) overlay.setOutputVisible(true);
+                        });
+                    }
+
+                    @Override
+                    public void onStats(
+                            float sourceFps,
+                            float outputFps,
+                            float generatedFps,
+                            float captureFps,
+                            boolean flowActive
+                    ) {
+                        mainHandler.post(() -> {
+                            if (!isCurrent() || overlay == null) return;
+                            overlay.setStats(
+                                    sourceFps,
+                                    outputFps,
+                                    generatedFps,
+                                    captureFps,
+                                    flowActive
+                            );
+                        });
+                    }
+
+                    @Override
+                    public void onFatalError(String message) {
+                        mainHandler.post(() -> handleRendererFailure(
+                                candidate,
+                                thisRendererEpoch,
+                                message
+                        ));
+                    }
+                }
+        );
+        renderer = candidate;
+        candidate.start(outputSurface, displayWidth, displayHeight);
+        candidate.resizeCaptureBuffer(captureWidth, captureHeight);
+    }
+
+    private void handleRendererFailure(
+            GpuFrameGenerator failedRenderer,
+            int failedEpoch,
+            String message
+    ) {
+        if (shuttingDown) return;
+        if (renderer != failedRenderer || rendererEpoch != failedEpoch) return;
+
+        renderer = null;
+        rendererEpoch++;
+        outputReady = false;
+        if (overlay != null) overlay.setOutputVisible(false);
+        failedRenderer.stopAndWait(700L);
+
+        boolean transientEglFailure = message.contains("eglCreateWindowSurface")
+                || message.contains("eglMakeCurrent")
+                || message.contains("eglSwapBuffers");
+        if (transientEglFailure && eglRetryCount < 4 && outputSurface != null) {
+            eglRetryCount++;
+            scheduleRendererStart(260L + eglRetryCount * 180L);
+            return;
+        }
+
+        paused = true;
+        if (overlay != null) {
+            overlay.setPaused(true);
+            overlay.setError(message);
+        }
+        updateNotification();
     }
 
     private void connectVirtualDisplay(Surface newSurface) {
@@ -321,12 +384,13 @@ public final class FrameGenService extends Service implements OverlayController.
     private void shutdown() {
         if (shuttingDown) return;
         shuttingDown = true;
+        surfaceEpoch++;
+        rendererEpoch++;
         mainHandler.removeCallbacks(applyPendingResize);
 
-        if (renderer != null) {
-            renderer.stop();
-            renderer = null;
-        }
+        GpuFrameGenerator oldRenderer = renderer;
+        renderer = null;
+        if (oldRenderer != null) oldRenderer.stopAndWait(800L);
         outputSurface = null;
 
         if (virtualDisplay != null) {
