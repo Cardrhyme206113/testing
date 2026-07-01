@@ -4,20 +4,24 @@ A separate Android experiment; the existing BlockHost app is not removed or repl
 
 ## Stack
 
-- Official PaddleOCR Android SDK (ONNX Runtime)
-- PP-OCRv6 Small detection + recognition models
-- Google ML Kit Japanese → English on-device translation
+- Official PaddleOCR Android SDK using ONNX Runtime
+- PP-OCRv6 Tiny detection and recognition models
+- Google ML Kit Japanese to English on-device translation
 - MediaProjection screen capture
-- `TYPE_APPLICATION_OVERLAY` with `FLAG_NOT_TOUCHABLE` for full touch passthrough
+- Touch-through application overlay
 
 ## Behavior
 
+- Every OCR region is displayed.
+- Japanese regions are covered with their English translation.
+- Other detected text receives a yellow translucent highlight without changing the text.
+- A green status pill reports total OCR regions and Japanese regions.
 - OCR runs on a throttled loop rather than every video frame.
-- Only text containing Japanese kana/kanji is considered.
-- Exact and near-identical OCR strings reuse cached translations, so unchanged text is not translated repeatedly.
-- The overlay briefly hides before each capture to avoid covering or re-reading itself.
-- Google’s translation model downloads once on first use and remains available offline.
+- Exact and near-identical Japanese strings reuse cached translations.
+- The overlay briefly hides before capture so it never recognizes itself.
+- Screen capture permission must be approved again after restarting the app or phone.
+- Google's translation model downloads once and remains available offline.
 
 ## Build
 
-The GitHub Actions workflow clones the current official PaddleOCR repository, injects this module, downloads the PP-OCRv6 Small ONNX assets, builds a debug APK, and uploads it as `ppocrv6-screen-translator-debug`.
+The arm64 PP-OCRv6 Tiny APK is kept below 40 MB and published through GitHub Releases.
