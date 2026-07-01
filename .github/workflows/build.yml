@@ -67,15 +67,18 @@ jobs:
         run: |
           set -euxo pipefail
           apk=app/build/outputs/apk/debug/app-debug.apk
-          unzip -l "$apk" | grep -q 'lib/arm64-v8a/libblockhost_jvm.so'
-          ! unzip -l "$apk" | grep -q 'libproot'
-          ! unzip -l "$apk" | grep -q 'runtime-aarch64'
+          unzip -l "$apk" > /tmp/blockhost-apk-list.txt
+          grep -q 'lib/arm64-v8a/libblockhost_jvm.so' /tmp/blockhost-apk-list.txt
+          ! grep -q 'libproot' /tmp/blockhost-apk-list.txt
+          ! grep -q 'runtime-aarch64' /tmp/blockhost-apk-list.txt
           test "$(stat -c%s "$apk")" -lt 50000000
           unzip -p "$apk" 'classes*.dex' > /tmp/blockhost-classes.dex
-          strings /tmp/blockhost-classes.dex | grep -q 'server-process-state.json'
-          strings /tmp/blockhost-classes.dex | grep -q 'JVM/native headroom'
+          strings /tmp/blockhost-classes.dex > /tmp/blockhost-dex-strings.txt
+          grep -q 'server-process-state.json' /tmp/blockhost-dex-strings.txt
+          grep -q 'JVM/native headroom' /tmp/blockhost-dex-strings.txt
           unzip -p "$apk" AndroidManifest.xml > /tmp/blockhost-manifest.xml
-          strings /tmp/blockhost-manifest.xml | grep -q ':server'
+          strings /tmp/blockhost-manifest.xml > /tmp/blockhost-manifest-strings.txt
+          grep -q ':server' /tmp/blockhost-manifest-strings.txt
           ls -lh "$apk"
       - name: Upload build log
         if: always()
