@@ -44,11 +44,11 @@ jobs:
           set +e
           gradle --no-daemon :app:assembleDebug --console=plain > /tmp/framelift-build.log 2>&1
           status=$?
-          tail -n 220 /tmp/framelift-build.log
+          tail -n 260 /tmp/framelift-build.log
           exit $status
 
       - uses: actions/upload-artifact@v4
         with:
-          name: framelift-debug-v0.6
+          name: framelift-debug-v0.7
           path: framegen/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
