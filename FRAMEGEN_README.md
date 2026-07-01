@@ -15,3 +15,5 @@ Current pipeline:
 - a separate secure control bubble and foreground notification remain available for bypass/stop
 
 This first build deliberately uses no neural network. The MediaTek public NPU path does not map classical block matching or warping efficiently, while the Mali GPU can execute the entire pipeline without GPU↔CPU/NPU copies.
+
+Build target: Samsung Tab S11 / Dimensity 9400-class Android tablets with a 120 Hz display.
