@@ -12,10 +12,13 @@ import android.opengl.GLES30;
 import android.opengl.GLES31;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.Choreographer;
 import android.view.Surface;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -34,7 +37,8 @@ final class GpuFrameGenerator {
     }
 
     private static final String TAG = "FrameLiftGL";
-    private static final int MIP_LEVEL = 3;
+    private static final int COARSE_MIP = 4; // 1/16 linear resolution.
+    private static final int FINE_MIP = 3;   // 1/8 linear resolution.
     private static final int FLOW_BLOCK = 4;
 
     private final Callback callback;
@@ -47,8 +51,12 @@ final class GpuFrameGenerator {
     private Surface outputSurface;
     private int width;
     private int height;
-    private int lowWidth;
-    private int lowHeight;
+    private int coarseWidth;
+    private int coarseHeight;
+    private int fineWidth;
+    private int fineHeight;
+    private int coarseFlowWidth;
+    private int coarseFlowHeight;
     private int flowWidth;
     private int flowHeight;
 
@@ -63,8 +71,8 @@ final class GpuFrameGenerator {
     private boolean stopped;
 
     private int copyProgram;
-    private int flowProgram;
-    private int smoothProgram;
+    private int coarseFlowProgram;
+    private int refineFlowProgram;
     private int interpolateProgram;
     private int vao;
 
@@ -72,8 +80,10 @@ final class GpuFrameGenerator {
     private int currTex;
     private int prevFbo;
     private int currFbo;
-    private int rawFlowTex;
-    private int smoothFlowTex;
+    private int coarseForwardTex;
+    private int forwardFlowTex;
+    private int coarseBackwardTex;
+    private int backwardFlowTex;
 
     private int sourceFrames;
     private boolean hasFlow;
@@ -96,10 +106,14 @@ final class GpuFrameGenerator {
         this.outputSurface = outputSurface;
         this.width = width;
         this.height = height;
-        lowWidth = Math.max(1, width >> MIP_LEVEL);
-        lowHeight = Math.max(1, height >> MIP_LEVEL);
-        flowWidth = (lowWidth + FLOW_BLOCK - 1) / FLOW_BLOCK;
-        flowHeight = (lowHeight + FLOW_BLOCK - 1) / FLOW_BLOCK;
+        coarseWidth = Math.max(1, width >> COARSE_MIP);
+        coarseHeight = Math.max(1, height >> COARSE_MIP);
+        fineWidth = Math.max(1, width >> FINE_MIP);
+        fineHeight = Math.max(1, height >> FINE_MIP);
+        coarseFlowWidth = (coarseWidth + FLOW_BLOCK - 1) / FLOW_BLOCK;
+        coarseFlowHeight = (coarseHeight + FLOW_BLOCK - 1) / FLOW_BLOCK;
+        flowWidth = (fineWidth + FLOW_BLOCK - 1) / FLOW_BLOCK;
+        flowHeight = (fineHeight + FLOW_BLOCK - 1) / FLOW_BLOCK;
 
         thread = new HandlerThread("FrameLift-GLES");
         thread.start();
@@ -135,14 +149,30 @@ final class GpuFrameGenerator {
     }
 
     void stop() {
+        stopAndWait(0L);
+    }
+
+    boolean stopAndWait(long timeoutMs) {
         Handler localHandler = handler;
-        if (localHandler == null) return;
+        if (localHandler == null) return true;
+        CountDownLatch finished = new CountDownLatch(1);
+        handler = null;
         localHandler.post(() -> {
             stopped = true;
+            if (choreographer != null) {
+                choreographer.removeFrameCallback(frameCallback);
+            }
             releaseGl();
             if (thread != null) thread.quitSafely();
+            finished.countDown();
         });
-        handler = null;
+        if (timeoutMs <= 0L) return false;
+        try {
+            return finished.await(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private void initializeSafely() {
@@ -199,14 +229,26 @@ final class GpuFrameGenerator {
         checkEgl("eglCreateContext");
 
         int[] surfaceAttrs = {EGL14.EGL_NONE};
-        eglSurface = EGL14.eglCreateWindowSurface(
-                eglDisplay,
-                configs[0],
-                outputSurface,
-                surfaceAttrs,
-                0
-        );
-        checkEgl("eglCreateWindowSurface");
+        int lastError = EGL14.EGL_SUCCESS;
+        for (int attempt = 0; attempt < 5; attempt++) {
+            eglSurface = EGL14.eglCreateWindowSurface(
+                    eglDisplay,
+                    configs[0],
+                    outputSurface,
+                    surfaceAttrs,
+                    0
+            );
+            lastError = EGL14.eglGetError();
+            if (eglSurface != EGL14.EGL_NO_SURFACE && lastError == EGL14.EGL_SUCCESS) break;
+            eglSurface = EGL14.EGL_NO_SURFACE;
+            SystemClock.sleep(70L + attempt * 45L);
+        }
+        if (eglSurface == EGL14.EGL_NO_SURFACE) {
+            throw new IllegalStateException(
+                    "eglCreateWindowSurface failed after retries: 0x"
+                            + Integer.toHexString(lastError)
+            );
+        }
 
         if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
             throw new IllegalStateException("eglMakeCurrent failed");
@@ -222,8 +264,8 @@ final class GpuFrameGenerator {
 
     private void initializeGlObjects() {
         copyProgram = linkGraphics(VERTEX_SHADER, COPY_EXTERNAL_SHADER);
-        flowProgram = linkCompute(FLOW_COMPUTE_SHADER);
-        smoothProgram = linkCompute(SMOOTH_COMPUTE_SHADER);
+        coarseFlowProgram = linkCompute(COARSE_FLOW_SHADER);
+        refineFlowProgram = linkCompute(REFINE_FLOW_SHADER);
         interpolateProgram = linkGraphics(VERTEX_SHADER, INTERPOLATE_SHADER);
 
         int[] ids = new int[1];
@@ -235,8 +277,10 @@ final class GpuFrameGenerator {
         currTex = createFrameTexture();
         prevFbo = createFbo(prevTex);
         currFbo = createFbo(currTex);
-        rawFlowTex = createFlowTexture();
-        smoothFlowTex = createFlowTexture();
+        coarseForwardTex = createFlowTexture(coarseFlowWidth, coarseFlowHeight);
+        forwardFlowTex = createFlowTexture(flowWidth, flowHeight);
+        coarseBackwardTex = createFlowTexture(coarseFlowWidth, coarseFlowHeight);
+        backwardFlowTex = createFlowTexture(flowWidth, flowHeight);
 
         checkGl("initializeGlObjects");
     }
