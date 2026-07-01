@@ -57,7 +57,6 @@ jobs:
           p.write_text(s)
           PY
           python3 scripts/patch-pufferfish-v21.py
-          python3 scripts/patch-server-process-v22.py
       - name: Build debug APK
         shell: bash
         run: |
