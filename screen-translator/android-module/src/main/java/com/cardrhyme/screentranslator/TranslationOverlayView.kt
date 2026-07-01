@@ -23,7 +23,9 @@ data class OverlayItem(
 
 class TranslationOverlayView(context: Context) : View(context) {
     private var items: List<OverlayItem> = emptyList()
-    private var statusText: String = "Translator starting…"
+    private var statusText: String = "OVERLAY OK • loading"
+    private var suppressResultBoxes = false
+    private var statusIsError = false
     private val density = resources.displayMetrics.density
 
     private val translatedBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -40,29 +42,49 @@ class TranslationOverlayView(context: Context) : View(context) {
         strokeWidth = 2f * density
     }
     private val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(235, 20, 110, 55)
+        color = Color.argb(245, 20, 130, 65)
         style = Paint.Style.FILL
     }
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val statusTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = 13f * density
+        textSize = 14f * density
+        isFakeBoldText = true
     }
 
     fun setStatus(value: String) {
         statusText = value
+        statusIsError = false
+        invalidate()
+    }
+
+    fun setCapturing(capturing: Boolean, status: String) {
+        suppressResultBoxes = capturing
+        statusText = status
+        statusIsError = false
         invalidate()
     }
 
     fun setResult(status: String, newItems: List<OverlayItem>) {
+        suppressResultBoxes = false
+        statusIsError = false
         statusText = status
         items = newItems
+        invalidate()
+    }
+
+    fun setError(message: String) {
+        suppressResultBoxes = false
+        statusIsError = true
+        statusText = "ERROR • $message"
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         drawStatus(canvas)
+        if (suppressResultBoxes) return
+
         for (item in items) {
             if (item.kind == OverlayKind.TRANSLATED) drawTranslatedBox(canvas, item)
             else drawHighlight(canvas, item.bounds)
@@ -109,13 +131,19 @@ class TranslationOverlayView(context: Context) : View(context) {
     }
 
     private fun drawStatus(canvas: Canvas) {
-        val horizontalPadding = 10f * density
-        val verticalPadding = 7f * density
+        statusPaint.color = if (statusIsError) {
+            Color.argb(245, 185, 30, 30)
+        } else {
+            Color.argb(245, 20, 130, 65)
+        }
+
+        val horizontalPadding = 12f * density
+        val verticalPadding = 8f * density
         val textWidth = statusTextPaint.measureText(statusText)
         val box = RectF(
             10f * density,
             10f * density,
-            10f * density + textWidth + horizontalPadding * 2,
+            min(width - 10f * density, 10f * density + textWidth + horizontalPadding * 2),
             10f * density + statusTextPaint.textSize + verticalPadding * 2,
         )
         canvas.drawRoundRect(box, 12f * density, 12f * density, statusPaint)
