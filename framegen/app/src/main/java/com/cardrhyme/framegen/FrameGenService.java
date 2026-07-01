@@ -55,6 +55,7 @@ public final class FrameGenService extends Service implements OverlayController.
     private int densityDpi;
     private int inputFps = 60;
     private int outputFps = 120;
+    private int interpolationStrength = 90;
     private int surfaceEpoch;
     private int rendererEpoch;
     private int eglRetryCount;
@@ -128,6 +129,7 @@ public final class FrameGenService extends Service implements OverlayController.
                 inputFps,
                 clampFps(intent.getIntExtra(EXTRA_OUTPUT_FPS, 120))
         );
+        interpolationStrength = InterpolationSettings.getStrengthPercent();
 
         int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0);
         Intent resultData;
@@ -167,7 +169,13 @@ public final class FrameGenService extends Service implements OverlayController.
         pendingCaptureWidth = displayWidth;
         pendingCaptureHeight = displayHeight;
 
-        overlay = new OverlayController(accessibility, inputFps, outputFps, this);
+        overlay = new OverlayController(
+                accessibility,
+                inputFps,
+                outputFps,
+                interpolationStrength,
+                this
+        );
         overlay.attach(new SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(SurfaceHolder holder) {
@@ -398,6 +406,14 @@ public final class FrameGenService extends Service implements OverlayController.
         updateNotification();
     }
 
+    @Override
+    public void onInterpolationStrengthChanged(int percent) {
+        interpolationStrength = clampPercent(percent);
+        InterpolationSettings.setStrengthPercent(interpolationStrength);
+        if (overlay != null) overlay.setInterpolationStrength(interpolationStrength);
+        updateNotification();
+    }
+
     private void shutdown() {
         if (shuttingDown) return;
         shuttingDown = true;
@@ -479,7 +495,10 @@ public final class FrameGenService extends Service implements OverlayController.
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(com.cardrhyme.framegen.R.drawable.ic_stat_fg)
                 .setContentTitle(paused ? "FrameLift bypassed" : "FrameLift active")
-                .setContentText(inputFps + " → " + outputFps + " FPS · selected app")
+                .setContentText(
+                        inputFps + " → " + outputFps + " FPS · "
+                                + interpolationStrength + "% interpolation"
+                )
                 .setContentIntent(open)
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
@@ -495,5 +514,9 @@ public final class FrameGenService extends Service implements OverlayController.
 
     private static int clampFps(int value) {
         return Math.max(1, Math.min(120, value));
+    }
+
+    private static int clampPercent(int value) {
+        return Math.max(0, Math.min(100, value));
     }
 }
