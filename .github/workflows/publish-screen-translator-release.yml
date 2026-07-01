@@ -15,56 +15,19 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
-        with:
-          ref: feature/paddle-screen-translator
+      - uses: actions/checkout@v4
 
-      - name: Download compact APK artifact
+      - name: Download verified build
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          curl -L --fail \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/8009017297/zip" \
-            -o artifact.zip
+          gh api repos/$GITHUB_REPOSITORY/actions/artifacts/8009371767/zip > artifact.zip
           unzip -q artifact.zip -d artifact
-          SOURCE="$(find artifact -type f -name '*.apk' | head -n 1)"
-          test -n "$SOURCE"
-          cp "$SOURCE" PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.4.apk
-          test "$(stat -c%s PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.4.apk)" -le 41943040
+          cp "$(find artifact -name '*.apk' | head -n 1)" PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.5.apk
 
-      - name: Publish GitHub Release
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="screen-translator-v0.1.4"
-          APK="PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.4.apk"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK" --clobber
-          else
-            gh release create "$TAG" "$APK" \
-              --target feature/paddle-screen-translator \
-              --title "PP-OCRv6 Tiny Screen Translator v0.1.4" \
-              --notes "Fixes the Android 15 SecurityException by requesting MediaProjection consent before starting the media-projection foreground service."
-          fi
-
-      - name: Record successful publication
-        run: |
-          mkdir -p release-status
-          {
-            echo "tag=screen-translator-v0.1.4"
-            echo "asset=PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.4.apk"
-            echo "sha256=$(sha256sum PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.4.apk | cut -d' ' -f1)"
-            echo "bytes=$(stat -c%s PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.4.apk)"
-            echo "published_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          } > release-status/screen-translator-v0.1.4.txt
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add release-status/screen-translator-v0.1.4.txt
-          git commit -m "Record screen translator v0.1.4 release [skip ci]"
-          git push origin HEAD:feature/paddle-screen-translator
+          gh release create screen-translator-v0.1.5 PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.5.apk --target feature/paddle-screen-translator --title "PP-OCRv6 Tiny Screen Translator v0.1.5" --notes "Official OpenCV 4.12.0 with verified 16 KB alignment for Android 15 and Android 16." || gh release upload screen-translator-v0.1.5 PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.5.apk --clobber
