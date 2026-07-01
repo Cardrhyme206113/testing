@@ -60,10 +60,13 @@ new_ram = '''            int memoryBudgetMb=Math.max(768,(int)Math.round(server.
             int heapMb=Math.max(384,memoryBudgetMb-nativeHeadroomMb);
             JSONObject settings=server.optJSONObject("settings"); String extra=settings==null?"nogui":settings.optString("extraArgs","nogui");
             List<String> args=new ArrayList<>();
-            args.add("java"); args.add("-Djava.awt.headless=true"); args.add("-Dfile.encoding=UTF-8");
+            args.add("java");
+            args.add("-Djava.awt.headless=true");
+            args.add("-Dfile.encoding=UTF-8");
+            args.add("-DPaper.IgnoreJavaVersion=true");
+            args.add("-XX:+IgnoreUnrecognizedVMOptions");
             args.add("-Xms128M");
             args.add("-Xmx"+heapMb+"M");
-            args.add("-XX:MaxRAM="+memoryBudgetMb+"M");
             args.add("-XX:ErrorFile="+new File(serverDir,"hs_err_pid%p.log").getAbsolutePath());
             args.add("-XX:+UseG1GC");
 '''
@@ -73,11 +76,13 @@ text = text.replace(old_ram, new_ram, 1)
 
 text = text.replace(
     'repository.appendLog(serverId,"[BlockHost] Starting server with Android Java 21 and a "+ramMb+" MB RAM cap");',
-    'repository.appendLog(serverId,"[BlockHost] Starting server with a "+memoryBudgetMb+" MB total memory budget: -Xmx"+heapMb+"M and "+nativeHeadroomMb+" MB JVM/native headroom");'
+    'repository.appendLog(serverId,"[BlockHost] Starting server with a "+memoryBudgetMb+" MB total memory budget: -Xmx"+heapMb+"M and "+nativeHeadroomMb+" MB JVM/native headroom");\n'
+    '            repository.appendLog(serverId,"[BlockHost] Paper Java-version check bypass enabled for the Android Java runtime");'
 )
 text = text.replace(
     'repository.appendLog(serverId,"[BlockHost] Starting Paper with Android Java 21 and a "+ramMb+" MB RAM cap");',
-    'repository.appendLog(serverId,"[BlockHost] Starting server with a "+memoryBudgetMb+" MB total memory budget: -Xmx"+heapMb+"M and "+nativeHeadroomMb+" MB JVM/native headroom");'
+    'repository.appendLog(serverId,"[BlockHost] Starting server with a "+memoryBudgetMb+" MB total memory budget: -Xmx"+heapMb+"M and "+nativeHeadroomMb+" MB JVM/native headroom");\n'
+    '            repository.appendLog(serverId,"[BlockHost] Paper Java-version check bypass enabled for the Android Java runtime");'
 )
 
 old_update = '''    private void updateSnapshot(String id,String status,String phase,int progress,String message,long ram,double cpu,long started){JSONArray players=new JSONArray();synchronized(onlinePlayers){for(String p:onlinePlayers)players.put(p);}synchronized(SNAPSHOT_LOCK){snapshot=new RuntimeSnapshot(id,status,phase,progress,message==null?"":message,ram,cpu,players,started);}}
@@ -95,7 +100,7 @@ if old_update not in text:
 text = text.replace(old_update, new_update, 1)
 
 service_path.write_text(text, encoding='utf-8')
-print('Patched isolated server process, command intents, crash logs, and RAM budget headroom')
+print('Patched isolated server process, Paper Java bypass, crash logs, and RAM headroom')
 
 backend_path = Path('app/src/main/java/com/example/blockhost/BlockHostBackend.java')
 backend = backend_path.read_text(encoding='utf-8')
