@@ -45,27 +45,35 @@ final class OverlayController {
         this.windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
     }
 
-    void attach(SurfaceHolder.Callback surfaceCallback) {
+    void attach(
+            SurfaceHolder.Callback surfaceCallback,
+            int outputX,
+            int outputY,
+            int outputWidth,
+            int outputHeight
+    ) {
         if (attached) return;
         attached = true;
 
         outputView = new SurfaceView(context);
         outputView.getHolder().setFormat(PixelFormat.OPAQUE);
+        outputView.getHolder().setFixedSize(outputWidth, outputHeight);
         outputView.getHolder().addCallback(surfaceCallback);
         outputView.setKeepScreenOn(true);
 
         outputParams = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                outputWidth,
+                outputHeight,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                        | WindowManager.LayoutParams.FLAG_FULLSCREEN
                         | WindowManager.LayoutParams.FLAG_SECURE,
                 PixelFormat.OPAQUE
         );
         outputParams.gravity = Gravity.TOP | Gravity.START;
+        outputParams.x = outputX;
+        outputParams.y = outputY;
         outputParams.alpha = 0f;
         outputParams.preferredRefreshRate = 120f;
         if (Build.VERSION.SDK_INT >= 28) {
@@ -79,16 +87,33 @@ final class OverlayController {
         controlParams = new WindowManager.LayoutParams(
                 dp(270),
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                         | WindowManager.LayoutParams.FLAG_SECURE,
                 PixelFormat.TRANSLUCENT
         );
         controlParams.gravity = Gravity.TOP | Gravity.START;
-        controlParams.x = context.getResources().getDisplayMetrics().widthPixels - dp(286);
-        controlParams.y = dp(58);
+        controlParams.x = Math.max(outputX, outputX + outputWidth - dp(286));
+        controlParams.y = outputY + dp(18);
         windowManager.addView(controlRoot, controlParams);
+    }
+
+    void resizeOutput(int outputX, int outputY, int outputWidth, int outputHeight) {
+        if (!attached || outputView == null) return;
+        outputParams.x = outputX;
+        outputParams.y = outputY;
+        outputParams.width = Math.max(1, outputWidth);
+        outputParams.height = Math.max(1, outputHeight);
+        outputView.getHolder().setFixedSize(outputParams.width, outputParams.height);
+        windowManager.updateViewLayout(outputView, outputParams);
+
+        if (controlRoot != null && controlParams != null) {
+            int rightLimit = outputX + outputWidth - controlParams.width;
+            controlParams.x = Math.max(outputX, Math.min(controlParams.x, rightLimit));
+            controlParams.y = Math.max(outputY, controlParams.y);
+            windowManager.updateViewLayout(controlRoot, controlParams);
+        }
     }
 
     @SuppressWarnings("deprecation")
