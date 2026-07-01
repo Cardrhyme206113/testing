@@ -27,6 +27,7 @@ final class OverlayController {
         void onStop();
         void onInputFpsChanged(int fps);
         void onOutputFpsChanged(int fps);
+        void onInterpolationStrengthChanged(int percent);
     }
 
     private final Context context;
@@ -44,20 +45,29 @@ final class OverlayController {
     private TextView statsView;
     private TextView sourceLabel;
     private TextView targetLabel;
+    private TextView strengthLabel;
     private Button pauseButton;
     private LinearLayout expandedPanel;
 
     private int inputFps;
     private int outputFps;
+    private int interpolationStrength;
     private boolean mini;
     private boolean expanded;
     private boolean paused;
     private boolean attached;
 
-    OverlayController(Context context, int inputFps, int outputFps, Listener listener) {
+    OverlayController(
+            Context context,
+            int inputFps,
+            int outputFps,
+            int interpolationStrength,
+            Listener listener
+    ) {
         this.context = context;
         this.inputFps = clampFps(inputFps);
         this.outputFps = Math.max(this.inputFps, clampFps(outputFps));
+        this.interpolationStrength = clampPercent(interpolationStrength);
         this.listener = listener;
         this.windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
     }
@@ -234,11 +244,9 @@ final class OverlayController {
         expandedPanel.setOrientation(LinearLayout.VERTICAL);
         expandedPanel.setVisibility(View.GONE);
 
-        LinearLayout sourceRow = makeFpsRow(true);
-        expandedPanel.addView(sourceRow);
-
-        LinearLayout targetRow = makeFpsRow(false);
-        expandedPanel.addView(targetRow);
+        expandedPanel.addView(makeFpsRow(true));
+        expandedPanel.addView(makeFpsRow(false));
+        expandedPanel.addView(makeStrengthRow());
 
         pauseButton = compactButton("Bypass");
         pauseButton.setOnClickListener(v -> listener.onPauseToggle());
@@ -261,7 +269,7 @@ final class OverlayController {
         root.addView(expandedPanel);
 
         installDragAndExpand(header);
-        updateFpsLabels();
+        updateControlLabels();
         return root;
     }
 
@@ -286,6 +294,23 @@ final class OverlayController {
             if (source) changeInputFps(1);
             else changeOutputFps(5);
         });
+        row.addView(plus, new LinearLayout.LayoutParams(dp(42), dp(34)));
+        return row;
+    }
+
+    private LinearLayout makeStrengthRow() {
+        LinearLayout row = new LinearLayout(context);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+
+        strengthLabel = label("", 12, Color.rgb(205, 215, 210));
+        row.addView(strengthLabel, new LinearLayout.LayoutParams(0, dp(36), 1f));
+
+        Button minus = compactButton("−");
+        minus.setOnClickListener(v -> changeInterpolationStrength(-5));
+        row.addView(minus, new LinearLayout.LayoutParams(dp(42), dp(34)));
+
+        Button plus = compactButton("+");
+        plus.setOnClickListener(v -> changeInterpolationStrength(5));
         row.addView(plus, new LinearLayout.LayoutParams(dp(42), dp(34)));
         return row;
     }
@@ -370,7 +395,7 @@ final class OverlayController {
             listener.onOutputFpsChanged(outputFps);
             applyOutputRatePreference();
         }
-        updateFpsLabels();
+        updateControlLabels();
         updateStatus();
     }
 
@@ -378,8 +403,14 @@ final class OverlayController {
         outputFps = Math.max(inputFps, clampFps(outputFps + delta));
         listener.onOutputFpsChanged(outputFps);
         applyOutputRatePreference();
-        updateFpsLabels();
+        updateControlLabels();
         updateStatus();
+    }
+
+    private void changeInterpolationStrength(int delta) {
+        interpolationStrength = clampPercent(interpolationStrength + delta);
+        listener.onInterpolationStrengthChanged(interpolationStrength);
+        updateControlLabels();
     }
 
     private void applyOutputRatePreference() {
@@ -407,15 +438,20 @@ final class OverlayController {
     void setInputFps(int fps) {
         inputFps = clampFps(fps);
         if (outputFps < inputFps) outputFps = inputFps;
-        updateFpsLabels();
+        updateControlLabels();
         updateStatus();
     }
 
     void setOutputFps(int fps) {
         outputFps = Math.max(inputFps, clampFps(fps));
-        updateFpsLabels();
+        updateControlLabels();
         updateStatus();
         applyOutputRatePreference();
+    }
+
+    void setInterpolationStrength(int percent) {
+        interpolationStrength = clampPercent(percent);
+        updateControlLabels();
     }
 
     void setStats(
@@ -447,9 +483,12 @@ final class OverlayController {
         }
     }
 
-    private void updateFpsLabels() {
+    private void updateControlLabels() {
         if (sourceLabel != null) sourceLabel.setText("Source  " + inputFps + " FPS");
         if (targetLabel != null) targetLabel.setText("Target  " + outputFps + " FPS");
+        if (strengthLabel != null) {
+            strengthLabel.setText("Interpolation  " + interpolationStrength + "%");
+        }
     }
 
     private void updateStatus() {
@@ -507,5 +546,9 @@ final class OverlayController {
 
     private static int clampFps(int value) {
         return Math.max(1, Math.min(120, value));
+    }
+
+    private static int clampPercent(int value) {
+        return Math.max(0, Math.min(100, value));
     }
 }
