@@ -55,9 +55,9 @@ old_ram = '''            int ramMb=Math.max(512,(int)Math.round(server.optDouble
             args.add("java"); args.add("-Djava.awt.headless=true"); args.add("-Dfile.encoding=UTF-8");
             args.add("-Xms128M"); args.add("-Xmx"+ramMb+"M"); args.add("-XX:+UseG1GC");
 '''
-new_ram = '''            int memoryBudgetMb=Math.max(768,(int)Math.round(server.optDouble("ramMax",1.0)*1024));
-            int nativeHeadroomMb=Math.max(256,Math.min(768,(int)Math.round(memoryBudgetMb*0.20)));
-            int heapMb=Math.max(384,memoryBudgetMb-nativeHeadroomMb);
+new_ram = '''            int heapMb=Math.max(512,(int)Math.round(server.optDouble("ramMax",1.0)*1024));
+            int nativeHeadroomMb=512;
+            int expectedProcessBudgetMb=heapMb+nativeHeadroomMb;
             JSONObject settings=server.optJSONObject("settings"); String extra=settings==null?"nogui":settings.optString("extraArgs","nogui");
             List<String> args=new ArrayList<>();
             args.add("java");
@@ -76,12 +76,12 @@ text = text.replace(old_ram, new_ram, 1)
 
 text = text.replace(
     'repository.appendLog(serverId,"[BlockHost] Starting server with Android Java 21 and a "+ramMb+" MB RAM cap");',
-    'repository.appendLog(serverId,"[BlockHost] Starting server with a "+memoryBudgetMb+" MB total memory budget: -Xmx"+heapMb+"M and "+nativeHeadroomMb+" MB JVM/native headroom");\n'
+    'repository.appendLog(serverId,"[BlockHost] Starting server with -Xmx"+heapMb+"M plus "+nativeHeadroomMb+" MB JVM/native headroom (approx. "+expectedProcessBudgetMb+" MB process budget)");\n'
     '            repository.appendLog(serverId,"[BlockHost] Paper Java-version check bypass enabled for the Android Java runtime");'
 )
 text = text.replace(
     'repository.appendLog(serverId,"[BlockHost] Starting Paper with Android Java 21 and a "+ramMb+" MB RAM cap");',
-    'repository.appendLog(serverId,"[BlockHost] Starting server with a "+memoryBudgetMb+" MB total memory budget: -Xmx"+heapMb+"M and "+nativeHeadroomMb+" MB JVM/native headroom");\n'
+    'repository.appendLog(serverId,"[BlockHost] Starting server with -Xmx"+heapMb+"M plus "+nativeHeadroomMb+" MB JVM/native headroom (approx. "+expectedProcessBudgetMb+" MB process budget)");\n'
     '            repository.appendLog(serverId,"[BlockHost] Paper Java-version check bypass enabled for the Android Java runtime");'
 )
 
@@ -100,7 +100,7 @@ if old_update not in text:
 text = text.replace(old_update, new_update, 1)
 
 service_path.write_text(text, encoding='utf-8')
-print('Patched isolated server process, Paper Java bypass, crash logs, and RAM headroom')
+print('Patched isolated server process, Paper Java bypass, crash logs, and fixed 512 MB native headroom')
 
 backend_path = Path('app/src/main/java/com/example/blockhost/BlockHostBackend.java')
 backend = backend_path.read_text(encoding='utf-8')
@@ -130,11 +130,15 @@ print('Patched UI backend for cross-process state and commands')
 
 index_path = Path('app/src/main/assets/index.html')
 html = index_path.read_text(encoding='utf-8')
-html = html.replace('Maximum server RAM:', 'Total server RAM budget:')
-html = html.replace('Memory limit', 'Total memory budget')
-headroom_note = '<small class="softwareNote">The Java heap is set below this budget so the JVM, threads, native libraries and direct buffers have headroom.</small>'
+html = html.replace('Maximum server RAM:', 'Java heap limit:')
+html = html.replace('Total server RAM budget:', 'Java heap limit:')
+html = html.replace('Memory limit', 'Java heap limit')
+html = html.replace('Total memory budget', 'Java heap limit')
+headroom_note = '<small class="softwareNote">BlockHost keeps the selected value as the full Java heap and allows roughly 512 MB extra for JVM threads, native libraries and direct buffers.</small>'
+old_note = '<small class="softwareNote">The Java heap is set below this budget so the JVM, threads, native libraries and direct buffers have headroom.</small>'
+html = html.replace(old_note, headroom_note)
 needle = '<div class="rangeLabels"><span>0.5 GB</span><span>Default: 1 GB</span><span>6 GB</span></div></div>'
 if headroom_note not in html and needle in html:
     html = html.replace(needle, needle + headroom_note, 1)
 index_path.write_text(html, encoding='utf-8')
-print('Updated RAM controls to describe a total budget rather than a heap limit')
+print('Updated RAM controls to use the selected value as heap plus 512 MB overhead')
