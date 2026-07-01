@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 path = Path('app/src/main/java/com/example/blockhost/MinecraftServerService.java')
 text = path.read_text(encoding='utf-8')
@@ -78,3 +79,5 @@ if app.exists():
     js = js.replace('Java · Paper ·', 'Java · Pufferfish/Paper ·')
     js = js.replace('Paper ${esc(x.version)}', 'Minecraft ${esc(x.version)}')
     app.write_text(js, encoding='utf-8')
+
+subprocess.run(['python3', 'scripts/patch-server-process-v22.py'], check=True)
