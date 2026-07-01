@@ -6,27 +6,28 @@ on:
     branches:
       - feature/android-gpu-framegen
     paths:
-      - 'framegen-project.tar.gz.b64'
+      - 'framegen/**'
       - 'FRAMEGEN_README.md'
       - '.github/workflows/framegen-android.yml'
   pull_request:
     branches:
       - main
     paths:
-      - 'framegen-project.tar.gz.b64'
+      - 'framegen/**'
       - 'FRAMEGEN_README.md'
       - '.github/workflows/framegen-android.yml'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract FrameLift source bundle
+      - name: Assemble GLES engine source
         run: |
-          base64 --decode framegen-project.tar.gz.b64 > /tmp/framegen-project.tar.gz
-          tar -xzf /tmp/framegen-project.tar.gz
+          J=framegen/app/src/main/java/com/cardrhyme/framegen/GpuFrameGenerator.java
+          cat "$J.part1" "$J.part2" "$J.part3" > "$J"
 
       - uses: actions/setup-java@v4
         with:
@@ -39,9 +40,15 @@ jobs:
 
       - name: Build debug APK
         working-directory: framegen
-        run: gradle --no-daemon :app:assembleDebug
+        run: |
+          set +e
+          gradle --no-daemon :app:assembleDebug --console=plain > /tmp/framelift-build.log 2>&1
+          status=$?
+          tail -n 180 /tmp/framelift-build.log
+          exit $status
 
       - uses: actions/upload-artifact@v4
         with:
           name: framelift-debug
           path: framegen/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
