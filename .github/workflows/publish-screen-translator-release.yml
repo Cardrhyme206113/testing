@@ -29,42 +29,42 @@ jobs:
           curl -L --fail \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/8007664411/zip" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/8008246798/zip" \
             -o artifact.zip
           unzip -q artifact.zip -d artifact
           SOURCE="$(find artifact -type f -name '*.apk' | head -n 1)"
           test -n "$SOURCE"
-          cp "$SOURCE" PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.1.apk
-          test "$(stat -c%s PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.1.apk)" -le 41943040
+          cp "$SOURCE" PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.2.apk
+          test "$(stat -c%s PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.2.apk)" -le 41943040
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="screen-translator-v0.1.1"
-          APK="PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.1.apk"
+          TAG="screen-translator-v0.1.2"
+          APK="PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.2.apk"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --clobber
           else
             gh release create "$TAG" "$APK" \
               --target feature/paddle-screen-translator \
-              --title "PP-OCRv6 Tiny Screen Translator v0.1.1" \
-              --notes "Compact arm64 build under 40 MB. Uses PP-OCRv6 Tiny plus Google ML Kit offline Japanese-to-English translation. Touch-through overlay and cached unchanged text."
+              --title "PP-OCRv6 Tiny Screen Translator v0.1.2" \
+              --notes "Shows every detected OCR region. Japanese text is replaced with English; other text is highlighted yellow. A green OCR/JP counter confirms that capture and recognition are running."
           fi
 
       - name: Record successful publication
         run: |
           mkdir -p release-status
           {
-            echo "tag=screen-translator-v0.1.1"
-            echo "asset=PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.1.apk"
-            echo "sha256=$(sha256sum PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.1.apk | cut -d' ' -f1)"
-            echo "bytes=$(stat -c%s PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.1.apk)"
+            echo "tag=screen-translator-v0.1.2"
+            echo "asset=PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.2.apk"
+            echo "sha256=$(sha256sum PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.2.apk | cut -d' ' -f1)"
+            echo "bytes=$(stat -c%s PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.2.apk)"
             echo "published_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          } > release-status/screen-translator-v0.1.1.txt
+          } > release-status/screen-translator-v0.1.2.txt
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add release-status/screen-translator-v0.1.1.txt
-          git commit -m "Record compact screen translator release [skip ci]"
+          git add release-status/screen-translator-v0.1.2.txt
+          git commit -m "Record screen translator v0.1.2 release [skip ci]"
           git push origin HEAD:feature/paddle-screen-translator
