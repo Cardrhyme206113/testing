@@ -57,12 +57,13 @@ jobs:
           p.write_text(s)
           PY
           python3 scripts/patch-pufferfish-v21.py
+          python3 scripts/patch-server-process-v22.py
       - name: Build debug APK
         shell: bash
         run: |
           set -o pipefail
           gradle --no-daemon :app:assembleDebug 2>&1 | tee build.log
-      - name: Verify native Pufferfish/Paper build
+      - name: Verify isolated native server build
         shell: bash
         run: |
           set -euxo pipefail
@@ -71,6 +72,7 @@ jobs:
           ! unzip -l "$apk" | grep -q 'libproot'
           ! unzip -l "$apk" | grep -q 'runtime-aarch64'
           test "$(stat -c%s "$apk")" -lt 50000000
+          strings "$apk" | grep -q 'server-process-state.json'
           ls -lh "$apk"
       - name: Upload build log
         if: always()
