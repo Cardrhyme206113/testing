@@ -9,6 +9,13 @@ on:
       - 'framegen-project.tar.gz.b64'
       - 'FRAMEGEN_README.md'
       - '.github/workflows/framegen-android.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'framegen-project.tar.gz.b64'
+      - 'FRAMEGEN_README.md'
+      - '.github/workflows/framegen-android.yml'
 
 jobs:
   build:
