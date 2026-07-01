@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.media.projection.MediaProjectionManager;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -23,11 +22,11 @@ import android.widget.Toast;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_CAPTURE = 1001;
-    private static final int REQUEST_OVERLAY = 1002;
     private static final int REQUEST_NOTIFICATIONS = 1003;
 
     private EditText inputFpsEdit;
     private int pendingFps = 60;
+    private boolean continueAfterAccessibility;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -35,6 +34,7 @@ public final class MainActivity extends Activity {
         Window window = getWindow();
         window.setStatusBarColor(Color.rgb(16, 20, 22));
         window.setNavigationBarColor(Color.rgb(16, 20, 22));
+        if (Build.VERSION.SDK_INT >= 29) window.setNavigationBarContrastEnforced(false);
         setContentView(buildUi());
 
         if (Build.VERSION.SDK_INT >= 33
@@ -44,6 +44,15 @@ public final class MainActivity extends Activity {
                     new String[]{Manifest.permission.POST_NOTIFICATIONS},
                     REQUEST_NOTIFICATIONS
             );
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (continueAfterAccessibility && FrameLiftAccessibilityService.isRunning()) {
+            continueAfterAccessibility = false;
+            requestCapture();
         }
     }
 
@@ -106,8 +115,9 @@ public final class MainActivity extends Activity {
         ));
 
         TextView note = text(
-                "Choose Roblox or the video app itself in Android's capture picker. "
-                        + "The floating FG button is not processed and can always pause or stop the overlay.",
+                "First launch asks you to enable FrameLift's accessibility overlay. "
+                        + "It is used only so the generated image stays fully opaque while touches pass to the selected app. "
+                        + "Then choose Roblox or the video app in Android's capture picker.",
                 14,
                 Color.rgb(150, 164, 157)
         );
@@ -119,12 +129,14 @@ public final class MainActivity extends Activity {
 
     private void beginStart() {
         pendingFps = parseFps();
-        if (!Settings.canDrawOverlays(this)) {
-            Intent intent = new Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName())
-            );
-            startActivityForResult(intent, REQUEST_OVERLAY);
+        if (!FrameLiftAccessibilityService.isRunning()) {
+            continueAfterAccessibility = true;
+            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+            Toast.makeText(
+                    this,
+                    "Enable ‘FrameLift touch-through overlay’, then return.",
+                    Toast.LENGTH_LONG
+            ).show();
             return;
         }
         requestCapture();
@@ -150,15 +162,6 @@ public final class MainActivity extends Activity {
     @SuppressWarnings("deprecation")
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-
-        if (requestCode == REQUEST_OVERLAY) {
-            if (Settings.canDrawOverlays(this)) {
-                requestCapture();
-            } else {
-                Toast.makeText(this, "Overlay permission is required.", Toast.LENGTH_LONG).show();
-            }
-            return;
-        }
 
         if (requestCode == REQUEST_CAPTURE) {
             if (resultCode != RESULT_OK || data == null) {
