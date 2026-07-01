@@ -10,54 +10,76 @@ import kotlin.math.max
 import kotlin.math.min
 
 class FastOverlayView(context: Context) : View(context) {
-    private var items: List<OverlayItem> = emptyList()
+    private data class Ready(val item: OverlayItem, val lines: List<String>, val size: Float, val step: Float, val base: Float)
+    private var ready = emptyList<Ready>()
     private var status = "OCR loading"
     private var hidden = false
     private var error = false
     private var dx = 0f
     private var dy = 0f
-    private val density = resources.displayMetrics.density
+    private val d = resources.displayMetrics.density
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = max(1f, density)
+        strokeWidth = max(1f, d)
         color = Color.rgb(255, 193, 7)
     }
-    private val statusText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val pill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = 13f * density
+        textSize = 13f * d
         isFakeBoldText = true
     }
 
-    fun setStatus(value: String) { status = value; error = false; invalidate() }
-    fun beginCapture(value: String) { hidden = true; status = value; invalidate() }
-    fun endCapture(value: String) { hidden = false; status = value; invalidate() }
+    fun setStatus(v: String) { status = v; error = false; invalidate() }
+    fun beginCapture(v: String) { hidden = true; status = v; invalidate() }
+    fun endCapture(v: String) { hidden = false; status = v; invalidate() }
     fun moveBy(x: Float, y: Float) { dx += x; dy += y; postInvalidateOnAnimation() }
+    fun setError(v: String) { status = "ERROR • $v"; error = true; hidden = false; invalidate() }
 
-    fun setResult(value: String, valueItems: List<OverlayItem>) {
-        status = value
+    fun setResult(v: String, items: List<OverlayItem>) {
+        status = v
         error = false
         hidden = false
         dx = 0f
         dy = 0f
-        items = valueItems
+        ready = items.map { prepare(it) }
         invalidate()
     }
-
-    fun setError(value: String) { status = "ERROR • $value"; error = true; hidden = false; invalidate() }
 
     override fun onDraw(canvas: Canvas) {
         if (!hidden) {
             canvas.save()
             canvas.translate(dx, dy)
-            items.forEach { drawItem(canvas, it) }
+            ready.forEach { drawReady(canvas, it) }
             canvas.restore()
         }
-        drawStatus(canvas)
+        fill.color = if (error) Color.rgb(185, 30, 30) else Color.rgb(20, 125, 60)
+        val box = RectF(8f * d, 8f * d, 24f * d + pill.measureText(status), 40f * d)
+        canvas.drawRoundRect(box, 8f * d, 8f * d, fill)
+        canvas.drawText(status, box.left + 8f * d, box.bottom - 8f * d, pill)
     }
 
-    private fun drawItem(canvas: Canvas, item: OverlayItem) {
+    private fun prepare(item: OverlayItem): Ready {
+        val value = item.text.orEmpty()
+        if (item.kind != OverlayKind.TRANSLATED || value.isEmpty()) return Ready(item, emptyList(), 0f, 0f, 0f)
+        var low = 1f
+        var high = max(1f, item.bounds.height())
+        repeat(9) {
+            val size = (low + high) * 0.5f
+            text.textSize = size
+            val lines = wrap(value, item.bounds.width())
+            if (lines.size * text.fontSpacing <= item.bounds.height()) low = size else high = size
+        }
+        text.textSize = low
+        val lines = wrap(value, item.bounds.width())
+        val step = text.fontSpacing
+        val base = -(lines.size - 1) * step * 0.5f - (text.ascent() + text.descent()) * 0.5f
+        return Ready(item, lines, low, step, base)
+    }
+
+    private fun drawReady(canvas: Canvas, value: Ready) {
+        val item = value.item
         val box = item.bounds
         if (item.kind == OverlayKind.HIGHLIGHT) {
             fill.color = Color.argb(25, 255, 193, 7)
@@ -65,53 +87,25 @@ class FastOverlayView(context: Context) : View(context) {
             canvas.drawRect(box, stroke)
             return
         }
-        val value = item.text.orEmpty()
-        if (value.isEmpty()) return
         fill.color = item.backgroundColor
         canvas.drawRect(box, fill)
         text.color = item.foregroundColor
-        text.textSize = fitText(value, box)
-        val lines = wrap(value, box.width(), text)
-        val lineHeight = text.fontSpacing
-        val firstBase = box.centerY() - (lines.size - 1) * lineHeight * 0.5f - (text.ascent() + text.descent()) * 0.5f
+        text.textSize = value.size
         canvas.save()
         canvas.clipRect(box)
-        lines.forEachIndexed { index, line ->
-            canvas.drawText(line, box.centerX(), firstBase + index * lineHeight, text)
-        }
+        value.lines.forEachIndexed { i, line -> canvas.drawText(line, box.centerX(), box.centerY() + value.base + i * value.step, text) }
         canvas.restore()
     }
 
-    private fun fitText(value: String, box: RectF): Float {
-        var low = 1f
-        var high = max(1f, box.height())
-        repeat(9) {
-            val size = (low + high) * 0.5f
-            text.textSize = size
-            val lines = wrap(value, box.width(), text)
-            if (lines.size * text.fontSpacing <= box.height()) low = size else high = size
-        }
-        return low
-    }
-
-    private fun wrap(value: String, width: Float, paint: Paint): List<String> {
-        if (width <= 1f) return listOf(value)
-        val result = mutableListOf<String>()
+    private fun wrap(value: String, width: Float): List<String> {
+        val out = mutableListOf<String>()
         var start = 0
         while (start < value.length) {
-            var end = paint.breakText(value, start, value.length, true, width, null) + start
+            var end = start + text.breakText(value, start, value.length, true, width, null)
             if (end <= start) end = start + 1
-            result += value.substring(start, min(end, value.length))
+            out += value.substring(start, min(end, value.length))
             start = end
         }
-        return result
-    }
-
-    private fun drawStatus(canvas: Canvas) {
-        fill.color = if (error) Color.rgb(185, 30, 30) else Color.rgb(20, 125, 60)
-        val pad = 8f * density
-        val box = RectF(8f * density, 8f * density, 24f * density + statusText.measureText(status), 40f * density)
-        canvas.drawRoundRect(box, pad, pad, fill)
-        canvas.drawText(status, box.left + pad, box.bottom - pad, statusText)
+        return out
     }
 }
