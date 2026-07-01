@@ -7,7 +7,6 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.graphics.Insets;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
@@ -19,7 +18,6 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.view.Surface;
 import android.view.SurfaceHolder;
-import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
 import android.widget.Toast;
@@ -43,10 +41,6 @@ public final class FrameGenService extends Service implements OverlayController.
     private GpuFrameGenerator renderer;
     private Surface captureSurface;
 
-    private int usableX;
-    private int usableY;
-    private int usableWidth;
-    private int usableHeight;
     private int outputX;
     private int outputY;
     private int width;
@@ -125,11 +119,12 @@ public final class FrameGenService extends Service implements OverlayController.
 
             @Override
             public void onCapturedContentResize(int newWidth, int newHeight) {
-                mainHandler.post(() -> applyCapturedSize(newWidth, newHeight));
+                // Keep the presentation at physical display size. Resizing the output to the
+                // app's inset-adjusted content rectangle caused the navbar screen-in-screen bug.
             }
         }, mainHandler);
 
-        readUsableDisplayArea(accessibility);
+        readPhysicalDisplayBounds(accessibility);
         overlay = new OverlayController(accessibility, inputFps, this);
         overlay.attach(new SurfaceHolder.Callback() {
             @Override
@@ -163,42 +158,16 @@ public final class FrameGenService extends Service implements OverlayController.
         return START_NOT_STICKY;
     }
 
-    private void readUsableDisplayArea(FrameLiftAccessibilityService accessibility) {
+    private void readPhysicalDisplayBounds(FrameLiftAccessibilityService accessibility) {
         WindowManager windowManager = accessibility.getSystemService(WindowManager.class);
         WindowMetrics metrics = windowManager.getMaximumWindowMetrics();
         Rect bounds = metrics.getBounds();
-        Insets systemBars = metrics.getWindowInsets().getInsets(WindowInsets.Type.systemBars());
 
-        usableX = bounds.left + systemBars.left;
-        usableY = bounds.top + systemBars.top;
-        usableWidth = Math.max(1, bounds.width() - systemBars.left - systemBars.right);
-        usableHeight = Math.max(1, bounds.height() - systemBars.top - systemBars.bottom);
+        outputX = bounds.left;
+        outputY = bounds.top;
+        width = Math.max(1, bounds.width());
+        height = Math.max(1, bounds.height());
         densityDpi = accessibility.getResources().getDisplayMetrics().densityDpi;
-
-        outputX = usableX;
-        outputY = usableY;
-        width = usableWidth;
-        height = usableHeight;
-    }
-
-    private void applyCapturedSize(int newWidth, int newHeight) {
-        if (newWidth <= 0 || newHeight <= 0 || overlay == null) return;
-
-        int fittedWidth = Math.min(newWidth, usableWidth);
-        int fittedHeight = Math.min(newHeight, usableHeight);
-        if (fittedWidth <= 0 || fittedHeight <= 0) return;
-
-        outputX = usableX + Math.max(0, (usableWidth - fittedWidth) / 2);
-        outputY = usableY + Math.max(0, (usableHeight - fittedHeight) / 2);
-
-        boolean changed = fittedWidth != width || fittedHeight != height;
-        width = fittedWidth;
-        height = fittedHeight;
-        overlay.resizeOutput(outputX, outputY, width, height);
-
-        if (changed && virtualDisplay != null) {
-            virtualDisplay.resize(width, height, densityDpi);
-        }
     }
 
     private void startRenderer(Surface outputSurface, int renderWidth, int renderHeight) {
@@ -220,6 +189,27 @@ public final class FrameGenService extends Service implements OverlayController.
                 mainHandler.post(() -> {
                     outputReady = true;
                     if (!paused && overlay != null) overlay.setOutputVisible(true);
+                });
+            }
+
+            @Override
+            public void onStats(
+                    float sourceFps,
+                    float outputFps,
+                    float generatedFps,
+                    float captureFps,
+                    boolean flowActive
+            ) {
+                mainHandler.post(() -> {
+                    if (overlay != null) {
+                        overlay.setStats(
+                                sourceFps,
+                                outputFps,
+                                generatedFps,
+                                captureFps,
+                                flowActive
+                        );
+                    }
                 });
             }
 
@@ -286,6 +276,7 @@ public final class FrameGenService extends Service implements OverlayController.
     public void onInputFpsChanged(int fps) {
         inputFps = Math.max(1, Math.min(120, fps));
         if (renderer != null) renderer.setInputFps(inputFps);
+        if (overlay != null) overlay.setInputFps(inputFps);
         updateNotification();
     }
 
