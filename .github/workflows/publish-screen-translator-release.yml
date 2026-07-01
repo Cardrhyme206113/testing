@@ -14,7 +14,8 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/$GITHUB_REPOSITORY/actions/artifacts/8010051383/zip > a.zip
-          unzip -q a.zip -d a
-          cp "$(find a -name '*.apk' | head -1)" Screen-Translator-v0.2.0.apk
-          gh release upload screen-translator-v0.2.0 Screen-Translator-v0.2.0.apk --clobber || gh release create screen-translator-v0.2.0 Screen-Translator-v0.2.0.apk --target feature/paddle-screen-translator --title "Screen Translator v0.2.0" --notes "Full-resolution Small OCR, NNAPI acceleration, realtime tracking, vertical Japanese reconstruction, and exact-box background matching."
+          gh api repos/$GITHUB_REPOSITORY/actions/artifacts/8010504578/zip > artifact.zip
+          unzip -q artifact.zip -d artifact
+          APK=PP-OCRv6-Tiny-Low-Latency-Translator-v0.2.1.apk
+          cp "$(find artifact -name '*.apk' | head -1)" "$APK"
+          gh release upload screen-translator-v0.2.1 "$APK" --clobber || gh release create screen-translator-v0.2.1 "$APK" --target feature/paddle-screen-translator --title "Screen Translator v0.2.1" --notes "Tiny full-resolution OCR with fast scoring, large-range scroll tracking, and translations running asynchronously outside the OCR critical path."
