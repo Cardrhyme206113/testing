@@ -1,0 +1,303 @@
+package com.cardrhyme.framegen;
+
+import android.content.Context;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
+import android.os.Build;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
+import android.view.View;
+import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+final class OverlayController {
+    interface Listener {
+        void onPauseToggle();
+        void onStop();
+        void onInputFpsChanged(int fps);
+    }
+
+    private final Context context;
+    private final WindowManager windowManager;
+    private final Listener listener;
+
+    private SurfaceView outputView;
+    private WindowManager.LayoutParams outputParams;
+    private LinearLayout controlRoot;
+    private WindowManager.LayoutParams controlParams;
+    private TextView statusView;
+    private Button pauseButton;
+    private LinearLayout expandedPanel;
+
+    private int inputFps;
+    private boolean expanded;
+    private boolean paused;
+    private boolean attached;
+
+    OverlayController(Context context, int inputFps, Listener listener) {
+        this.context = context;
+        this.inputFps = inputFps;
+        this.listener = listener;
+        this.windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+    }
+
+    void attach(SurfaceHolder.Callback surfaceCallback) {
+        if (attached) return;
+        attached = true;
+
+        outputView = new SurfaceView(context);
+        outputView.getHolder().setFormat(PixelFormat.OPAQUE);
+        outputView.getHolder().addCallback(surfaceCallback);
+        outputView.setKeepScreenOn(true);
+
+        outputParams = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_FULLSCREEN
+                        | WindowManager.LayoutParams.FLAG_SECURE,
+                PixelFormat.OPAQUE
+        );
+        outputParams.gravity = Gravity.TOP | Gravity.START;
+        outputParams.alpha = 0f;
+        outputParams.preferredRefreshRate = 120f;
+        if (Build.VERSION.SDK_INT >= 28) {
+            outputParams.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        }
+        select120HzMode(outputParams);
+        windowManager.addView(outputView, outputParams);
+
+        controlRoot = buildControls();
+        controlParams = new WindowManager.LayoutParams(
+                dp(270),
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_SECURE,
+                PixelFormat.TRANSLUCENT
+        );
+        controlParams.gravity = Gravity.TOP | Gravity.START;
+        controlParams.x = context.getResources().getDisplayMetrics().widthPixels - dp(286);
+        controlParams.y = dp(58);
+        windowManager.addView(controlRoot, controlParams);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void select120HzMode(WindowManager.LayoutParams params) {
+        try {
+            android.view.Display display = windowManager.getDefaultDisplay();
+            android.view.Display.Mode best = null;
+            for (android.view.Display.Mode mode : display.getSupportedModes()) {
+                if (Math.abs(mode.getRefreshRate() - 120f) < 1.0f) {
+                    if (best == null || mode.getPhysicalWidth() > best.getPhysicalWidth()) {
+                        best = mode;
+                    }
+                }
+            }
+            if (best != null) params.preferredDisplayModeId = best.getModeId();
+        } catch (RuntimeException ignored) {
+            // preferredRefreshRate remains as a hint.
+        }
+    }
+
+    private LinearLayout buildControls() {
+        LinearLayout root = new LinearLayout(context);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(8), dp(8), dp(8), dp(8));
+        root.setBackgroundColor(Color.argb(235, 18, 24, 25));
+
+        LinearLayout header = new LinearLayout(context);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(8), dp(5), dp(8), dp(5));
+
+        TextView fg = label("FG", 17, Color.rgb(87, 227, 137));
+        fg.setGravity(Gravity.CENTER);
+        header.addView(fg, new LinearLayout.LayoutParams(dp(42), dp(42)));
+
+        statusView = label(statusText(), 15, Color.WHITE);
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+        );
+        statusParams.leftMargin = dp(6);
+        header.addView(statusView, statusParams);
+        root.addView(header, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        expandedPanel = new LinearLayout(context);
+        expandedPanel.setOrientation(LinearLayout.VERTICAL);
+        expandedPanel.setVisibility(View.GONE);
+
+        LinearLayout fpsRow = new LinearLayout(context);
+        fpsRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView fpsLabel = label("Input FPS", 14, Color.rgb(205, 215, 210));
+        fpsRow.addView(fpsLabel, new LinearLayout.LayoutParams(0, dp(46), 1f));
+
+        Button minus = compactButton("−");
+        minus.setOnClickListener(v -> changeFps(-1));
+        fpsRow.addView(minus, new LinearLayout.LayoutParams(dp(54), dp(42)));
+
+        Button plus = compactButton("+");
+        plus.setOnClickListener(v -> changeFps(1));
+        fpsRow.addView(plus, new LinearLayout.LayoutParams(dp(54), dp(42)));
+        expandedPanel.addView(fpsRow);
+
+        pauseButton = compactButton("Bypass");
+        pauseButton.setOnClickListener(v -> listener.onPauseToggle());
+        expandedPanel.addView(pauseButton, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(46)
+        ));
+
+        Button stop = compactButton("STOP FRAME GEN");
+        stop.setTextColor(Color.rgb(255, 180, 180));
+        stop.setOnClickListener(v -> listener.onStop());
+        LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(46)
+        );
+        stopParams.topMargin = dp(6);
+        expandedPanel.addView(stop, stopParams);
+
+        root.addView(expandedPanel, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        installDragAndExpand(header);
+        return root;
+    }
+
+    private void installDragAndExpand(View header) {
+        header.setOnTouchListener(new View.OnTouchListener() {
+            int startX;
+            int startY;
+            float downRawX;
+            float downRawY;
+            boolean moved;
+
+            @Override
+            public boolean onTouch(View view, MotionEvent event) {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        startX = controlParams.x;
+                        startY = controlParams.y;
+                        downRawX = event.getRawX();
+                        downRawY = event.getRawY();
+                        moved = false;
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        int dx = Math.round(event.getRawX() - downRawX);
+                        int dy = Math.round(event.getRawY() - downRawY);
+                        if (Math.abs(dx) + Math.abs(dy) > dp(8)) moved = true;
+                        controlParams.x = Math.max(0, startX + dx);
+                        controlParams.y = Math.max(0, startY + dy);
+                        windowManager.updateViewLayout(controlRoot, controlParams);
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        if (!moved) setExpanded(!expanded);
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+        });
+    }
+
+    private void setExpanded(boolean value) {
+        expanded = value;
+        expandedPanel.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        controlRoot.requestLayout();
+    }
+
+    private void changeFps(int delta) {
+        inputFps = Math.max(1, Math.min(120, inputFps + delta));
+        updateStatus();
+        listener.onInputFpsChanged(inputFps);
+    }
+
+    void setOutputVisible(boolean visible) {
+        if (!attached || outputView == null) return;
+        outputParams.alpha = visible ? 1f : 0f;
+        windowManager.updateViewLayout(outputView, outputParams);
+    }
+
+    void setPaused(boolean value) {
+        paused = value;
+        if (pauseButton != null) pauseButton.setText(paused ? "Resume" : "Bypass");
+        updateStatus();
+    }
+
+    void setInputFps(int fps) {
+        inputFps = Math.max(1, Math.min(120, fps));
+        updateStatus();
+    }
+
+    void setError(String message) {
+        if (statusView != null) {
+            statusView.setText("ERROR · " + message);
+            statusView.setTextColor(Color.rgb(255, 170, 170));
+        }
+    }
+
+    private void updateStatus() {
+        if (statusView == null) return;
+        statusView.setText(statusText());
+        statusView.setTextColor(paused ? Color.rgb(255, 220, 140) : Color.WHITE);
+    }
+
+    private String statusText() {
+        return paused ? "Bypassed · tap to open" : inputFps + " → 120 FPS";
+    }
+
+    void detach() {
+        if (!attached) return;
+        attached = false;
+        try {
+            if (controlRoot != null) windowManager.removeViewImmediate(controlRoot);
+        } catch (RuntimeException ignored) {
+        }
+        try {
+            if (outputView != null) windowManager.removeViewImmediate(outputView);
+        } catch (RuntimeException ignored) {
+        }
+        controlRoot = null;
+        outputView = null;
+    }
+
+    private Button compactButton(String text) {
+        Button button = new Button(context);
+        button.setText(text);
+        button.setTextSize(14);
+        button.setAllCaps(false);
+        button.setTextColor(Color.WHITE);
+        button.setBackgroundColor(Color.rgb(39, 50, 51));
+        button.setPadding(dp(4), 0, dp(4), 0);
+        return button;
+    }
+
+    private TextView label(String text, float sizeSp, int color) {
+        TextView view = new TextView(context);
+        view.setText(text);
+        view.setTextSize(sizeSp);
+        view.setTextColor(color);
+        view.setGravity(Gravity.CENTER_VERTICAL);
+        return view;
+    }
+
+    private int dp(int value) {
+        return Math.round(value * context.getResources().getDisplayMetrics().density);
+    }
+}
