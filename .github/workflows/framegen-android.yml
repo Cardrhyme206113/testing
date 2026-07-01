@@ -49,6 +49,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: framelift-debug-v0.3
+          name: framelift-debug-v0.4
           path: framegen/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
