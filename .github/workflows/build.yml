@@ -23,7 +23,7 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" "cmake;3.22.1"
-      - name: Apply Android API and Paper UI compatibility
+      - name: Apply Android API and server-download compatibility
         shell: bash
         run: |
           python3 - <<'PY'
@@ -43,23 +43,26 @@ jobs:
           for old, new in pairs.items():
             s = s.replace(old, new)
           p.write_text(s)
+
           p = root / 'BlockHostBackend.java'
-          s = p.read_text().replace(
+          s = p.read_text()
+          s = s.replace(
               '.put("buildToolsUrl", SpigotVersionProvider.BUILDTOOLS_URL)',
-              '.put("serverSource", SpigotVersionProvider.PAPER_API)'
+              '.put("serverSource", SpigotVersionProvider.PUFFERFISH_JOB)'
+          )
+          s = s.replace(
+              '.put("serverSource", SpigotVersionProvider.PAPER_API)',
+              '.put("serverSource", SpigotVersionProvider.PUFFERFISH_JOB)'
           )
           p.write_text(s)
-          p = Path('app/src/main/assets/app-native.js')
-          s = p.read_text().replace('Java · Spigot ·', 'Java · Paper ·')
-          s = s.replace('Spigot ${esc(x.version)}', 'Paper ${esc(x.version)}')
-          p.write_text(s)
           PY
+          python3 scripts/patch-pufferfish-v21.py
       - name: Build debug APK
         shell: bash
         run: |
           set -o pipefail
           gradle --no-daemon :app:assembleDebug 2>&1 | tee build.log
-      - name: Verify native Paper build
+      - name: Verify native Pufferfish/Paper build
         shell: bash
         run: |
           set -euxo pipefail
