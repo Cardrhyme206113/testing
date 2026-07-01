@@ -1,15 +1,4 @@
-                if (framePending) consumeLatestSourceFrame();
-                render(frameTimeNanos);
-            } catch (Throwable error) {
-                Log.e(TAG, "Render failed", error);
-                paused.set(true);
-                callback.onFatalError(shortError(error));
-            }
-            if (!stopped && choreographer != null) choreographer.postFrameCallback(this);
-        }
-    };
-
-    private void consumeLatestSourceFrame() {
+    private void consumeLatestSourceFrame(long sampleTimeNanos) {
         framePending = false;
         captureTexture.updateTexImage();
         captureTexture.getTransformMatrix(textureMatrix);
@@ -38,7 +27,8 @@
                 hasFlow = false;
             }
         }
-        latestSourceArrivalNs = System.nanoTime();
+        latestSourceArrivalNs = sampleTimeNanos;
+        acceptedSourcesWindow++;
     }
 
     private void copyExternalTo(int framebuffer, int targetTexture) {
@@ -151,10 +141,42 @@
             throw new IllegalStateException("eglSwapBuffers failed: 0x"
                     + Integer.toHexString(EGL14.eglGetError()));
         }
+
+        outputsWindow++;
+        if (hasFlow && t > 0.02f && t < 0.98f) generatedWindow++;
+
         if (!firstOutputReported) {
             firstOutputReported = true;
             callback.onFirstOutputFrame();
         }
+    }
+
+    private void reportStatsIfDue(long nowNs) {
+        if (statsWindowStartNs == 0L) {
+            statsWindowStartNs = nowNs;
+            return;
+        }
+        long elapsedNs = nowNs - statsWindowStartNs;
+        if (elapsedNs < 750_000_000L) return;
+
+        float seconds = elapsedNs / 1_000_000_000f;
+        float sourceRate = acceptedSourcesWindow / seconds;
+        float outputRate = outputsWindow / seconds;
+        float generatedRate = generatedWindow / seconds;
+        float captureRate = captureSignalsWindow / seconds;
+        callback.onStats(
+                sourceRate,
+                outputRate,
+                generatedRate,
+                captureRate,
+                hasFlow && sourceFrames >= 2 && !paused.get()
+        );
+
+        statsWindowStartNs = nowNs;
+        captureSignalsWindow = 0;
+        acceptedSourcesWindow = 0;
+        outputsWindow = 0;
+        generatedWindow = 0;
     }
 
     private int createFrameTexture() {
