@@ -24,7 +24,7 @@ class MainActivity : ComponentActivity() {
     private val overlayPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
             if (Settings.canDrawOverlays(this)) {
-                requestScreenCapture()
+                prepareOverlayThenCapture()
             } else {
                 status.text = "Overlay permission is required."
             }
@@ -35,6 +35,9 @@ class MainActivity : ComponentActivity() {
             val data = result.data
             if (result.resultCode != Activity.RESULT_OK || data == null) {
                 status.text = "Screen capture permission was cancelled."
+                startService(Intent(this, OverlayTranslationService::class.java).apply {
+                    action = OverlayTranslationService.ACTION_STOP
+                })
                 return@registerForActivityResult
             }
 
@@ -44,7 +47,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(OverlayTranslationService.EXTRA_RESULT_DATA, data)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
-            status.text = "Started. Look for the green OCR status pill over other apps."
+            status.text = "Capture started. The green pill should remain visible over other apps."
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -70,13 +73,13 @@ class MainActivity : ComponentActivity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "PP-OCRv6 Tiny scans the screen locally. Every OCR box is shown: Japanese text is covered with English, while other text gets a yellow highlight. Touches always pass through."
+            text = "PP-OCRv6 Tiny scans the screen locally. Japanese text is replaced with English; other OCR regions are highlighted yellow. Touches pass through."
             textSize = 16f
             setPadding(0, dp(18), 0, dp(12))
         })
 
         root.addView(TextView(this).apply {
-            text = "After restarting the app or phone, tap Start again and approve screen capture. The downloaded translation model stays installed."
+            text = "When you tap Start, a green OVERLAY OK pill must appear before the Android screen-capture picker. If it does not, HyperOS is blocking background pop-up windows."
             textSize = 14f
             setPadding(0, 0, 0, dp(22))
         })
@@ -103,7 +106,7 @@ class MainActivity : ComponentActivity() {
         ).apply { topMargin = dp(10) })
 
         status = TextView(this).apply {
-            text = "Ready. Tap Start for each screen-capture session."
+            text = "Ready. Tap Start."
             textSize = 14f
             setPadding(0, dp(20), 0, 0)
         }
@@ -121,8 +124,19 @@ class MainActivity : ComponentActivity() {
                 ),
             )
         } else {
-            requestScreenCapture()
+            prepareOverlayThenCapture()
         }
+    }
+
+    private fun prepareOverlayThenCapture() {
+        status.text = "Preparing overlay…"
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, OverlayTranslationService::class.java).apply {
+                action = OverlayTranslationService.ACTION_PREPARE
+            },
+        )
+        window.decorView.postDelayed({ requestScreenCapture() }, 700L)
     }
 
     private fun requestScreenCapture() {
