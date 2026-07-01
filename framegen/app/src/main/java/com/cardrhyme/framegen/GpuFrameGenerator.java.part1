@@ -23,6 +23,13 @@ final class GpuFrameGenerator {
     interface Callback {
         void onCaptureSurfaceReady(Surface surface);
         void onFirstOutputFrame();
+        void onStats(
+                float sourceFps,
+                float outputFps,
+                float generatedFps,
+                float captureFps,
+                boolean flowActive
+        );
         void onFatalError(String message);
     }
 
@@ -71,7 +78,14 @@ final class GpuFrameGenerator {
     private int sourceFrames;
     private boolean hasFlow;
     private long latestSourceArrivalNs;
+    private long nextSourceSampleNs;
     private boolean firstOutputReported;
+
+    private long statsWindowStartNs;
+    private int captureSignalsWindow;
+    private int acceptedSourcesWindow;
+    private int outputsWindow;
+    private int generatedWindow;
 
     GpuFrameGenerator(int inputFps, Callback callback) {
         this.inputFps = new AtomicInteger(Math.max(1, Math.min(120, inputFps)));
@@ -95,6 +109,8 @@ final class GpuFrameGenerator {
 
     void setInputFps(int fps) {
         inputFps.set(Math.max(1, Math.min(120, fps)));
+        Handler localHandler = handler;
+        if (localHandler != null) localHandler.post(() -> nextSourceSampleNs = 0L);
     }
 
     void setPaused(boolean value) {
@@ -117,6 +133,7 @@ final class GpuFrameGenerator {
             initializeEgl();
             initializeGlObjects();
             initializeCapture();
+            statsWindowStartNs = System.nanoTime();
             choreographer = Choreographer.getInstance();
             choreographer.postFrameCallback(frameCallback);
         } catch (Throwable error) {
@@ -235,7 +252,10 @@ final class GpuFrameGenerator {
 
         captureTexture = new SurfaceTexture(externalTex);
         captureTexture.setDefaultBufferSize(width, height);
-        captureTexture.setOnFrameAvailableListener(texture -> framePending = true, handler);
+        captureTexture.setOnFrameAvailableListener(texture -> {
+            framePending = true;
+            captureSignalsWindow++;
+        }, handler);
         callback.onCaptureSurfaceReady(new Surface(captureTexture));
     }
 
@@ -244,3 +264,21 @@ final class GpuFrameGenerator {
         public void doFrame(long frameTimeNanos) {
             if (stopped) return;
             try {
+                long sourcePeriodNs = 1_000_000_000L / Math.max(1, inputFps.get());
+                if (framePending
+                        && (sourceFrames == 0
+                        || nextSourceSampleNs == 0L
+                        || frameTimeNanos >= nextSourceSampleNs)) {
+                    consumeLatestSourceFrame(frameTimeNanos);
+                    nextSourceSampleNs = frameTimeNanos + sourcePeriodNs;
+                }
+                render(frameTimeNanos);
+                reportStatsIfDue(frameTimeNanos);
+            } catch (Throwable error) {
+                Log.e(TAG, "Render failed", error);
+                paused.set(true);
+                callback.onFatalError(shortError(error));
+            }
+            if (!stopped && choreographer != null) choreographer.postFrameCallback(this);
+        }
+    };
