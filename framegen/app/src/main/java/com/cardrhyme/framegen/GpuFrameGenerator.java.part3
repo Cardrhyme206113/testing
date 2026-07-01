@@ -242,9 +242,10 @@
                     + "  vec4 warpedCurr = texture(uCurr, currUv);\n"
                     + "  vec4 generated = mix(warpedPrev, warpedCurr, uT);\n"
                     + "  float mismatch = max(max(abs(warpedPrev.r - warpedCurr.r), abs(warpedPrev.g - warpedCurr.g)), abs(warpedPrev.b - warpedCurr.b));\n"
-                    + "  float photometricTrust = 1.0 - smoothstep(0.10, 0.42, mismatch);\n"
-                    + "  float trust = clamp(flowData.z * 1.35 * photometricTrust, 0.0, 1.0);\n"
+                    + "  float photometricTrust = 1.0 - smoothstep(0.08, 0.48, mismatch);\n"
+                    + "  float confidenceTrust = 0.55 + 0.45 * clamp(flowData.z, 0.0, 1.0);\n"
+                    + "  float trust = confidenceTrust * (0.55 + 0.45 * photometricTrust);\n"
                     + "  vec4 nearestOriginal = (uT < 0.5) ? texture(uPrev, vUv) : texture(uCurr, vUv);\n"
-                    + "  outColor = mix(nearestOriginal, generated, trust);\n"
+                    + "  outColor = mix(nearestOriginal, generated, clamp(trust, 0.0, 1.0));\n"
                     + "}\n";
 }
