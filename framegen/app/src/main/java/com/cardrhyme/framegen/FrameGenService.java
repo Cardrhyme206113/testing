@@ -40,6 +40,7 @@ public final class FrameGenService extends Service implements OverlayController.
     private OverlayController overlay;
     private GpuFrameGenerator renderer;
     private Surface captureSurface;
+    private Surface outputSurface;
 
     private int outputX;
     private int outputY;
@@ -119,8 +120,7 @@ public final class FrameGenService extends Service implements OverlayController.
 
             @Override
             public void onCapturedContentResize(int newWidth, int newHeight) {
-                // Keep the presentation at physical display size. Resizing the output to the
-                // app's inset-adjusted content rectangle caused the navbar screen-in-screen bug.
+                mainHandler.post(() -> applyDisplayResize(newWidth, newHeight));
             }
         }, mainHandler);
 
@@ -129,7 +129,8 @@ public final class FrameGenService extends Service implements OverlayController.
         overlay.attach(new SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(SurfaceHolder holder) {
-                startRenderer(holder.getSurface(), width, height);
+                outputSurface = holder.getSurface();
+                startRenderer(outputSurface, width, height);
             }
 
             @Override
@@ -140,14 +141,16 @@ public final class FrameGenService extends Service implements OverlayController.
                     int newHeight
             ) {
                 if (newWidth <= 0 || newHeight <= 0) return;
-                if (newWidth == rendererWidth && newHeight == rendererHeight) return;
+                outputSurface = holder.getSurface();
                 width = newWidth;
                 height = newHeight;
-                startRenderer(holder.getSurface(), newWidth, newHeight);
+                if (newWidth == rendererWidth && newHeight == rendererHeight) return;
+                startRenderer(outputSurface, newWidth, newHeight);
             }
 
             @Override
             public void surfaceDestroyed(SurfaceHolder holder) {
+                outputSurface = null;
                 if (renderer != null) renderer.stop();
                 renderer = null;
                 rendererWidth = 0;
@@ -167,11 +170,37 @@ public final class FrameGenService extends Service implements OverlayController.
         outputY = bounds.top;
         width = Math.max(1, bounds.width());
         height = Math.max(1, bounds.height());
-        densityDpi = accessibility.getResources().getDisplayMetrics().densityDpi;
+        densityDpi = accessibility.getResources().getConfiguration().densityDpi;
     }
 
-    private void startRenderer(Surface outputSurface, int renderWidth, int renderHeight) {
-        if (renderWidth <= 0 || renderHeight <= 0) return;
+    private void applyDisplayResize(int newWidth, int newHeight) {
+        if (newWidth <= 0 || newHeight <= 0 || shuttingDown) return;
+        if (newWidth == width && newHeight == height) return;
+
+        width = newWidth;
+        height = newHeight;
+        outputX = 0;
+        outputY = 0;
+        outputReady = false;
+
+        if (overlay != null) {
+            overlay.setOutputVisible(false);
+            overlay.resizeOutput(outputX, outputY, width, height);
+        }
+        if (virtualDisplay != null) {
+            virtualDisplay.resize(width, height, densityDpi);
+        }
+
+        mainHandler.postDelayed(() -> {
+            if (shuttingDown || outputSurface == null) return;
+            if (rendererWidth != width || rendererHeight != height) {
+                startRenderer(outputSurface, width, height);
+            }
+        }, 80L);
+    }
+
+    private void startRenderer(Surface surface, int renderWidth, int renderHeight) {
+        if (surface == null || !surface.isValid() || renderWidth <= 0 || renderHeight <= 0) return;
         if (renderer != null) renderer.stop();
         rendererWidth = renderWidth;
         rendererHeight = renderHeight;
@@ -180,8 +209,8 @@ public final class FrameGenService extends Service implements OverlayController.
 
         renderer = new GpuFrameGenerator(inputFps, new GpuFrameGenerator.Callback() {
             @Override
-            public void onCaptureSurfaceReady(Surface surface) {
-                mainHandler.post(() -> connectVirtualDisplay(surface));
+            public void onCaptureSurfaceReady(Surface newCaptureSurface) {
+                mainHandler.post(() -> connectVirtualDisplay(newCaptureSurface));
             }
 
             @Override
@@ -226,19 +255,17 @@ public final class FrameGenService extends Service implements OverlayController.
                 });
             }
         });
-        renderer.start(outputSurface, renderWidth, renderHeight);
+        renderer.start(surface, renderWidth, renderHeight);
     }
 
-    private void connectVirtualDisplay(Surface surface) {
+    private void connectVirtualDisplay(Surface newSurface) {
         if (mediaProjection == null) {
-            surface.release();
+            newSurface.release();
             return;
         }
 
-        if (captureSurface != null && captureSurface != surface) {
-            captureSurface.release();
-        }
-        captureSurface = surface;
+        Surface oldSurface = captureSurface;
+        captureSurface = newSurface;
 
         if (virtualDisplay == null) {
             virtualDisplay = mediaProjection.createVirtualDisplay(
@@ -254,6 +281,10 @@ public final class FrameGenService extends Service implements OverlayController.
         } else {
             virtualDisplay.resize(width, height, densityDpi);
             virtualDisplay.setSurface(captureSurface);
+        }
+
+        if (oldSurface != null && oldSurface != captureSurface) {
+            oldSurface.release();
         }
     }
 
@@ -289,6 +320,7 @@ public final class FrameGenService extends Service implements OverlayController.
         }
         rendererWidth = 0;
         rendererHeight = 0;
+        outputSurface = null;
         if (virtualDisplay != null) {
             virtualDisplay.release();
             virtualDisplay = null;
@@ -357,7 +389,7 @@ public final class FrameGenService extends Service implements OverlayController.
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(com.cardrhyme.framegen.R.drawable.ic_stat_fg)
                 .setContentTitle(paused ? "FrameLift bypassed" : "FrameLift active")
-                .setContentText(inputFps + " → 120 FPS")
+                .setContentText(inputFps + " → 120 FPS · full display")
                 .setContentIntent(open)
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
