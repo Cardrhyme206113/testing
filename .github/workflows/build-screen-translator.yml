@@ -15,6 +15,9 @@ on:
       - "screen-translator/**"
       - ".github/workflows/build-screen-translator.yml"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -61,9 +64,28 @@ jobs:
           chmod +x gradlew
           ./gradlew :screen-translator:assembleDebug --stacktrace
 
-      - name: Upload APK
+      - name: Upload Actions artifact
         uses: actions/upload-artifact@v4
         with:
           name: ppocrv6-screen-translator-debug
           path: vendor/PaddleOCR/deploy/ppocr-android/screen-translator/build/outputs/apk/debug/screen-translator-debug.apk
           if-no-files-found: error
+
+      - name: Publish APK to GitHub Releases
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SOURCE="$GITHUB_WORKSPACE/vendor/PaddleOCR/deploy/ppocr-android/screen-translator/build/outputs/apk/debug/screen-translator-debug.apk"
+          APK="$GITHUB_WORKSPACE/PP-OCRv6-Screen-Translator-v0.1.0.apk"
+          TAG="screen-translator-v0.1.0"
+          cp "$SOURCE" "$APK"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber
+          else
+            gh release create "$TAG" "$APK" \
+              --target "$GITHUB_SHA" \
+              --title "PP-OCRv6 Screen Translator v0.1.0" \
+              --notes "Android Japanese-to-English screen translator using PP-OCRv6 Small and Google ML Kit offline translation. Touch-through overlay; unchanged OCR text is cached instead of translated repeatedly."
+          fi
