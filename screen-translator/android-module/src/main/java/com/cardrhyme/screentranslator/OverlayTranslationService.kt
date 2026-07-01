@@ -4,7 +4,6 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
-import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
@@ -59,6 +58,12 @@ import kotlin.coroutines.resumeWithException
 import kotlin.math.max
 import kotlin.math.min
 
+private data class FrameOverlayResult(
+    val items: List<OverlayItem>,
+    val detectedCount: Int,
+    val japaneseCount: Int,
+)
+
 class OverlayTranslationService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val frameRequested = AtomicBoolean(false)
@@ -108,7 +113,7 @@ class OverlayTranslationService : Service() {
             return START_NOT_STICKY
         }
 
-        startProjectionForeground("Preparing PP-OCRv6 and translation models…")
+        startProjectionForeground("Preparing OCR and translation…")
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE)
         val resultData = intent.intentExtra(EXTRA_RESULT_DATA)
         if (resultCode == Int.MIN_VALUE || resultData == null) {
@@ -118,9 +123,12 @@ class OverlayTranslationService : Service() {
 
         scope.launch {
             try {
-                withContext(Dispatchers.Main.immediate) { createOverlay() }
+                withContext(Dispatchers.Main.immediate) {
+                    createOverlay()
+                    overlayView?.setStatus("Loading OCR…")
+                }
                 initializeModels()
-                updateNotification("Translating Japanese text on screen")
+                updateNotification("Scanning text on screen")
                 startProjection(resultCode, resultData)
                 captureLoop()
             } catch (cancelled: CancellationException) {
@@ -142,7 +150,7 @@ class OverlayTranslationService : Service() {
                 context = this@OverlayTranslationService,
                 config = PaddleOCRConfig(
                     detMaxSideLimit = OCR_LONG_SIDE,
-                    recScoreThresh = 0.45f,
+                    recScoreThresh = 0.25f,
                     recBatchSize = 4,
                 ),
                 engineConfig = EngineConfig(
@@ -214,48 +222,73 @@ class OverlayTranslationService : Service() {
             val bitmap = withTimeoutOrNull(FRAME_TIMEOUT_MS) { frameChannel.receive() }
             if (bitmap == null) {
                 withContext(Dispatchers.Main.immediate) {
+                    overlayView?.setResult("No screen frame", emptyList())
                     overlayView?.visibility = View.VISIBLE
                 }
                 delay(SCAN_PAUSE_MS)
                 continue
             }
 
-            val items = try {
+            val frameResult = try {
                 processFrame(bitmap)
             } finally {
                 bitmap.recycle()
             }
             withContext(Dispatchers.Main.immediate) {
-                overlayView?.setItems(items)
+                overlayView?.setResult(
+                    "OCR ${frameResult.detectedCount} • JP ${frameResult.japaneseCount}",
+                    frameResult.items,
+                )
                 overlayView?.visibility = View.VISIBLE
             }
             delay(SCAN_PAUSE_MS)
         }
     }
 
-    private suspend fun processFrame(bitmap: Bitmap): List<OverlayItem> {
-        val engine = ocr ?: return emptyList()
-        val results = engine.recognize(bitmap).results
+    private suspend fun processFrame(bitmap: Bitmap): FrameOverlayResult {
+        val engine = ocr ?: return FrameOverlayResult(emptyList(), 0, 0)
+        val recognized = engine.recognize(bitmap).results
             .asSequence()
-            .filter { it.confidence >= 0.45f }
+            .filter { it.confidence >= OCR_CONFIDENCE }
             .map { it to normalizeText(it.text) }
-            .filter { (_, text) -> text.length >= 2 && containsJapanese(text) }
-            .sortedWith(compareBy({ pair -> pair.first.box.points.minOf { it.y } }, { pair -> pair.first.box.points.minOf { it.x } }))
+            .filter { (_, text) -> text.isNotBlank() }
+            .sortedWith(
+                compareBy(
+                    { pair -> pair.first.box.points.minOf { it.y } },
+                    { pair -> pair.first.box.points.minOf { it.x } },
+                ),
+            )
             .take(MAX_LINES)
             .toList()
 
-        return coroutineScope {
-            results.map { (result, text) ->
+        val japaneseCount = recognized.count { (_, text) -> containsJapanese(text) }
+        val items = coroutineScope {
+            recognized.map { (result, text) ->
                 async {
-                    val english = translateCached(text)
-                    if (english.isBlank() || english.equals(text, ignoreCase = true)) {
-                        null
+                    val bounds = result.toScreenBounds(bitmap)
+                    if (!containsJapanese(text)) {
+                        OverlayItem(bounds = bounds, kind = OverlayKind.HIGHLIGHT)
                     } else {
-                        result.toOverlayItem(bitmap, english)
+                        val english = runCatching { translateCached(text) }.getOrDefault("")
+                        if (english.isBlank() || english.equals(text, ignoreCase = true)) {
+                            OverlayItem(bounds = bounds, kind = OverlayKind.HIGHLIGHT)
+                        } else {
+                            OverlayItem(
+                                bounds = bounds,
+                                text = english,
+                                kind = OverlayKind.TRANSLATED,
+                            )
+                        }
                     }
                 }
-            }.awaitAll().filterNotNull()
+            }.awaitAll()
         }
+
+        return FrameOverlayResult(
+            items = items,
+            detectedCount = recognized.size,
+            japaneseCount = japaneseCount,
+        )
     }
 
     private suspend fun translateCached(text: String): String {
@@ -281,18 +314,14 @@ class OverlayTranslationService : Service() {
         return translated
     }
 
-    private fun OCRResult.toOverlayItem(bitmap: Bitmap, english: String): OverlayItem {
-        val points = box.points
+    private fun OCRResult.toScreenBounds(bitmap: Bitmap): RectF {
         val scaleX = captureWidth.toFloat() / bitmap.width
         val scaleY = captureHeight.toFloat() / bitmap.height
-        return OverlayItem(
-            bounds = RectF(
-                points.minOf { it.x } * scaleX,
-                points.minOf { it.y } * scaleY,
-                points.maxOf { it.x } * scaleX,
-                points.maxOf { it.y } * scaleY,
-            ),
-            text = english,
+        return RectF(
+            box.points.minOf { it.x } * scaleX,
+            box.points.minOf { it.y } * scaleY,
+            box.points.maxOf { it.x } * scaleX,
+            box.points.maxOf { it.y } * scaleY,
         )
     }
 
@@ -488,7 +517,8 @@ class OverlayTranslationService : Service() {
         private const val CHANNEL_ID = "screen_translation"
         private const val NOTIFICATION_ID = 42
         private const val OCR_LONG_SIDE = 1920
-        private const val MAX_LINES = 16
+        private const val OCR_CONFIDENCE = 0.25f
+        private const val MAX_LINES = 48
         private const val OVERLAY_HIDE_MS = 120L
         private const val FRAME_TIMEOUT_MS = 900L
         private const val SCAN_PAUSE_MS = 800L
