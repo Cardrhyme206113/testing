@@ -1,33 +1,20 @@
 name: Publish screen translator release
-
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - feature/paddle-screen-translator
-    paths:
-      - ".github/workflows/publish-screen-translator-release.yml"
-
+    branches: [feature/paddle-screen-translator]
+    paths: [".github/workflows/publish-screen-translator-release.yml"]
 permissions:
   actions: read
   contents: write
-
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download verified build
-        env:
+      - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/$GITHUB_REPOSITORY/actions/artifacts/8009371767/zip > artifact.zip
-          unzip -q artifact.zip -d artifact
-          cp "$(find artifact -name '*.apk' | head -n 1)" PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.5.apk
-
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create screen-translator-v0.1.5 PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.5.apk --target feature/paddle-screen-translator --title "PP-OCRv6 Tiny Screen Translator v0.1.5" --notes "Official OpenCV 4.12.0 with verified 16 KB alignment for Android 15 and Android 16." || gh release upload screen-translator-v0.1.5 PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.5.apk --clobber
+          gh api repos/$GITHUB_REPOSITORY/actions/artifacts/8010051383/zip > a.zip
+          unzip -q a.zip -d a
+          cp "$(find a -name '*.apk' | head -1)" Screen-Translator-v0.2.0.apk
+          gh release upload screen-translator-v0.2.0 Screen-Translator-v0.2.0.apk --clobber || gh release create screen-translator-v0.2.0 Screen-Translator-v0.2.0.apk --target feature/paddle-screen-translator --title "Screen Translator v0.2.0" --notes "Full-resolution Small OCR, NNAPI acceleration, realtime tracking, vertical Japanese reconstruction, and exact-box background matching."
