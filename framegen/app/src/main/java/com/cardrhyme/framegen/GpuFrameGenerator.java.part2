@@ -1,0 +1,400 @@
+    private void consumeLatestSourceFrame(long sampleTimeNanos) {
+        framePending = false;
+        captureTexture.updateTexImage();
+        captureTexture.getTransformMatrix(textureMatrix);
+
+        if (sourceFrames == 0) {
+            copyExternalTo(prevFbo, prevTex);
+            copyExternalTo(currFbo, currTex);
+            sourceFrames = 1;
+            hasFlow = false;
+            hasFlowHistory = false;
+        } else {
+            int oldPrevTex = prevTex;
+            prevTex = currTex;
+            currTex = oldPrevTex;
+
+            int oldPrevFbo = prevFbo;
+            prevFbo = currFbo;
+            currFbo = oldPrevFbo;
+
+            copyExternalTo(currFbo, currTex);
+            sourceFrames++;
+
+            if (!paused.get()) {
+                calculateBidirectionalFlow();
+                hasFlow = true;
+            } else {
+                hasFlow = false;
+                hasFlowHistory = false;
+            }
+        }
+        latestSourceArrivalNs = sampleTimeNanos;
+        acceptedSourcesWindow++;
+    }
+
+    private void copyExternalTo(int framebuffer, int targetTexture) {
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebuffer);
+        GLES30.glViewport(0, 0, width, height);
+        GLES30.glDisable(GLES30.GL_BLEND);
+        GLES30.glUseProgram(copyProgram);
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
+        GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, externalTex);
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(copyProgram, "uTexture"), 0);
+        GLES30.glUniformMatrix4fv(
+                GLES30.glGetUniformLocation(copyProgram, "uTransform"),
+                1,
+                false,
+                textureMatrix,
+                0
+        );
+        drawFullscreen();
+
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, targetTexture);
+        GLES30.glGenerateMipmap(GLES30.GL_TEXTURE_2D);
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+    }
+
+    private void calculateBidirectionalFlow() {
+        boolean useHistory = hasFlowHistory;
+
+        calculateFlowDirection(
+                prevTex,
+                currTex,
+                coarseForwardTex,
+                fineForwardTex,
+                rawForwardTex,
+                forwardFlowTex,
+                forwardHistoryTex,
+                useHistory
+        );
+        int swapForward = forwardFlowTex;
+        forwardFlowTex = forwardHistoryTex;
+        forwardHistoryTex = swapForward;
+
+        calculateFlowDirection(
+                currTex,
+                prevTex,
+                coarseBackwardTex,
+                fineBackwardTex,
+                rawBackwardTex,
+                backwardFlowTex,
+                backwardHistoryTex,
+                useHistory
+        );
+        int swapBackward = backwardFlowTex;
+        backwardFlowTex = backwardHistoryTex;
+        backwardHistoryTex = swapBackward;
+
+        hasFlowHistory = true;
+    }
+
+    private void calculateFlowDirection(
+            int sourceTexture,
+            int targetTexture,
+            int coarseTexture,
+            int fineTexture,
+            int rawTexture,
+            int historyTexture,
+            int outputTexture,
+            boolean useHistory
+    ) {
+        GLES31.glUseProgram(coarseFlowProgram);
+        bindTexture(coarseFlowProgram, "uSource", 0, sourceTexture);
+        bindTexture(coarseFlowProgram, "uTarget", 1, targetTexture);
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(coarseFlowProgram, "uImageSize"),
+                coarseWidth,
+                coarseHeight
+        );
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(coarseFlowProgram, "uFlowSize"),
+                coarseFlowWidth,
+                coarseFlowHeight
+        );
+        GLES31.glBindImageTexture(
+                0,
+                coarseTexture,
+                0,
+                false,
+                0,
+                GLES31.GL_WRITE_ONLY,
+                GLES30.GL_RGBA16F
+        );
+        GLES31.glDispatchCompute(
+                ceilDiv(coarseFlowWidth, 8),
+                ceilDiv(coarseFlowHeight, 8),
+                1
+        );
+        flowBarrier();
+
+        GLES31.glUseProgram(refineFlowProgram);
+        bindTexture(refineFlowProgram, "uSource", 0, sourceTexture);
+        bindTexture(refineFlowProgram, "uTarget", 1, targetTexture);
+        bindTexture(refineFlowProgram, "uCoarseFlow", 2, coarseTexture);
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(refineFlowProgram, "uImageSize"),
+                fineWidth,
+                fineHeight
+        );
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(refineFlowProgram, "uFlowSize"),
+                fineFlowWidth,
+                fineFlowHeight
+        );
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(refineFlowProgram, "uCoarseFlowSize"),
+                coarseFlowWidth,
+                coarseFlowHeight
+        );
+        GLES31.glBindImageTexture(
+                0,
+                fineTexture,
+                0,
+                false,
+                0,
+                GLES31.GL_WRITE_ONLY,
+                GLES30.GL_RGBA16F
+        );
+        GLES31.glDispatchCompute(
+                ceilDiv(fineFlowWidth, 8),
+                ceilDiv(fineFlowHeight, 8),
+                1
+        );
+        flowBarrier();
+
+        GLES31.glUseProgram(detailFlowProgram);
+        bindTexture(detailFlowProgram, "uSource", 0, sourceTexture);
+        bindTexture(detailFlowProgram, "uTarget", 1, targetTexture);
+        bindTexture(detailFlowProgram, "uFineFlow", 2, fineTexture);
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(detailFlowProgram, "uImageSize"),
+                detailWidth,
+                detailHeight
+        );
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(detailFlowProgram, "uFlowSize"),
+                flowWidth,
+                flowHeight
+        );
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(detailFlowProgram, "uFineFlowSize"),
+                fineFlowWidth,
+                fineFlowHeight
+        );
+        GLES31.glBindImageTexture(
+                0,
+                rawTexture,
+                0,
+                false,
+                0,
+                GLES31.GL_WRITE_ONLY,
+                GLES30.GL_RGBA16F
+        );
+        GLES31.glDispatchCompute(ceilDiv(flowWidth, 8), ceilDiv(flowHeight, 8), 1);
+        flowBarrier();
+
+        GLES31.glUseProgram(stabilizeFlowProgram);
+        bindTexture(stabilizeFlowProgram, "uRawFlow", 0, rawTexture);
+        bindTexture(stabilizeFlowProgram, "uHistory", 1, historyTexture);
+        bindTexture(stabilizeFlowProgram, "uGuide", 2, targetTexture);
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(stabilizeFlowProgram, "uFlowSize"),
+                flowWidth,
+                flowHeight
+        );
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(stabilizeFlowProgram, "uGuideSize"),
+                detailWidth,
+                detailHeight
+        );
+        GLES31.glUniform1i(
+                GLES31.glGetUniformLocation(stabilizeFlowProgram, "uHasHistory"),
+                useHistory ? 1 : 0
+        );
+        GLES31.glBindImageTexture(
+                0,
+                outputTexture,
+                0,
+                false,
+                0,
+                GLES31.GL_WRITE_ONLY,
+                GLES30.GL_RGBA16F
+        );
+        GLES31.glDispatchCompute(ceilDiv(flowWidth, 8), ceilDiv(flowHeight, 8), 1);
+        flowBarrier();
+    }
+
+    private void flowBarrier() {
+        GLES31.glMemoryBarrier(
+                GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT
+                        | GLES31.GL_TEXTURE_FETCH_BARRIER_BIT
+        );
+    }
+
+    private void render(long frameTimeNanos) {
+        if (sourceFrames == 0 || paused.get()) return;
+
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+        GLES30.glViewport(0, 0, width, height);
+        GLES30.glDisable(GLES30.GL_BLEND);
+        GLES30.glUseProgram(interpolateProgram);
+        bindTexture(interpolateProgram, "uPrev", 0, prevTex);
+        bindTexture(interpolateProgram, "uCurr", 1, currTex);
+        bindTexture(interpolateProgram, "uForward", 2, forwardFlowTex);
+        bindTexture(interpolateProgram, "uBackward", 3, backwardFlowTex);
+
+        float t;
+        if (!hasFlow || sourceFrames < 2) {
+            t = 1f;
+        } else {
+            long periodNs = 1_000_000_000L / Math.max(1, inputFps.get());
+            t = (float) ((frameTimeNanos - latestSourceArrivalNs) / (double) periodNs);
+            t = Math.max(0f, Math.min(1f, t));
+        }
+
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(interpolateProgram, "uT"), t);
+        GLES30.glUniform2f(
+                GLES30.glGetUniformLocation(interpolateProgram, "uFrameSize"),
+                width,
+                height
+        );
+        GLES30.glUniform1i(
+                GLES30.glGetUniformLocation(interpolateProgram, "uHasFlow"),
+                hasFlow ? 1 + InterpolationSettings.getStrengthPercent() : 0
+        );
+        drawFullscreen();
+
+        if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
+            throw new IllegalStateException("eglSwapBuffers failed: 0x"
+                    + Integer.toHexString(EGL14.eglGetError()));
+        }
+
+        outputsWindow++;
+        if (hasFlow && t > 0.015f && t < 0.985f) generatedWindow++;
+
+        if (!firstOutputReported) {
+            firstOutputReported = true;
+            callback.onFirstOutputFrame();
+        }
+    }
+
+    private void reportStatsIfDue(long nowNs) {
+        if (statsWindowStartNs == 0L) {
+            statsWindowStartNs = nowNs;
+            return;
+        }
+        long elapsedNs = nowNs - statsWindowStartNs;
+        if (elapsedNs < 750_000_000L) return;
+
+        float seconds = elapsedNs / 1_000_000_000f;
+        float sourceRate = acceptedSourcesWindow / seconds;
+        float outputRate = outputsWindow / seconds;
+        float generatedRate = generatedWindow / seconds;
+        float captureRate = captureSignalsWindow / seconds;
+        callback.onStats(
+                sourceRate,
+                outputRate,
+                generatedRate,
+                captureRate,
+                hasFlow && sourceFrames >= 2 && !paused.get()
+        );
+
+        statsWindowStartNs = nowNs;
+        captureSignalsWindow = 0;
+        acceptedSourcesWindow = 0;
+        outputsWindow = 0;
+        generatedWindow = 0;
+    }
+
+    private int createFrameTexture() {
+        int[] ids = new int[1];
+        GLES30.glGenTextures(1, ids, 0);
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, ids[0]);
+        GLES30.glTexStorage2D(
+                GLES30.GL_TEXTURE_2D,
+                COARSE_MIP + 1,
+                GLES30.GL_RGBA8,
+                width,
+                height
+        );
+        GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_MIN_FILTER,
+                GLES30.GL_LINEAR_MIPMAP_LINEAR
+        );
+        GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_MAG_FILTER,
+                GLES30.GL_LINEAR
+        );
+        GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_WRAP_S,
+                GLES30.GL_CLAMP_TO_EDGE
+        );
+        GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_WRAP_T,
+                GLES30.GL_CLAMP_TO_EDGE
+        );
+        GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_MAX_LEVEL,
+                COARSE_MIP
+        );
+        return ids[0];
+    }
+
+    private int createFlowTexture(int textureWidth, int textureHeight) {
+        int[] ids = new int[1];
+        GLES30.glGenTextures(1, ids, 0);
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, ids[0]);
+        GLES30.glTexStorage2D(
+                GLES30.GL_TEXTURE_2D,
+                1,
+                GLES30.GL_RGBA16F,
+                Math.max(1, textureWidth),
+                Math.max(1, textureHeight)
+        );
+        GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_MIN_FILTER,
+                GLES30.GL_LINEAR
+        );
+        GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_MAG_FILTER,
+                GLES30.GL_LINEAR
+        );
+        GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_WRAP_S,
+                GLES30.GL_CLAMP_TO_EDGE
+        );
+        GLES30.glTexParameteri(
+                GLES30.GL_TEXTURE_2D,
+                GLES30.GL_TEXTURE_WRAP_T,
+                GLES30.GL_CLAMP_TO_EDGE
+        );
+        return ids[0];
+    }
+
+    private int createFbo(int texture) {
+        int[] ids = new int[1];
+        GLES30.glGenFramebuffers(1, ids, 0);
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, ids[0]);
+        GLES30.glFramebufferTexture2D(
+                GLES30.GL_FRAMEBUFFER,
+                GLES30.GL_COLOR_ATTACHMENT0,
+                GLES30.GL_TEXTURE_2D,
+                texture,
+                0
+        );
+        int status = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER);
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+        if (status != GLES30.GL_FRAMEBUFFER_COMPLETE) {
+            throw new IllegalStateException("Incomplete framebuffer: 0x"
+                    + Integer.toHexString(status));
+        }
+        return ids[0];
