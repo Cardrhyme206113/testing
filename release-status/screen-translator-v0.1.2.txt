@@ -1,0 +1,5 @@
+tag=screen-translator-v0.1.2
+asset=PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.2.apk
+sha256=06d5cec3949d7da0e1bc155e3f2761097acb70ce5123c8d82bcbc94ca8eaa20b
+bytes=33513133
+published_at=2026-07-01T11:17:05Z
