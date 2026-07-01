@@ -77,7 +77,7 @@ jobs:
           grep -q 'server-process-state.json' /tmp/blockhost-dex-strings.txt
           grep -q 'JVM/native headroom' /tmp/blockhost-dex-strings.txt
           unzip -p "$apk" AndroidManifest.xml > /tmp/blockhost-manifest.xml
-          strings /tmp/blockhost-manifest.xml > /tmp/blockhost-manifest-strings.txt
+          strings -el /tmp/blockhost-manifest.xml > /tmp/blockhost-manifest-strings.txt
           grep -q ':server' /tmp/blockhost-manifest-strings.txt
           ls -lh "$apk"
       - name: Upload build log
