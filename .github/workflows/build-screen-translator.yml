@@ -79,7 +79,7 @@ jobs:
       - name: Upload Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ppocrv6-tiny-screen-translator-arm64-v0.1.3
+          name: ppocrv6-tiny-screen-translator-arm64-v0.1.4
           path: vendor/PaddleOCR/deploy/ppocr-android/screen-translator/build/outputs/apk/debug/screen-translator-debug.apk
           if-no-files-found: error
 
@@ -89,8 +89,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           SOURCE="$GITHUB_WORKSPACE/vendor/PaddleOCR/deploy/ppocr-android/screen-translator/build/outputs/apk/debug/screen-translator-debug.apk"
-          APK="$GITHUB_WORKSPACE/PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.3.apk"
-          TAG="screen-translator-v0.1.3"
+          APK="$GITHUB_WORKSPACE/PP-OCRv6-Tiny-Screen-Translator-arm64-v0.1.4.apk"
+          TAG="screen-translator-v0.1.4"
           cp "$SOURCE" "$APK"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -98,6 +98,6 @@ jobs:
           else
             gh release create "$TAG" "$APK" \
               --target feature/paddle-screen-translator \
-              --title "PP-OCRv6 Tiny Screen Translator v0.1.3" \
-              --notes "Creates an OVERLAY OK probe before the capture picker, keeps the status pill visible during OCR, and displays capture/OCR errors directly on screen. Japanese text is replaced; other OCR regions are highlighted."
+              --title "PP-OCRv6 Tiny Screen Translator v0.1.4" \
+              --notes "Fixes the Android 15 mediaProjection foreground-service crash by requesting capture permission before starting the service."
           fi
