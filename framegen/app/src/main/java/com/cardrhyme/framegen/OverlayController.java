@@ -8,6 +8,7 @@ import android.graphics.Rect;
 import android.os.Build;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
@@ -25,6 +26,7 @@ final class OverlayController {
         void onPauseToggle();
         void onStop();
         void onInputFpsChanged(int fps);
+        void onOutputFpsChanged(int fps);
     }
 
     private final Context context;
@@ -35,19 +37,27 @@ final class OverlayController {
     private WindowManager.LayoutParams outputParams;
     private LinearLayout controlRoot;
     private WindowManager.LayoutParams controlParams;
+    private LinearLayout header;
+    private LinearLayout readout;
+    private TextView collapseButton;
     private TextView statusView;
     private TextView statsView;
+    private TextView sourceLabel;
+    private TextView targetLabel;
     private Button pauseButton;
     private LinearLayout expandedPanel;
 
     private int inputFps;
+    private int outputFps;
+    private boolean mini;
     private boolean expanded;
     private boolean paused;
     private boolean attached;
 
-    OverlayController(Context context, int inputFps, Listener listener) {
+    OverlayController(Context context, int inputFps, int outputFps, Listener listener) {
         this.context = context;
-        this.inputFps = inputFps;
+        this.inputFps = clampFps(inputFps);
+        this.outputFps = Math.max(this.inputFps, clampFps(outputFps));
         this.listener = listener;
         this.windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
     }
@@ -84,17 +94,17 @@ final class OverlayController {
         outputParams.x = 0;
         outputParams.y = 0;
         outputParams.alpha = 0f;
-        outputParams.preferredRefreshRate = 120f;
+        outputParams.preferredRefreshRate = outputFps;
         if (Build.VERSION.SDK_INT >= 28) {
             outputParams.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
         }
-        select120HzMode(outputParams);
+        selectExactDisplayMode(outputParams, outputFps);
         windowManager.addView(outputView, outputParams);
 
         controlRoot = buildControls();
         controlParams = new WindowManager.LayoutParams(
-                dp(318),
+                dp(270),
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -105,6 +115,7 @@ final class OverlayController {
         controlParams.gravity = Gravity.TOP | Gravity.START;
         positionControlInsideSystemBars();
         windowManager.addView(controlRoot, controlParams);
+        applySurfaceFrameRate();
     }
 
     void resizeOutput(int ignoredX, int ignoredY, int bufferWidth, int bufferHeight) {
@@ -115,6 +126,7 @@ final class OverlayController {
         );
         positionControlInsideSystemBars();
         if (controlRoot != null) windowManager.updateViewLayout(controlRoot, controlParams);
+        applySurfaceFrameRate();
     }
 
     private void positionControlInsideSystemBars() {
@@ -125,28 +137,59 @@ final class OverlayController {
             int safeTop = bounds.top + bars.top;
             int safeRight = bounds.right - bars.right;
             controlParams.x = Math.max(bounds.left + bars.left,
-                    safeRight - controlParams.width - dp(12));
-            controlParams.y = safeTop + dp(12);
+                    safeRight - controlParams.width - dp(10));
+            controlParams.y = safeTop + dp(10);
         } catch (RuntimeException ignored) {
             controlParams.x = Math.max(0,
                     context.getResources().getDisplayMetrics().widthPixels
-                            - controlParams.width - dp(12));
-            controlParams.y = dp(20);
+                            - controlParams.width - dp(10));
+            controlParams.y = dp(18);
         }
     }
 
     @SuppressWarnings("deprecation")
-    private void select120HzMode(WindowManager.LayoutParams params) {
+    private void selectExactDisplayMode(WindowManager.LayoutParams params, int requestedFps) {
+        params.preferredDisplayModeId = 0;
         try {
             android.view.Display display = windowManager.getDefaultDisplay();
+            android.view.Display.Mode current = display.getMode();
             android.view.Display.Mode best = null;
+            float bestDifference = Float.MAX_VALUE;
             for (android.view.Display.Mode mode : display.getSupportedModes()) {
-                if (Math.abs(mode.getRefreshRate() - 120f) < 1f
-                        && (best == null || mode.getPhysicalWidth() > best.getPhysicalWidth())) {
+                if (mode.getPhysicalWidth() != current.getPhysicalWidth()
+                        || mode.getPhysicalHeight() != current.getPhysicalHeight()) {
+                    continue;
+                }
+                float difference = Math.abs(mode.getRefreshRate() - requestedFps);
+                if (difference < bestDifference) {
+                    bestDifference = difference;
                     best = mode;
                 }
             }
-            if (best != null) params.preferredDisplayModeId = best.getModeId();
+            if (best != null && bestDifference < 1.5f) {
+                params.preferredDisplayModeId = best.getModeId();
+            }
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void applySurfaceFrameRate() {
+        if (outputView == null) return;
+        try {
+            Surface surface = outputView.getHolder().getSurface();
+            if (surface == null || !surface.isValid()) return;
+            if (Build.VERSION.SDK_INT >= 31) {
+                surface.setFrameRate(
+                        outputFps,
+                        Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                        Surface.CHANGE_FRAME_RATE_ALWAYS
+                );
+            } else {
+                surface.setFrameRate(
+                        outputFps,
+                        Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE
+                );
+            }
         } catch (RuntimeException ignored) {
         }
     }
@@ -154,22 +197,22 @@ final class OverlayController {
     private LinearLayout buildControls() {
         LinearLayout root = new LinearLayout(context);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(8), dp(8), dp(8), dp(8));
+        root.setPadding(dp(5), dp(5), dp(5), dp(5));
         root.setBackgroundColor(Color.argb(238, 18, 24, 25));
 
-        LinearLayout header = new LinearLayout(context);
+        header = new LinearLayout(context);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(8), dp(4), dp(8), dp(4));
+        header.setPadding(dp(3), dp(2), dp(3), dp(2));
 
-        TextView fg = label("FG", 17, Color.rgb(87, 227, 137));
+        TextView fg = label("FG", 15, Color.rgb(87, 227, 137));
         fg.setGravity(Gravity.CENTER);
-        header.addView(fg, new LinearLayout.LayoutParams(dp(44), dp(48)));
+        header.addView(fg, new LinearLayout.LayoutParams(dp(40), dp(38)));
 
-        LinearLayout readout = new LinearLayout(context);
+        readout = new LinearLayout(context);
         readout.setOrientation(LinearLayout.VERTICAL);
         readout.setGravity(Gravity.CENTER_VERTICAL);
-        statusView = label(statusText(), 15, Color.WHITE);
-        statsView = label("SRC --.-  OUT --.-  GEN --.-", 11, Color.rgb(174, 190, 181));
+        statusView = label(statusText(), 13, Color.WHITE);
+        statsView = label("SRC --  OUT --  GEN --  CAP --", 9, Color.rgb(174, 190, 181));
         readout.addView(statusView);
         readout.addView(statsView);
 
@@ -178,52 +221,77 @@ final class OverlayController {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 1f
         );
-        readoutParams.leftMargin = dp(7);
+        readoutParams.leftMargin = dp(4);
         header.addView(readout, readoutParams);
+
+        collapseButton = label("‹", 19, Color.rgb(190, 205, 197));
+        collapseButton.setGravity(Gravity.CENTER);
+        collapseButton.setOnClickListener(v -> setMini(true));
+        header.addView(collapseButton, new LinearLayout.LayoutParams(dp(28), dp(36)));
         root.addView(header);
 
         expandedPanel = new LinearLayout(context);
         expandedPanel.setOrientation(LinearLayout.VERTICAL);
         expandedPanel.setVisibility(View.GONE);
 
-        LinearLayout fpsRow = new LinearLayout(context);
-        fpsRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView fpsLabel = label("Configured source FPS", 14, Color.rgb(205, 215, 210));
-        fpsRow.addView(fpsLabel, new LinearLayout.LayoutParams(0, dp(46), 1f));
+        LinearLayout sourceRow = makeFpsRow(true);
+        expandedPanel.addView(sourceRow);
 
-        Button minus = compactButton("−");
-        minus.setOnClickListener(v -> changeFps(-1));
-        fpsRow.addView(minus, new LinearLayout.LayoutParams(dp(54), dp(42)));
-
-        Button plus = compactButton("+");
-        plus.setOnClickListener(v -> changeFps(1));
-        fpsRow.addView(plus, new LinearLayout.LayoutParams(dp(54), dp(42)));
-        expandedPanel.addView(fpsRow);
+        LinearLayout targetRow = makeFpsRow(false);
+        expandedPanel.addView(targetRow);
 
         pauseButton = compactButton("Bypass");
         pauseButton.setOnClickListener(v -> listener.onPauseToggle());
-        expandedPanel.addView(pauseButton, new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams pauseParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(46)
-        ));
+                dp(38)
+        );
+        pauseParams.topMargin = dp(3);
+        expandedPanel.addView(pauseButton, pauseParams);
 
         Button stop = compactButton("STOP FRAME GEN");
         stop.setTextColor(Color.rgb(255, 180, 180));
         stop.setOnClickListener(v -> listener.onStop());
         LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(46)
+                dp(38)
         );
-        stopParams.topMargin = dp(6);
+        stopParams.topMargin = dp(4);
         expandedPanel.addView(stop, stopParams);
         root.addView(expandedPanel);
 
         installDragAndExpand(header);
+        updateFpsLabels();
         return root;
     }
 
-    private void installDragAndExpand(View header) {
-        header.setOnTouchListener(new View.OnTouchListener() {
+    private LinearLayout makeFpsRow(boolean source) {
+        LinearLayout row = new LinearLayout(context);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView value = label("", 12, Color.rgb(205, 215, 210));
+        if (source) sourceLabel = value;
+        else targetLabel = value;
+        row.addView(value, new LinearLayout.LayoutParams(0, dp(36), 1f));
+
+        Button minus = compactButton("−");
+        minus.setOnClickListener(v -> {
+            if (source) changeInputFps(-1);
+            else changeOutputFps(-5);
+        });
+        row.addView(minus, new LinearLayout.LayoutParams(dp(42), dp(34)));
+
+        Button plus = compactButton("+");
+        plus.setOnClickListener(v -> {
+            if (source) changeInputFps(1);
+            else changeOutputFps(5);
+        });
+        row.addView(plus, new LinearLayout.LayoutParams(dp(42), dp(34)));
+        return row;
+    }
+
+    private void installDragAndExpand(View dragView) {
+        dragView.setOnTouchListener(new View.OnTouchListener() {
             int startX;
             int startY;
             float downX;
@@ -243,13 +311,16 @@ final class OverlayController {
                     case MotionEvent.ACTION_MOVE:
                         int dx = Math.round(event.getRawX() - downX);
                         int dy = Math.round(event.getRawY() - downY);
-                        if (Math.abs(dx) + Math.abs(dy) > dp(8)) moved = true;
+                        if (Math.abs(dx) + Math.abs(dy) > dp(7)) moved = true;
                         controlParams.x = Math.max(0, startX + dx);
                         controlParams.y = Math.max(0, startY + dy);
                         windowManager.updateViewLayout(controlRoot, controlParams);
                         return true;
                     case MotionEvent.ACTION_UP:
-                        if (!moved) setExpanded(!expanded);
+                        if (!moved) {
+                            if (mini) setMini(false);
+                            else setExpanded(!expanded);
+                        }
                         return true;
                     default:
                         return false;
@@ -258,16 +329,67 @@ final class OverlayController {
         });
     }
 
+    private void setMini(boolean value) {
+        if (mini == value || controlParams == null) return;
+        int oldWidth = controlParams.width;
+        int oldRight = controlParams.x + oldWidth;
+        mini = value;
+        expanded = false;
+
+        readout.setVisibility(mini ? View.GONE : View.VISIBLE);
+        collapseButton.setVisibility(mini ? View.GONE : View.VISIBLE);
+        expandedPanel.setVisibility(View.GONE);
+        controlParams.width = dp(mini ? 50 : 270);
+        controlParams.x = Math.max(0, oldRight - controlParams.width);
+        controlRoot.setPadding(
+                dp(mini ? 2 : 5),
+                dp(mini ? 2 : 5),
+                dp(mini ? 2 : 5),
+                dp(mini ? 2 : 5)
+        );
+        controlRoot.requestLayout();
+        windowManager.updateViewLayout(controlRoot, controlParams);
+    }
+
     private void setExpanded(boolean value) {
+        if (mini) {
+            setMini(false);
+            return;
+        }
         expanded = value;
         expandedPanel.setVisibility(expanded ? View.VISIBLE : View.GONE);
         controlRoot.requestLayout();
+        windowManager.updateViewLayout(controlRoot, controlParams);
     }
 
-    private void changeFps(int delta) {
-        inputFps = Math.max(1, Math.min(120, inputFps + delta));
-        updateStatus();
+    private void changeInputFps(int delta) {
+        inputFps = clampFps(inputFps + delta);
         listener.onInputFpsChanged(inputFps);
+        if (outputFps < inputFps) {
+            outputFps = inputFps;
+            listener.onOutputFpsChanged(outputFps);
+            applyOutputRatePreference();
+        }
+        updateFpsLabels();
+        updateStatus();
+    }
+
+    private void changeOutputFps(int delta) {
+        outputFps = Math.max(inputFps, clampFps(outputFps + delta));
+        listener.onOutputFpsChanged(outputFps);
+        applyOutputRatePreference();
+        updateFpsLabels();
+        updateStatus();
+    }
+
+    private void applyOutputRatePreference() {
+        if (outputParams == null) return;
+        outputParams.preferredRefreshRate = outputFps;
+        selectExactDisplayMode(outputParams, outputFps);
+        if (attached && outputView != null) {
+            windowManager.updateViewLayout(outputView, outputParams);
+            applySurfaceFrameRate();
+        }
     }
 
     void setOutputVisible(boolean visible) {
@@ -283,8 +405,17 @@ final class OverlayController {
     }
 
     void setInputFps(int fps) {
-        inputFps = Math.max(1, Math.min(120, fps));
+        inputFps = clampFps(fps);
+        if (outputFps < inputFps) outputFps = inputFps;
+        updateFpsLabels();
         updateStatus();
+    }
+
+    void setOutputFps(int fps) {
+        outputFps = Math.max(inputFps, clampFps(fps));
+        updateFpsLabels();
+        updateStatus();
+        applyOutputRatePreference();
     }
 
     void setStats(
@@ -297,7 +428,7 @@ final class OverlayController {
         if (statsView == null) return;
         statsView.setText(String.format(
                 Locale.US,
-                "SRC %.1f  OUT %.1f  GEN %.1f  CAP %.0f  %s",
+                "S %.1f  O %.1f  G %.1f  C %.0f  %s",
                 sourceFps,
                 outputFps,
                 generatedFps,
@@ -316,6 +447,11 @@ final class OverlayController {
         }
     }
 
+    private void updateFpsLabels() {
+        if (sourceLabel != null) sourceLabel.setText("Source  " + inputFps + " FPS");
+        if (targetLabel != null) targetLabel.setText("Target  " + outputFps + " FPS");
+    }
+
     private void updateStatus() {
         if (statusView == null) return;
         statusView.setText(statusText());
@@ -323,7 +459,7 @@ final class OverlayController {
     }
 
     private String statusText() {
-        return paused ? "Bypassed · tap to open" : inputFps + " → 120 FPS";
+        return paused ? "Bypassed" : inputFps + " → " + outputFps + " FPS";
     }
 
     void detach() {
@@ -344,11 +480,15 @@ final class OverlayController {
     private Button compactButton(String text) {
         Button button = new Button(context);
         button.setText(text);
-        button.setTextSize(14);
+        button.setTextSize(12);
         button.setAllCaps(false);
         button.setTextColor(Color.WHITE);
         button.setBackgroundColor(Color.rgb(39, 50, 51));
-        button.setPadding(dp(4), 0, dp(4), 0);
+        button.setPadding(dp(2), 0, dp(2), 0);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
         return button;
     }
 
@@ -363,5 +503,9 @@ final class OverlayController {
 
     private int dp(int value) {
         return Math.round(value * context.getResources().getDisplayMetrics().density);
+    }
+
+    private static int clampFps(int value) {
+        return Math.max(1, Math.min(120, value));
     }
 }
