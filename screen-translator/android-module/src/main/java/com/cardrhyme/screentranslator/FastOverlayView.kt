@@ -6,12 +6,13 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.View
+import java.util.LinkedHashMap
 import kotlin.math.max
 import kotlin.math.min
 
 class FastOverlayView(context: Context) : View(context) {
     private data class Ready(val item: OverlayItem, val lines: List<String>, val size: Float, val step: Float, val base: Float)
-    private var ready = emptyList<Ready>()
+    private val ready = LinkedHashMap<String, Ready>()
     private var status = "OCR loading"
     private var hidden = false
     private var error = false
@@ -43,15 +44,21 @@ class FastOverlayView(context: Context) : View(context) {
         hidden = false
         dx = 0f
         dy = 0f
-        ready = items.map { prepare(it) }
+        ready.clear()
+        items.forEachIndexed { index, item -> ready[key(item, index)] = prepare(item) }
         invalidate()
+    }
+
+    fun mergeTranslations(items: List<OverlayItem>) {
+        items.forEachIndexed { index, item -> ready[key(item, index)] = prepare(item) }
+        postInvalidateOnAnimation()
     }
 
     override fun onDraw(canvas: Canvas) {
         if (!hidden) {
             canvas.save()
             canvas.translate(dx, dy)
-            ready.forEach { drawReady(canvas, it) }
+            ready.values.forEach { drawReady(canvas, it) }
             canvas.restore()
         }
         fill.color = if (error) Color.rgb(185, 30, 30) else Color.rgb(20, 125, 60)
@@ -59,6 +66,8 @@ class FastOverlayView(context: Context) : View(context) {
         canvas.drawRoundRect(box, 8f * d, 8f * d, fill)
         canvas.drawText(status, box.left + 8f * d, box.bottom - 8f * d, pill)
     }
+
+    private fun key(item: OverlayItem, fallback: Int): String = item.id.ifBlank { "anon:$fallback:${item.bounds.left.toInt()}:${item.bounds.top.toInt()}" }
 
     private fun prepare(item: OverlayItem): Ready {
         val value = item.text.orEmpty()
@@ -89,6 +98,7 @@ class FastOverlayView(context: Context) : View(context) {
         }
         fill.color = item.backgroundColor
         canvas.drawRect(box, fill)
+        if (value.lines.isEmpty()) return
         text.color = item.foregroundColor
         text.textSize = value.size
         canvas.save()
