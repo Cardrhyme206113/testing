@@ -28,6 +28,7 @@ jobs:
         run: |
           J=framegen/app/src/main/java/com/cardrhyme/framegen/GpuFrameGenerator.java
           cat "$J.part1" "$J.part2" "$J.part3" > "$J"
+          python3 framegen/apply_interpolation_aggression.py "$J"
 
       - uses: actions/setup-java@v4
         with:
@@ -49,6 +50,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: framelift-debug-v0.8
+          name: framelift-debug-v0.9
           path: framegen/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
