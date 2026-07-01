@@ -11,6 +11,7 @@
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:extractNativeLibs="true"
+        android:allowNativeHeapPointerTagging="false"
         android:supportsRtl="true">
         <activity android:name=".BlockHostActivity" android:exported="true" android:screenOrientation="portrait">
             <intent-filter>
@@ -20,6 +21,7 @@
         </activity>
         <service
             android:name=".MinecraftServerService"
+            android:process=":server"
             android:exported="false"
             android:stopWithTask="false"
             android:foregroundServiceType="specialUse">
