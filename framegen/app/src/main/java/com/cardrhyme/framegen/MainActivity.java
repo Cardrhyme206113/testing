@@ -25,7 +25,9 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATIONS = 1003;
 
     private EditText inputFpsEdit;
-    private int pendingFps = 60;
+    private EditText outputFpsEdit;
+    private int pendingInputFps = 60;
+    private int pendingOutputFps = 120;
     private boolean continueAfterAccessibility;
 
     @Override
@@ -57,74 +59,109 @@ public final class MainActivity extends Activity {
     }
 
     private View buildUi() {
-        int pad = dp(22);
+        int pad = dp(18);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
         root.setPadding(pad, pad, pad, pad);
         root.setBackgroundColor(Color.rgb(16, 20, 22));
 
-        TextView title = text("FrameLift", 30, Color.WHITE);
+        TextView title = text("FrameLift", 28, Color.WHITE);
         title.setGravity(Gravity.CENTER);
         root.addView(title, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
 
         TextView subtitle = text(
-                "Single-app GPU frame interpolation. Output targets 120 FPS.",
-                16,
+                "Quality GPU interpolation with separate source and target rates.",
+                14,
                 Color.rgb(190, 201, 196)
         );
         subtitle.setGravity(Gravity.CENTER);
-        subtitle.setPadding(0, dp(10), 0, dp(28));
+        subtitle.setPadding(0, dp(7), 0, dp(20));
         root.addView(subtitle, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
 
-        TextView label = text("Source FPS", 15, Color.rgb(220, 230, 225));
-        root.addView(label, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
+        LinearLayout fpsRow = new LinearLayout(this);
+        fpsRow.setOrientation(LinearLayout.HORIZONTAL);
+        fpsRow.setGravity(Gravity.CENTER);
 
-        inputFpsEdit = new EditText(this);
-        inputFpsEdit.setText("60");
-        inputFpsEdit.setTextColor(Color.WHITE);
-        inputFpsEdit.setTextSize(24);
-        inputFpsEdit.setGravity(Gravity.CENTER);
-        inputFpsEdit.setSingleLine(true);
-        inputFpsEdit.setInputType(InputType.TYPE_CLASS_NUMBER);
-        inputFpsEdit.setBackgroundColor(Color.rgb(34, 42, 45));
-        LinearLayout.LayoutParams fpsParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(62)
+        LinearLayout sourceColumn = fpsColumn("Source FPS", "60", true);
+        LinearLayout.LayoutParams columnParams = new LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
         );
-        fpsParams.topMargin = dp(8);
-        fpsParams.bottomMargin = dp(12);
-        root.addView(inputFpsEdit, fpsParams);
+        columnParams.rightMargin = dp(5);
+        fpsRow.addView(sourceColumn, columnParams);
 
-        TextView output = text("Output: 120 FPS", 17, Color.rgb(87, 227, 137));
-        output.setGravity(Gravity.CENTER);
-        output.setPadding(0, 0, 0, dp(22));
-        root.addView(output, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
+        LinearLayout targetColumn = fpsColumn("Target FPS", "120", false);
+        LinearLayout.LayoutParams targetParams = new LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+        );
+        targetParams.leftMargin = dp(5);
+        fpsRow.addView(targetColumn, targetParams);
+        root.addView(fpsRow, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
 
         Button start = new Button(this);
         start.setText("Select app and start");
-        start.setTextSize(18);
+        start.setTextSize(16);
         start.setAllCaps(false);
         start.setTextColor(Color.rgb(8, 25, 15));
         start.setBackgroundColor(Color.rgb(87, 227, 137));
         start.setOnClickListener(v -> beginStart());
-        root.addView(start, new LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams startParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(58)
-        ));
+                dp(52)
+        );
+        startParams.topMargin = dp(16);
+        root.addView(start, startParams);
 
         TextView note = text(
-                "Choose YouTube or Roblox in the capture picker. Do not choose the full display.",
-                14,
+                "Choose one app in the capture picker. Target FPS can also be changed from the overlay.",
+                13,
                 Color.rgb(150, 164, 157)
         );
-        note.setPadding(0, dp(22), 0, 0);
+        note.setPadding(0, dp(16), 0, 0);
         root.addView(note, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
         return root;
     }
 
+    private LinearLayout fpsColumn(String labelText, String initialValue, boolean source) {
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+
+        TextView label = text(labelText, 13, Color.rgb(220, 230, 225));
+        label.setGravity(Gravity.CENTER);
+        column.addView(label, matchWrap(LinearLayout.LayoutParams.MATCH_PARENT));
+
+        EditText edit = new EditText(this);
+        edit.setText(initialValue);
+        edit.setTextColor(Color.WHITE);
+        edit.setTextSize(22);
+        edit.setGravity(Gravity.CENTER);
+        edit.setSingleLine(true);
+        edit.setInputType(InputType.TYPE_CLASS_NUMBER);
+        edit.setBackgroundColor(Color.rgb(34, 42, 45));
+        LinearLayout.LayoutParams editParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(56)
+        );
+        editParams.topMargin = dp(6);
+        column.addView(edit, editParams);
+
+        if (source) inputFpsEdit = edit;
+        else outputFpsEdit = edit;
+        return column;
+    }
+
     private void beginStart() {
-        pendingFps = parseFps();
+        pendingInputFps = parseFps(inputFpsEdit, 60);
+        pendingOutputFps = Math.max(
+                pendingInputFps,
+                parseFps(outputFpsEdit, 120)
+        );
+        outputFpsEdit.setText(Integer.toString(pendingOutputFps));
+
         if (!FrameLiftAccessibilityService.isRunning()) {
             continueAfterAccessibility = true;
             startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
@@ -138,12 +175,12 @@ public final class MainActivity extends Activity {
         requestCapture();
     }
 
-    private int parseFps() {
+    private int parseFps(EditText editText, int fallback) {
         try {
-            int value = Integer.parseInt(inputFpsEdit.getText().toString().trim());
+            int value = Integer.parseInt(editText.getText().toString().trim());
             return Math.max(1, Math.min(120, value));
         } catch (NumberFormatException ignored) {
-            return 60;
+            return fallback;
         }
     }
 
@@ -169,7 +206,8 @@ public final class MainActivity extends Activity {
         serviceIntent.setAction(FrameGenService.ACTION_START);
         serviceIntent.putExtra(FrameGenService.EXTRA_RESULT_CODE, resultCode);
         serviceIntent.putExtra(FrameGenService.EXTRA_RESULT_DATA, data);
-        serviceIntent.putExtra(FrameGenService.EXTRA_INPUT_FPS, pendingFps);
+        serviceIntent.putExtra(FrameGenService.EXTRA_INPUT_FPS, pendingInputFps);
+        serviceIntent.putExtra(FrameGenService.EXTRA_OUTPUT_FPS, pendingOutputFps);
         startForegroundService(serviceIntent);
         moveTaskToBack(true);
     }
