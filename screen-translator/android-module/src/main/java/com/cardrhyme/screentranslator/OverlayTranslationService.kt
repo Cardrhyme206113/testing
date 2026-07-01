@@ -20,7 +20,6 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.view.Gravity
-import android.view.View
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.common.model.DownloadConditions
@@ -64,9 +63,16 @@ private data class FrameOverlayResult(
     val japaneseCount: Int,
 )
 
+private data class RecognizedRegion(
+    val result: OCRResult,
+    val text: String,
+    val bounds: RectF,
+)
+
 class OverlayTranslationService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val frameRequested = AtomicBoolean(false)
+    private val startingCapture = AtomicBoolean(false)
     private val frameChannel = Channel<Bitmap>(Channel.CONFLATED)
 
     private var mediaProjection: MediaProjection? = null
@@ -89,7 +95,11 @@ class OverlayTranslationService : Service() {
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
-            stopSelf()
+            scope.launch(Dispatchers.Main.immediate) {
+                overlayView?.setError("screen capture stopped")
+                delay(ERROR_VISIBLE_MS)
+                stopSelf()
+            }
         }
     }
 
@@ -105,43 +115,78 @@ class OverlayTranslationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+
+            ACTION_PREPARE -> {
+                startBasicForeground("Overlay ready; choose screen capture")
+                scope.launch(Dispatchers.Main.immediate) {
+                    try {
+                        createOverlay()
+                        overlayView?.setStatus("OVERLAY OK • choose full screen")
+                    } catch (error: Throwable) {
+                        updateNotification("Overlay blocked: ${error.message ?: "unknown error"}")
+                    }
+                }
+                return START_STICKY
+            }
+
+            ACTION_START -> Unit
+            else -> return START_NOT_STICKY
         }
-        if (intent?.action != ACTION_START || mediaProjection != null) {
-            return START_NOT_STICKY
+
+        if (mediaProjection != null || !startingCapture.compareAndSet(false, true)) {
+            return START_STICKY
         }
 
         startProjectionForeground("Preparing OCR and translation…")
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE)
         val resultData = intent.intentExtra(EXTRA_RESULT_DATA)
         if (resultCode == Int.MIN_VALUE || resultData == null) {
-            stopSelf()
-            return START_NOT_STICKY
+            startingCapture.set(false)
+            scope.launch(Dispatchers.Main.immediate) {
+                createOverlay()
+                overlayView?.setError("missing screen-capture permission")
+            }
+            return START_STICKY
         }
 
         scope.launch {
             try {
                 withContext(Dispatchers.Main.immediate) {
                     createOverlay()
-                    overlayView?.setStatus("Loading OCR…")
+                    overlayView?.setStatus("OVERLAY OK • loading OCR")
                 }
                 initializeModels()
+                withContext(Dispatchers.Main.immediate) {
+                    overlayView?.setStatus("OVERLAY OK • starting capture")
+                }
                 updateNotification("Scanning text on screen")
                 startProjection(resultCode, resultData)
                 captureLoop()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                updateNotification("Stopped: ${error.message ?: "initialization error"}")
+                startingCapture.set(false)
+                val message = error.message?.take(80) ?: error.javaClass.simpleName
+                updateNotification("Translator error: $message")
+                withContext(Dispatchers.Main.immediate) {
+                    runCatching { createOverlay() }
+                    overlayView?.setError(message)
+                }
+                delay(ERROR_VISIBLE_MS)
                 stopSelf()
             }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private suspend fun initializeModels() = coroutineScope {
+        if (ocr != null) return@coroutineScope
+
         val ocrDeferred = async(Dispatchers.IO) {
             check(OpenCVUtils.init(this@OverlayTranslationService)) {
                 "OpenCV could not initialize"
@@ -150,7 +195,7 @@ class OverlayTranslationService : Service() {
                 context = this@OverlayTranslationService,
                 config = PaddleOCRConfig(
                     detMaxSideLimit = OCR_LONG_SIDE,
-                    recScoreThresh = 0.25f,
+                    recScoreThresh = OCR_CONFIDENCE,
                     recBatchSize = 4,
                 ),
                 engineConfig = EngineConfig(
@@ -209,12 +254,13 @@ class OverlayTranslationService : Service() {
             null,
             captureHandler,
         )
+        check(virtualDisplay != null) { "virtual display could not start" }
     }
 
     private suspend fun captureLoop() {
         while (currentCoroutineContext().isActive) {
             withContext(Dispatchers.Main.immediate) {
-                overlayView?.visibility = View.INVISIBLE
+                overlayView?.setCapturing(true, "CAPTURE • waiting for frame")
             }
             delay(OVERLAY_HIDE_MS)
 
@@ -222,13 +268,15 @@ class OverlayTranslationService : Service() {
             val bitmap = withTimeoutOrNull(FRAME_TIMEOUT_MS) { frameChannel.receive() }
             if (bitmap == null) {
                 withContext(Dispatchers.Main.immediate) {
-                    overlayView?.setResult("No screen frame", emptyList())
-                    overlayView?.visibility = View.VISIBLE
+                    overlayView?.setResult("NO FRAME • capture blocked", emptyList())
                 }
                 delay(SCAN_PAUSE_MS)
                 continue
             }
 
+            withContext(Dispatchers.Main.immediate) {
+                overlayView?.setCapturing(true, "OCR • processing")
+            }
             val frameResult = try {
                 processFrame(bitmap)
             } finally {
@@ -239,7 +287,6 @@ class OverlayTranslationService : Service() {
                     "OCR ${frameResult.detectedCount} • JP ${frameResult.japaneseCount}",
                     frameResult.items,
                 )
-                overlayView?.visibility = View.VISIBLE
             }
             delay(SCAN_PAUSE_MS)
         }
@@ -250,31 +297,31 @@ class OverlayTranslationService : Service() {
         val recognized = engine.recognize(bitmap).results
             .asSequence()
             .filter { it.confidence >= OCR_CONFIDENCE }
-            .map { it to normalizeText(it.text) }
-            .filter { (_, text) -> text.isNotBlank() }
-            .sortedWith(
-                compareBy(
-                    { pair -> pair.first.box.points.minOf { it.y } },
-                    { pair -> pair.first.box.points.minOf { it.x } },
-                ),
-            )
+            .map { result ->
+                RecognizedRegion(
+                    result = result,
+                    text = normalizeText(result.text),
+                    bounds = result.toScreenBounds(bitmap),
+                )
+            }
+            .filter { region -> region.text.isNotBlank() && !isStatusPillRegion(region.bounds) }
+            .sortedWith(compareBy({ it.bounds.top }, { it.bounds.left }))
             .take(MAX_LINES)
             .toList()
 
-        val japaneseCount = recognized.count { (_, text) -> containsJapanese(text) }
+        val japaneseCount = recognized.count { region -> containsJapanese(region.text) }
         val items = coroutineScope {
-            recognized.map { (result, text) ->
+            recognized.map { region ->
                 async {
-                    val bounds = result.toScreenBounds(bitmap)
-                    if (!containsJapanese(text)) {
-                        OverlayItem(bounds = bounds, kind = OverlayKind.HIGHLIGHT)
+                    if (!containsJapanese(region.text)) {
+                        OverlayItem(bounds = region.bounds, kind = OverlayKind.HIGHLIGHT)
                     } else {
-                        val english = runCatching { translateCached(text) }.getOrDefault("")
-                        if (english.isBlank() || english.equals(text, ignoreCase = true)) {
-                            OverlayItem(bounds = bounds, kind = OverlayKind.HIGHLIGHT)
+                        val english = runCatching { translateCached(region.text) }.getOrDefault("")
+                        if (english.isBlank() || english.equals(region.text, ignoreCase = true)) {
+                            OverlayItem(bounds = region.bounds, kind = OverlayKind.HIGHLIGHT)
                         } else {
                             OverlayItem(
-                                bounds = bounds,
+                                bounds = region.bounds,
                                 text = english,
                                 kind = OverlayKind.TRANSLATED,
                             )
@@ -323,6 +370,11 @@ class OverlayTranslationService : Service() {
             box.points.maxOf { it.x } * scaleX,
             box.points.maxOf { it.y } * scaleY,
         )
+    }
+
+    private fun isStatusPillRegion(bounds: RectF): Boolean {
+        val density = resources.displayMetrics.density
+        return bounds.left < 380f * density && bounds.top < 72f * density
     }
 
     private fun onImageAvailable(reader: ImageReader) {
@@ -430,6 +482,10 @@ class OverlayTranslationService : Service() {
         return previous[second.length]
     }
 
+    private fun startBasicForeground(text: String) {
+        startForeground(NOTIFICATION_ID, notification(text))
+    }
+
     private fun startProjectionForeground(text: String) {
         val notification = notification(text)
         if (Build.VERSION.SDK_INT >= 29) {
@@ -509,6 +565,7 @@ class OverlayTranslationService : Service() {
     }
 
     companion object {
+        const val ACTION_PREPARE = "com.cardrhyme.screentranslator.PREPARE"
         const val ACTION_START = "com.cardrhyme.screentranslator.START"
         const val ACTION_STOP = "com.cardrhyme.screentranslator.STOP"
         const val EXTRA_RESULT_CODE = "result_code"
@@ -520,7 +577,8 @@ class OverlayTranslationService : Service() {
         private const val OCR_CONFIDENCE = 0.25f
         private const val MAX_LINES = 48
         private const val OVERLAY_HIDE_MS = 120L
-        private const val FRAME_TIMEOUT_MS = 900L
+        private const val FRAME_TIMEOUT_MS = 1500L
         private const val SCAN_PAUSE_MS = 800L
+        private const val ERROR_VISIBLE_MS = 8000L
     }
 }
