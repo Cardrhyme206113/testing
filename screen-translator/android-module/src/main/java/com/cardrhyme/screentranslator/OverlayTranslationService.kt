@@ -37,8 +37,7 @@ class OverlayTranslationService : Service() {
     private var ocr: RealtimeOcrController? = null
     private var totalMotionX = 0f
     private var totalMotionY = 0f
-    private var renderMotionX = 0f
-    private var renderMotionY = 0f
+    private var resultGeneration = 0L
     private var lastStatus = "Starting"
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -52,7 +51,7 @@ class OverlayTranslationService : Service() {
         val resultData = intent.intentExtra(EXTRA_RESULT_DATA)
         if (resultCode == Int.MIN_VALUE || resultData == null) return START_NOT_STICKY
 
-        startProjectionForeground("Preparing full-resolution OCR")
+        startProjectionForeground("Preparing Tiny full-resolution OCR")
         scope.launch {
             try {
                 withContext(Dispatchers.Main.immediate) { createOverlay() }
@@ -94,23 +93,17 @@ class OverlayTranslationService : Service() {
 
     private suspend fun runOcrLoop() {
         while (currentCoroutineContext().isActive) {
-            withContext(Dispatchers.Main.immediate) {
-                overlay?.beginCapture("Full-res capture")
-            }
-            delay(24)
+            withContext(Dispatchers.Main.immediate) { overlay?.beginCapture("Clean full-res frame") }
+            delay(20)
             captureEngine?.requestOcrCapture()
             val frame = withTimeoutOrNull(650) { captures.receive() }
             if (frame == null) {
-                withContext(Dispatchers.Main.immediate) {
-                    overlay?.endCapture("Tracking • no OCR frame")
-                }
-                delay(180)
+                withContext(Dispatchers.Main.immediate) { overlay?.endCapture("Tracking • no OCR frame") }
+                delay(120)
                 continue
             }
 
-            withContext(Dispatchers.Main.immediate) {
-                overlay?.endCapture("Tracking • OCR running")
-            }
+            withContext(Dispatchers.Main.immediate) { overlay?.endCapture("Tracking • Tiny OCR") }
             val output = try {
                 ocr?.process(
                     frame.bitmap,
@@ -124,24 +117,36 @@ class OverlayTranslationService : Service() {
             val currentMotion = synchronized(motionLock) { totalMotionX to totalMotionY }
             val correctionX = currentMotion.first - frame.motionX
             val correctionY = currentMotion.second - frame.motionY
-            val movedItems = output.items.map { item ->
-                val moved = RectF(item.bounds)
-                moved.offset(correctionX, correctionY)
-                item.copy(bounds = moved)
+            val movedItems = output.items.map { it.shifted(correctionX, correctionY) }
+            val movedPending = output.pendingTranslations.map { work ->
+                work.copy(item = work.item.shifted(correctionX, correctionY))
             }
+            val generation = ++resultGeneration
 
             lastStatus = "${output.modelLabel} • OCR ${output.detectedCount} • JP ${output.japaneseCount} • ${output.elapsedMs}ms"
             withContext(Dispatchers.Main.immediate) {
-                if (movedItems.isNotEmpty()) {
-                    overlay?.setResult(lastStatus, movedItems)
-                    renderMotionX = currentMotion.first
-                    renderMotionY = currentMotion.second
-                } else {
-                    overlay?.setStatus(lastStatus)
+                if (movedItems.isNotEmpty()) overlay?.setResult(lastStatus, movedItems)
+                else overlay?.setStatus(lastStatus)
+            }
+
+            if (movedPending.isNotEmpty()) {
+                scope.launch {
+                    val translated = ocr?.translatePending(movedPending).orEmpty()
+                    if (translated.isNotEmpty() && generation == resultGeneration) {
+                        withContext(Dispatchers.Main.immediate) {
+                            overlay?.mergeTranslations(translated)
+                        }
+                    }
                 }
             }
-            delay(120)
+            delay(80)
         }
+    }
+
+    private fun OverlayItem.shifted(dx: Float, dy: Float): OverlayItem {
+        val moved = RectF(bounds)
+        moved.offset(dx, dy)
+        return copy(bounds = moved)
     }
 
     private fun createOverlay() {
@@ -166,11 +171,7 @@ class OverlayTranslationService : Service() {
         )
         val notification = notification(text)
         if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
-            )
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -201,9 +202,7 @@ class OverlayTranslationService : Service() {
         captureEngine?.close()
         captures.close()
         runBlocking { ocr?.close() }
-        overlay?.let { view ->
-            runCatching { getSystemService(WindowManager::class.java).removeView(view) }
-        }
+        overlay?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
         scope.cancel()
         super.onDestroy()
     }
