@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -17,11 +18,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Install packaging tools
-        run: sudo apt-get update && sudo apt-get install -y patchelf
-      - name: Fetch ARM64 PRoot launcher
-        run: bash scripts/fetch-proot.sh
-      - name: Apply Android and PRoot compatibility
+      - name: Install Android native build tools
+        shell: bash
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" "cmake;3.22.1"
+      - name: Apply Android API and Paper UI compatibility
         shell: bash
         run: |
           python3 - <<'PY'
@@ -41,22 +43,29 @@ jobs:
           for old, new in pairs.items():
             s = s.replace(old, new)
           p.write_text(s)
-          p = root / 'MinecraftServerService.java'
-          p.write_text(p.read_text().replace('processStats.sample(process.pid())', 'processStats.sample(ProcessId.get(process))'))
+          p = root / 'BlockHostBackend.java'
+          s = p.read_text().replace(
+              '.put("buildToolsUrl", SpigotVersionProvider.BUILDTOOLS_URL)',
+              '.put("serverSource", SpigotVersionProvider.PAPER_API)'
+          )
+          p.write_text(s)
+          p = Path('app/src/main/assets/app-native.js')
+          s = p.read_text().replace('Java · Spigot ·', 'Java · Paper ·')
+          s = s.replace('Spigot ${esc(x.version)}', 'Paper ${esc(x.version)}')
+          p.write_text(s)
           PY
-          python3 scripts/patch-proot-runtime-v16.py
-          python3 scripts/patch-maven-launcher-v18.py
-          python3 scripts/patch-proot-runtime-v19.py
       - name: Build debug APK
         shell: bash
         run: |
           set -o pipefail
           gradle --no-daemon :app:assembleDebug 2>&1 | tee build.log
-      - name: Verify small APK
+      - name: Verify native Paper build
         shell: bash
         run: |
           set -euxo pipefail
           apk=app/build/outputs/apk/debug/app-debug.apk
+          unzip -l "$apk" | grep -q 'lib/arm64-v8a/libblockhost_jvm.so'
+          ! unzip -l "$apk" | grep -q 'libproot'
           ! unzip -l "$apk" | grep -q 'runtime-aarch64'
           test "$(stat -c%s "$apk")" -lt 50000000
           ls -lh "$apk"
