@@ -20,22 +20,40 @@ data class OverlayItem(
 
 class TranslationOverlayView(context: Context) : View(context) {
     private var items: List<OverlayItem> = emptyList()
+    private var statusText: String = "Translator starting…"
+    private val density = resources.displayMetrics.density
+
     private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(220, 18, 18, 18)
+        color = Color.argb(225, 18, 18, 18)
+        style = Paint.Style.FILL
+    }
+    private val statusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(235, 20, 110, 55)
         style = Paint.Style.FILL
     }
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
     }
-    private val density = resources.displayMetrics.density
+    private val statusTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 13f * density
+    }
 
-    fun setItems(newItems: List<OverlayItem>) {
+    fun setStatus(value: String) {
+        statusText = value
+        invalidate()
+    }
+
+    fun setResult(status: String, newItems: List<OverlayItem>) {
+        statusText = status
         items = newItems
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        drawStatus(canvas)
+
         val padding = 6f * density
         val gap = 4f * density
         val corner = 7f * density
@@ -75,5 +93,24 @@ class TranslationOverlayView(context: Context) : View(context) {
             layout.draw(canvas)
             canvas.restore()
         }
+    }
+
+    private fun drawStatus(canvas: Canvas) {
+        val horizontalPadding = 10f * density
+        val verticalPadding = 7f * density
+        val textWidth = statusTextPaint.measureText(statusText)
+        val box = RectF(
+            10f * density,
+            10f * density,
+            10f * density + textWidth + horizontalPadding * 2,
+            10f * density + statusTextPaint.textSize + verticalPadding * 2,
+        )
+        canvas.drawRoundRect(box, 12f * density, 12f * density, statusPaint)
+        canvas.drawText(
+            statusText,
+            box.left + horizontalPadding,
+            box.bottom - verticalPadding - statusTextPaint.fontMetrics.descent,
+            statusTextPaint,
+        )
     }
 }
