@@ -7,17 +7,22 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Insets;
+import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.util.DisplayMetrics;
 import android.view.Surface;
 import android.view.SurfaceHolder;
+import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.view.WindowMetrics;
+import android.widget.Toast;
 
 public final class FrameGenService extends Service implements OverlayController.Listener {
     static final String ACTION_START = "com.cardrhyme.framegen.START";
@@ -37,9 +42,18 @@ public final class FrameGenService extends Service implements OverlayController.
     private OverlayController overlay;
     private GpuFrameGenerator renderer;
     private Surface captureSurface;
+
+    private int usableX;
+    private int usableY;
+    private int usableWidth;
+    private int usableHeight;
+    private int outputX;
+    private int outputY;
     private int width;
     private int height;
     private int densityDpi;
+    private int rendererWidth;
+    private int rendererHeight;
     private int inputFps = 60;
     private boolean paused;
     private boolean outputReady;
@@ -70,9 +84,26 @@ public final class FrameGenService extends Service implements OverlayController.
         startForeground(NOTIFICATION_ID, buildNotification());
         if (mediaProjection != null) return START_NOT_STICKY;
 
+        FrameLiftAccessibilityService accessibility =
+                FrameLiftAccessibilityService.getInstance();
+        if (accessibility == null) {
+            Toast.makeText(
+                    this,
+                    "Enable FrameLift's accessibility overlay first.",
+                    Toast.LENGTH_LONG
+            ).show();
+            shutdown();
+            return START_NOT_STICKY;
+        }
+
         inputFps = Math.max(1, Math.min(120, intent.getIntExtra(EXTRA_INPUT_FPS, 60)));
         int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0);
-        Intent resultData = (Intent) intent.getParcelableExtra(EXTRA_RESULT_DATA);
+        Intent resultData;
+        if (Build.VERSION.SDK_INT >= 33) {
+            resultData = intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent.class);
+        } else {
+            resultData = (Intent) intent.getParcelableExtra(EXTRA_RESULT_DATA);
+        }
         if (resultData == null) {
             shutdown();
             return START_NOT_STICKY;
@@ -91,47 +122,97 @@ public final class FrameGenService extends Service implements OverlayController.
             public void onStop() {
                 mainHandler.post(FrameGenService.this::shutdown);
             }
+
+            @Override
+            public void onCapturedContentResize(int newWidth, int newHeight) {
+                mainHandler.post(() -> applyCapturedSize(newWidth, newHeight));
+            }
         }, mainHandler);
 
-        readDisplaySize();
-        overlay = new OverlayController(this, inputFps, this);
+        readUsableDisplayArea(accessibility);
+        overlay = new OverlayController(accessibility, inputFps, this);
         overlay.attach(new SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(SurfaceHolder holder) {
-                startRenderer(holder.getSurface());
+                startRenderer(holder.getSurface(), width, height);
             }
 
             @Override
-            public void surfaceChanged(SurfaceHolder holder, int format, int newWidth, int newHeight) {
-                // The display-sized overlay is recreated on rotation; restart is safest for v0.1.
+            public void surfaceChanged(
+                    SurfaceHolder holder,
+                    int format,
+                    int newWidth,
+                    int newHeight
+            ) {
+                if (newWidth <= 0 || newHeight <= 0) return;
+                if (newWidth == rendererWidth && newHeight == rendererHeight) return;
+                width = newWidth;
+                height = newHeight;
+                startRenderer(holder.getSurface(), newWidth, newHeight);
             }
 
             @Override
             public void surfaceDestroyed(SurfaceHolder holder) {
                 if (renderer != null) renderer.stop();
                 renderer = null;
+                rendererWidth = 0;
+                rendererHeight = 0;
             }
-        });
+        }, outputX, outputY, width, height);
 
         return START_NOT_STICKY;
     }
 
-    @SuppressWarnings("deprecation")
-    private void readDisplaySize() {
-        DisplayMetrics metrics = new DisplayMetrics();
-        WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
-        wm.getDefaultDisplay().getRealMetrics(metrics);
-        width = metrics.widthPixels;
-        height = metrics.heightPixels;
-        densityDpi = metrics.densityDpi;
+    private void readUsableDisplayArea(FrameLiftAccessibilityService accessibility) {
+        WindowManager windowManager = accessibility.getSystemService(WindowManager.class);
+        WindowMetrics metrics = windowManager.getMaximumWindowMetrics();
+        Rect bounds = metrics.getBounds();
+        Insets systemBars = metrics.getWindowInsets().getInsets(WindowInsets.Type.systemBars());
+
+        usableX = bounds.left + systemBars.left;
+        usableY = bounds.top + systemBars.top;
+        usableWidth = Math.max(1, bounds.width() - systemBars.left - systemBars.right);
+        usableHeight = Math.max(1, bounds.height() - systemBars.top - systemBars.bottom);
+        densityDpi = accessibility.getResources().getDisplayMetrics().densityDpi;
+
+        outputX = usableX;
+        outputY = usableY;
+        width = usableWidth;
+        height = usableHeight;
     }
 
-    private void startRenderer(Surface outputSurface) {
+    private void applyCapturedSize(int newWidth, int newHeight) {
+        if (newWidth <= 0 || newHeight <= 0 || overlay == null) return;
+
+        int fittedWidth = Math.min(newWidth, usableWidth);
+        int fittedHeight = Math.min(newHeight, usableHeight);
+        if (fittedWidth <= 0 || fittedHeight <= 0) return;
+
+        outputX = usableX + Math.max(0, (usableWidth - fittedWidth) / 2);
+        outputY = usableY + Math.max(0, (usableHeight - fittedHeight) / 2);
+
+        boolean changed = fittedWidth != width || fittedHeight != height;
+        width = fittedWidth;
+        height = fittedHeight;
+        overlay.resizeOutput(outputX, outputY, width, height);
+
+        if (changed && virtualDisplay != null) {
+            virtualDisplay.resize(width, height, densityDpi);
+        }
+    }
+
+    private void startRenderer(Surface outputSurface, int renderWidth, int renderHeight) {
+        if (renderWidth <= 0 || renderHeight <= 0) return;
         if (renderer != null) renderer.stop();
+        rendererWidth = renderWidth;
+        rendererHeight = renderHeight;
+        outputReady = false;
+        if (overlay != null) overlay.setOutputVisible(false);
+
         renderer = new GpuFrameGenerator(inputFps, new GpuFrameGenerator.Callback() {
             @Override
             public void onCaptureSurfaceReady(Surface surface) {
-                mainHandler.post(() -> createVirtualDisplay(surface));
+                mainHandler.post(() -> connectVirtualDisplay(surface));
             }
 
             @Override
@@ -155,22 +236,35 @@ public final class FrameGenService extends Service implements OverlayController.
                 });
             }
         });
-        renderer.start(outputSurface, width, height);
+        renderer.start(outputSurface, renderWidth, renderHeight);
     }
 
-    private void createVirtualDisplay(Surface surface) {
-        if (mediaProjection == null || virtualDisplay != null) return;
+    private void connectVirtualDisplay(Surface surface) {
+        if (mediaProjection == null) {
+            surface.release();
+            return;
+        }
+
+        if (captureSurface != null && captureSurface != surface) {
+            captureSurface.release();
+        }
         captureSurface = surface;
-        virtualDisplay = mediaProjection.createVirtualDisplay(
-                "FrameLiftCapture",
-                width,
-                height,
-                densityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                captureSurface,
-                null,
-                mainHandler
-        );
+
+        if (virtualDisplay == null) {
+            virtualDisplay = mediaProjection.createVirtualDisplay(
+                    "FrameLiftCapture",
+                    width,
+                    height,
+                    densityDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    captureSurface,
+                    null,
+                    mainHandler
+            );
+        } else {
+            virtualDisplay.resize(width, height, densityDpi);
+            virtualDisplay.setSurface(captureSurface);
+        }
     }
 
     @Override
@@ -202,6 +296,8 @@ public final class FrameGenService extends Service implements OverlayController.
             renderer.stop();
             renderer = null;
         }
+        rendererWidth = 0;
+        rendererHeight = 0;
         if (virtualDisplay != null) {
             virtualDisplay.release();
             virtualDisplay = null;
