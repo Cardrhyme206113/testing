@@ -45,6 +45,7 @@ jobs:
         run: |
           PPROOT="$GITHUB_WORKSPACE/vendor/PaddleOCR/deploy/ppocr-android"
           cp -R "$GITHUB_WORKSPACE/screen-translator/android-module" "$PPROOT/screen-translator"
+          sed -i '/maven.aliyun.com/d' "$PPROOT/settings.gradle.kts"
           printf '\ninclude(":screen-translator")\n' >> "$PPROOT/settings.gradle.kts"
 
       - name: Download PP-OCRv6 Tiny ONNX models
