@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity() {
                 putExtra(OverlayTranslationService.EXTRA_RESULT_DATA, data)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
-            status.text = "Running. The first translation downloads Google's offline model."
+            status.text = "Started. Look for the green OCR status pill over other apps."
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -70,9 +70,15 @@ class MainActivity : ComponentActivity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "PP-OCRv6 Small scans the screen locally. Only Japanese-looking text is sent to Google's on-device Japanese → English translator. The overlay never consumes touches."
+            text = "PP-OCRv6 Tiny scans the screen locally. Every OCR box is shown: Japanese text is covered with English, while other text gets a yellow highlight. Touches always pass through."
             textSize = 16f
-            setPadding(0, dp(18), 0, dp(22))
+            setPadding(0, dp(18), 0, dp(12))
+        })
+
+        root.addView(TextView(this).apply {
+            text = "After restarting the app or phone, tap Start again and approve screen capture. The downloaded translation model stays installed."
+            textSize = 14f
+            setPadding(0, 0, 0, dp(22))
         })
 
         root.addView(Button(this).apply {
@@ -97,7 +103,7 @@ class MainActivity : ComponentActivity() {
         ).apply { topMargin = dp(10) })
 
         status = TextView(this).apply {
-            text = "Ready."
+            text = "Ready. Tap Start for each screen-capture session."
             textSize = 14f
             setPadding(0, dp(20), 0, 0)
         }
