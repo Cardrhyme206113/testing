@@ -2,17 +2,23 @@ package com.cardrhyme.framegen;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.os.Build;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
+import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.view.WindowMetrics;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+
+import java.util.Locale;
 
 final class OverlayController {
     interface Listener {
@@ -30,6 +36,7 @@ final class OverlayController {
     private LinearLayout controlRoot;
     private WindowManager.LayoutParams controlParams;
     private TextView statusView;
+    private TextView statsView;
     private Button pauseButton;
     private LinearLayout expandedPanel;
 
@@ -56,6 +63,7 @@ final class OverlayController {
         attached = true;
 
         outputView = new SurfaceView(context);
+        outputView.setSecure(true);
         outputView.getHolder().setFormat(PixelFormat.OPAQUE);
         outputView.getHolder().setFixedSize(outputWidth, outputHeight);
         outputView.getHolder().addCallback(surfaceCallback);
@@ -68,6 +76,7 @@ final class OverlayController {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                         | WindowManager.LayoutParams.FLAG_SECURE,
                 PixelFormat.OPAQUE
         );
@@ -85,7 +94,7 @@ final class OverlayController {
 
         controlRoot = buildControls();
         controlParams = new WindowManager.LayoutParams(
-                dp(270),
+                dp(318),
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -94,8 +103,7 @@ final class OverlayController {
                 PixelFormat.TRANSLUCENT
         );
         controlParams.gravity = Gravity.TOP | Gravity.START;
-        controlParams.x = Math.max(outputX, outputX + outputWidth - dp(286));
-        controlParams.y = outputY + dp(18);
+        positionControlInsideSystemBars();
         windowManager.addView(controlRoot, controlParams);
     }
 
@@ -107,12 +115,24 @@ final class OverlayController {
         outputParams.height = Math.max(1, outputHeight);
         outputView.getHolder().setFixedSize(outputParams.width, outputParams.height);
         windowManager.updateViewLayout(outputView, outputParams);
+        positionControlInsideSystemBars();
+        if (controlRoot != null) windowManager.updateViewLayout(controlRoot, controlParams);
+    }
 
-        if (controlRoot != null && controlParams != null) {
-            int rightLimit = outputX + outputWidth - controlParams.width;
-            controlParams.x = Math.max(outputX, Math.min(controlParams.x, rightLimit));
-            controlParams.y = Math.max(outputY, controlParams.y);
-            windowManager.updateViewLayout(controlRoot, controlParams);
+    private void positionControlInsideSystemBars() {
+        try {
+            WindowMetrics metrics = windowManager.getMaximumWindowMetrics();
+            Rect bounds = metrics.getBounds();
+            Insets bars = metrics.getWindowInsets().getInsets(WindowInsets.Type.systemBars());
+            int safeLeft = bounds.left + bars.left;
+            int safeTop = bounds.top + bars.top;
+            int safeRight = bounds.right - bars.right;
+            controlParams.x = Math.max(safeLeft, safeRight - controlParams.width - dp(12));
+            controlParams.y = safeTop + dp(12);
+        } catch (RuntimeException ignored) {
+            controlParams.x = Math.max(0,
+                    context.getResources().getDisplayMetrics().widthPixels - controlParams.width - dp(12));
+            controlParams.y = dp(20);
         }
     }
 
@@ -138,24 +158,38 @@ final class OverlayController {
         LinearLayout root = new LinearLayout(context);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(8), dp(8), dp(8), dp(8));
-        root.setBackgroundColor(Color.argb(235, 18, 24, 25));
+        root.setBackgroundColor(Color.argb(238, 18, 24, 25));
 
         LinearLayout header = new LinearLayout(context);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(8), dp(5), dp(8), dp(5));
+        header.setPadding(dp(8), dp(4), dp(8), dp(4));
 
         TextView fg = label("FG", 17, Color.rgb(87, 227, 137));
         fg.setGravity(Gravity.CENTER);
-        header.addView(fg, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        header.addView(fg, new LinearLayout.LayoutParams(dp(44), dp(48)));
+
+        LinearLayout readout = new LinearLayout(context);
+        readout.setOrientation(LinearLayout.VERTICAL);
+        readout.setGravity(Gravity.CENTER_VERTICAL);
 
         statusView = label(statusText(), 15, Color.WHITE);
-        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
+        statsView = label("SRC --.-  OUT --.-  GEN --.-", 11, Color.rgb(174, 190, 181));
+        readout.addView(statusView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+        readout.addView(statsView, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        LinearLayout.LayoutParams readoutParams = new LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 1f
         );
-        statusParams.leftMargin = dp(6);
-        header.addView(statusView, statusParams);
+        readoutParams.leftMargin = dp(7);
+        header.addView(readout, readoutParams);
         root.addView(header, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -167,7 +201,7 @@ final class OverlayController {
 
         LinearLayout fpsRow = new LinearLayout(context);
         fpsRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView fpsLabel = label("Input FPS", 14, Color.rgb(205, 215, 210));
+        TextView fpsLabel = label("Configured source FPS", 14, Color.rgb(205, 215, 210));
         fpsRow.addView(fpsLabel, new LinearLayout.LayoutParams(0, dp(46), 1f));
 
         Button minus = compactButton("−");
@@ -268,6 +302,28 @@ final class OverlayController {
     void setInputFps(int fps) {
         inputFps = Math.max(1, Math.min(120, fps));
         updateStatus();
+    }
+
+    void setStats(
+            float sourceFps,
+            float outputFps,
+            float generatedFps,
+            float captureFps,
+            boolean flowActive
+    ) {
+        if (statsView == null) return;
+        statsView.setText(String.format(
+                Locale.US,
+                "SRC %.1f  OUT %.1f  GEN %.1f  CAP %.0f  %s",
+                sourceFps,
+                outputFps,
+                generatedFps,
+                captureFps,
+                flowActive ? "FLOW" : "WAIT"
+        ));
+        statsView.setTextColor(flowActive
+                ? Color.rgb(137, 223, 166)
+                : Color.rgb(208, 186, 126));
     }
 
     void setError(String message) {
