@@ -23,17 +23,17 @@ class MainActivity : ComponentActivity() {
 
     private val overlayPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            if (Settings.canDrawOverlays(this)) prepareOverlay() else status.text = "Overlay permission required"
+            if (Settings.canDrawOverlays(this)) requestCapture() else status.text = "Overlay permission required"
         }
 
     private val capturePermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val data = result.data
             if (result.resultCode != Activity.RESULT_OK || data == null) {
-                stopTranslator()
                 status.text = "Screen capture cancelled"
                 return@registerForActivityResult
             }
+
             ContextCompat.startForegroundService(
                 this,
                 Intent(this, OverlayTranslationService::class.java).apply {
@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
                     putExtra(OverlayTranslationService.EXTRA_RESULT_DATA, data)
                 },
             )
-            status.text = "Running"
+            status.text = "Running — look for the green status pill"
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,23 +60,45 @@ class MainActivity : ComponentActivity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(24), dp(32), dp(24), dp(24))
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
         }
-        root.addView(TextView(this).apply { text = "Japanese Screen Translator"; textSize = 24f })
+
         root.addView(TextView(this).apply {
-            text = "Tap Start. You should see OVERLAY OK before choosing full-screen capture."
+            text = "Japanese Screen Translator"
+            textSize = 24f
+        })
+        root.addView(TextView(this).apply {
+            text = "Tap Start, approve full-screen capture, then switch to the app you want translated."
             textSize = 16f
             setPadding(0, dp(18), 0, dp(22))
         })
         root.addView(Button(this).apply {
             text = "Start"
             setOnClickListener { beginStart() }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
         root.addView(Button(this).apply {
             text = "Stop"
-            setOnClickListener { stopTranslator(); status.text = "Stopped" }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
-        status = TextView(this).apply { text = "Ready"; setPadding(0, dp(20), 0, 0) }
+            setOnClickListener {
+                startService(Intent(this@MainActivity, OverlayTranslationService::class.java).apply {
+                    action = OverlayTranslationService.ACTION_STOP
+                })
+                status.text = "Stopped"
+            }
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(10) })
+
+        status = TextView(this).apply {
+            text = "Ready"
+            setPadding(0, dp(20), 0, 0)
+        }
         root.addView(status)
         return root
     }
@@ -87,25 +109,14 @@ class MainActivity : ComponentActivity() {
                 Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")),
             )
         } else {
-            prepareOverlay()
+            requestCapture()
         }
     }
 
-    private fun prepareOverlay() {
-        status.text = "Preparing overlay"
-        startService(Intent(this, OverlayTranslationService::class.java).apply {
-            action = OverlayTranslationService.ACTION_PREPARE
-        })
-        window.decorView.postDelayed({
-            val manager = getSystemService(MediaProjectionManager::class.java)
-            capturePermissionLauncher.launch(manager.createScreenCaptureIntent())
-        }, 700L)
-    }
-
-    private fun stopTranslator() {
-        startService(Intent(this, OverlayTranslationService::class.java).apply {
-            action = OverlayTranslationService.ACTION_STOP
-        })
+    private fun requestCapture() {
+        status.text = "Waiting for screen-capture permission"
+        val manager = getSystemService(MediaProjectionManager::class.java)
+        capturePermissionLauncher.launch(manager.createScreenCaptureIntent())
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
