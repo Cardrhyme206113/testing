@@ -23,9 +23,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Prepare project
+      - name: Prepare pinned PaddleOCR project
         run: |
-          git clone --depth 1 https://github.com/PaddlePaddle/PaddleOCR.git vendor/PaddleOCR
+          mkdir -p vendor/PaddleOCR
+          git -C vendor/PaddleOCR init
+          git -C vendor/PaddleOCR remote add origin https://github.com/PaddlePaddle/PaddleOCR.git
+          git -C vendor/PaddleOCR fetch --depth 1 origin 211989f046cc1878460f9e65574690c00a127a1a
+          git -C vendor/PaddleOCR checkout FETCH_HEAD
           P="$GITHUB_WORKSPACE/vendor/PaddleOCR/deploy/ppocr-android"
           cp -R screen-translator/android-module "$P/screen-translator"
           cp screen-translator/sdk-overrides/com/paddle/ocr/EngineConfig.kt "$P/ppocr-sdk/src/main/java/com/paddle/ocr/EngineConfig.kt"
@@ -35,14 +39,13 @@ jobs:
           sed -i 's/com.quickbirdstudios/org.opencv/' "$P/gradle/libs.versions.toml"
           printf '\ninclude(":screen-translator")\n' >> "$P/settings.gradle.kts"
 
-      - name: Add fallback models
+      - name: Add PP-OCRv6 Tiny models
         run: |
           P="$GITHUB_WORKSPACE/vendor/PaddleOCR/deploy/ppocr-android/ppocr-sdk/src/main/assets/models"
-          mkdir -p "$P/det" "$P/rec" "$P/rec-small"
+          mkdir -p "$P/det" "$P/rec"
           curl -L --fail --retry 4 -o "$P/det/inference.onnx" "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_det_onnx/resolve/main/inference.onnx?download=true"
           curl -L --fail --retry 4 -o "$P/rec/inference.onnx" "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx/resolve/main/inference.onnx?download=true"
           curl -L --fail --retry 4 -o "$P/rec/inference.yml" "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx/resolve/main/inference.yml?download=true"
-          curl -L --fail --retry 4 -o "$P/rec-small/inference.yml" "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml?download=true"
 
       - name: Build and verify
         working-directory: vendor/PaddleOCR/deploy/ppocr-android
@@ -51,11 +54,14 @@ jobs:
           ./gradlew :screen-translator:assembleDebug --stacktrace
           APK=screen-translator/build/outputs/apk/debug/screen-translator-debug.apk
           test "$(stat -c%s "$APK")" -le 41943040
+          unzip -p "$APK" lib/arm64-v8a/libopencv_java4.so > /tmp/libopencv_java4.so
+          test "$(readelf -lW /tmp/libopencv_java4.so | awk '/ LOAD / {print $NF}' | sort -n | head -1)" != "0x1000"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ppocrv6-small-realtime-translator-v0.2.0
+          name: ppocrv6-tiny-low-latency-translator-v0.2.1
           path: vendor/PaddleOCR/deploy/ppocr-android/screen-translator/build/outputs/apk/debug/screen-translator-debug.apk
+          if-no-files-found: error
 
       - name: Release
         if: github.event_name != 'pull_request'
@@ -63,6 +69,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           A=vendor/PaddleOCR/deploy/ppocr-android/screen-translator/build/outputs/apk/debug/screen-translator-debug.apk
-          B=PP-OCRv6-Small-Realtime-Translator-v0.2.0.apk
+          B=PP-OCRv6-Tiny-Low-Latency-Translator-v0.2.1.apk
           cp "$A" "$B"
-          gh release create screen-translator-v0.2.0 "$B" --target feature/paddle-screen-translator --title "Screen Translator v0.2.0" --notes "Full-res Small OCR, NNAPI FP16 fallback, 60 fps box tracking, vertical Japanese reconstruction, exact-box background-matched translations." || gh release upload screen-translator-v0.2.0 "$B" --clobber
+          gh release create screen-translator-v0.2.1 "$B" --target feature/paddle-screen-translator --title "Screen Translator v0.2.1" --notes "Tiny full-resolution OCR, fast detector scoring, large-range scroll tracking, and asynchronous ML Kit translation that never blocks OCR results." || gh release upload screen-translator-v0.2.1 "$B" --clobber
