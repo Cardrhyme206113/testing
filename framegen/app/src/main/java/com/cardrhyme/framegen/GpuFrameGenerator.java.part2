@@ -261,7 +261,7 @@
         );
         GLES30.glUniform1i(
                 GLES30.glGetUniformLocation(interpolateProgram, "uHasFlow"),
-                hasFlow ? 1 : 0
+                hasFlow ? 1 + InterpolationSettings.getStrengthPercent() : 0
         );
         drawFullscreen();
 
