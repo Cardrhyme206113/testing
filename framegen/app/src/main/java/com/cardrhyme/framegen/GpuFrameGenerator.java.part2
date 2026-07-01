@@ -21,7 +21,7 @@
             sourceFrames++;
 
             if (!paused.get()) {
-                calculateFlow();
+                calculateBidirectionalFlow();
                 hasFlow = true;
             } else {
                 hasFlow = false;
@@ -53,45 +53,81 @@
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
     }
 
-    private void calculateFlow() {
-        GLES31.glUseProgram(flowProgram);
-        bindTexture(flowProgram, "uPrev", 0, prevTex);
-        bindTexture(flowProgram, "uCurr", 1, currTex);
+    private void calculateBidirectionalFlow() {
+        calculateFlowDirection(
+                prevTex,
+                currTex,
+                coarseForwardTex,
+                forwardFlowTex
+        );
+        calculateFlowDirection(
+                currTex,
+                prevTex,
+                coarseBackwardTex,
+                backwardFlowTex
+        );
+    }
+
+    private void calculateFlowDirection(
+            int sourceTexture,
+            int targetTexture,
+            int coarseTexture,
+            int finalTexture
+    ) {
+        GLES31.glUseProgram(coarseFlowProgram);
+        bindTexture(coarseFlowProgram, "uSource", 0, sourceTexture);
+        bindTexture(coarseFlowProgram, "uTarget", 1, targetTexture);
         GLES31.glUniform2i(
-                GLES31.glGetUniformLocation(flowProgram, "uLowSize"),
-                lowWidth,
-                lowHeight
+                GLES31.glGetUniformLocation(coarseFlowProgram, "uImageSize"),
+                coarseWidth,
+                coarseHeight
         );
         GLES31.glUniform2i(
-                GLES31.glGetUniformLocation(flowProgram, "uFlowSize"),
-                flowWidth,
-                flowHeight
+                GLES31.glGetUniformLocation(coarseFlowProgram, "uFlowSize"),
+                coarseFlowWidth,
+                coarseFlowHeight
         );
         GLES31.glBindImageTexture(
                 0,
-                rawFlowTex,
+                coarseTexture,
                 0,
                 false,
                 0,
                 GLES31.GL_WRITE_ONLY,
                 GLES30.GL_RGBA16F
         );
-        GLES31.glDispatchCompute((flowWidth + 7) / 8, (flowHeight + 7) / 8, 1);
+        GLES31.glDispatchCompute(
+                (coarseFlowWidth + 7) / 8,
+                (coarseFlowHeight + 7) / 8,
+                1
+        );
         GLES31.glMemoryBarrier(
                 GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT
                         | GLES31.GL_TEXTURE_FETCH_BARRIER_BIT
         );
 
-        GLES31.glUseProgram(smoothProgram);
-        bindTexture(smoothProgram, "uRawFlow", 0, rawFlowTex);
+        GLES31.glUseProgram(refineFlowProgram);
+        bindTexture(refineFlowProgram, "uSource", 0, sourceTexture);
+        bindTexture(refineFlowProgram, "uTarget", 1, targetTexture);
+        bindTexture(refineFlowProgram, "uCoarseFlow", 2, coarseTexture);
         GLES31.glUniform2i(
-                GLES31.glGetUniformLocation(smoothProgram, "uFlowSize"),
+                GLES31.glGetUniformLocation(refineFlowProgram, "uImageSize"),
+                fineWidth,
+                fineHeight
+        );
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(refineFlowProgram, "uFlowSize"),
                 flowWidth,
                 flowHeight
         );
+        GLES31.glUniform2i(
+                GLES31.glGetUniformLocation(refineFlowProgram, "uCoarseFlowSize"),
+                coarseFlowWidth,
+                coarseFlowHeight
+        );
         GLES31.glBindImageTexture(
                 0,
-                smoothFlowTex,
+                finalTexture,
                 0,
                 false,
                 0,
@@ -114,7 +150,8 @@
         GLES30.glUseProgram(interpolateProgram);
         bindTexture(interpolateProgram, "uPrev", 0, prevTex);
         bindTexture(interpolateProgram, "uCurr", 1, currTex);
-        bindTexture(interpolateProgram, "uFlow", 2, smoothFlowTex);
+        bindTexture(interpolateProgram, "uForward", 2, forwardFlowTex);
+        bindTexture(interpolateProgram, "uBackward", 3, backwardFlowTex);
 
         float t;
         if (!hasFlow || sourceFrames < 2) {
@@ -143,7 +180,7 @@
         }
 
         outputsWindow++;
-        if (hasFlow && t > 0.02f && t < 0.98f) generatedWindow++;
+        if (hasFlow && t > 0.015f && t < 0.985f) generatedWindow++;
 
         if (!firstOutputReported) {
             firstOutputReported = true;
@@ -185,7 +222,7 @@
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, ids[0]);
         GLES30.glTexStorage2D(
                 GLES30.GL_TEXTURE_2D,
-                MIP_LEVEL + 1,
+                COARSE_MIP + 1,
                 GLES30.GL_RGBA8,
                 width,
                 height
@@ -213,12 +250,12 @@
         GLES30.glTexParameteri(
                 GLES30.GL_TEXTURE_2D,
                 GLES30.GL_TEXTURE_MAX_LEVEL,
-                MIP_LEVEL
+                COARSE_MIP
         );
         return ids[0];
     }
 
-    private int createFlowTexture() {
+    private int createFlowTexture(int textureWidth, int textureHeight) {
         int[] ids = new int[1];
         GLES30.glGenTextures(1, ids, 0);
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, ids[0]);
@@ -226,8 +263,8 @@
                 GLES30.GL_TEXTURE_2D,
                 1,
                 GLES30.GL_RGBA16F,
-                flowWidth,
-                flowHeight
+                Math.max(1, textureWidth),
+                Math.max(1, textureHeight)
         );
         GLES30.glTexParameteri(
                 GLES30.GL_TEXTURE_2D,
