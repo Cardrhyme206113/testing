@@ -32,6 +32,8 @@ public final class FrameGenService extends Service implements OverlayController.
 
     private static final int NOTIFICATION_ID = 4102;
     private static final String CHANNEL_ID = "framelift_running";
+    private static final long RESIZE_DEBOUNCE_MS = 260L;
+    private static final long PRODUCER_RESIZE_DELAY_MS = 70L;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -42,17 +44,41 @@ public final class FrameGenService extends Service implements OverlayController.
     private Surface captureSurface;
     private Surface outputSurface;
 
-    private int outputX;
-    private int outputY;
-    private int width;
-    private int height;
+    private int displayWidth;
+    private int displayHeight;
+    private int captureWidth;
+    private int captureHeight;
+    private int pendingCaptureWidth;
+    private int pendingCaptureHeight;
     private int densityDpi;
-    private int rendererWidth;
-    private int rendererHeight;
     private int inputFps = 60;
+
     private boolean paused;
     private boolean outputReady;
     private boolean shuttingDown;
+
+    private final Runnable applyPendingResize = () -> {
+        if (shuttingDown) return;
+        int newWidth = pendingCaptureWidth;
+        int newHeight = pendingCaptureHeight;
+        if (newWidth <= 0 || newHeight <= 0) return;
+        if (newWidth == captureWidth && newHeight == captureHeight) return;
+
+        captureWidth = newWidth;
+        captureHeight = newHeight;
+
+        if (renderer != null) {
+            renderer.resizeCaptureBuffer(captureWidth, captureHeight);
+        }
+
+        mainHandler.postDelayed(() -> {
+            if (shuttingDown) return;
+            if (newWidth != captureWidth || newHeight != captureHeight) return;
+            if (virtualDisplay != null) {
+                virtualDisplay.resize(captureWidth, captureHeight, densityDpi);
+            }
+        }, PRODUCER_RESIZE_DELAY_MS);
+    };
 
     @Override
     public void onCreate() {
@@ -120,17 +146,22 @@ public final class FrameGenService extends Service implements OverlayController.
 
             @Override
             public void onCapturedContentResize(int newWidth, int newHeight) {
-                mainHandler.post(() -> applyDisplayResize(newWidth, newHeight));
+                mainHandler.post(() -> scheduleCaptureResize(newWidth, newHeight));
             }
         }, mainHandler);
 
         readPhysicalDisplayBounds(accessibility);
+        captureWidth = displayWidth;
+        captureHeight = displayHeight;
+        pendingCaptureWidth = displayWidth;
+        pendingCaptureHeight = displayHeight;
+
         overlay = new OverlayController(accessibility, inputFps, this);
         overlay.attach(new SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(SurfaceHolder holder) {
                 outputSurface = holder.getSurface();
-                startRenderer(outputSurface, width, height);
+                startRendererIfNeeded();
             }
 
             @Override
@@ -140,23 +171,20 @@ public final class FrameGenService extends Service implements OverlayController.
                     int newWidth,
                     int newHeight
             ) {
-                if (newWidth <= 0 || newHeight <= 0) return;
                 outputSurface = holder.getSurface();
-                width = newWidth;
-                height = newHeight;
-                if (newWidth == rendererWidth && newHeight == rendererHeight) return;
-                startRenderer(outputSurface, newWidth, newHeight);
+                startRendererIfNeeded();
             }
 
             @Override
             public void surfaceDestroyed(SurfaceHolder holder) {
                 outputSurface = null;
-                if (renderer != null) renderer.stop();
-                renderer = null;
-                rendererWidth = 0;
-                rendererHeight = 0;
+                if (renderer != null) {
+                    renderer.stop();
+                    renderer = null;
+                }
+                outputReady = false;
             }
-        }, outputX, outputY, width, height);
+        }, 0, 0, displayWidth, displayHeight);
 
         return START_NOT_STICKY;
     }
@@ -165,45 +193,23 @@ public final class FrameGenService extends Service implements OverlayController.
         WindowManager windowManager = accessibility.getSystemService(WindowManager.class);
         WindowMetrics metrics = windowManager.getMaximumWindowMetrics();
         Rect bounds = metrics.getBounds();
-
-        outputX = bounds.left;
-        outputY = bounds.top;
-        width = Math.max(1, bounds.width());
-        height = Math.max(1, bounds.height());
+        displayWidth = Math.max(1, bounds.width());
+        displayHeight = Math.max(1, bounds.height());
         densityDpi = accessibility.getResources().getConfiguration().densityDpi;
     }
 
-    private void applyDisplayResize(int newWidth, int newHeight) {
+    private void scheduleCaptureResize(int newWidth, int newHeight) {
         if (newWidth <= 0 || newHeight <= 0 || shuttingDown) return;
-        if (newWidth == width && newHeight == height) return;
-
-        width = newWidth;
-        height = newHeight;
-        outputX = 0;
-        outputY = 0;
-        outputReady = false;
-
-        if (overlay != null) {
-            overlay.setOutputVisible(false);
-            overlay.resizeOutput(outputX, outputY, width, height);
-        }
-        if (virtualDisplay != null) {
-            virtualDisplay.resize(width, height, densityDpi);
-        }
-
-        mainHandler.postDelayed(() -> {
-            if (shuttingDown || outputSurface == null) return;
-            if (rendererWidth != width || rendererHeight != height) {
-                startRenderer(outputSurface, width, height);
-            }
-        }, 80L);
+        pendingCaptureWidth = newWidth;
+        pendingCaptureHeight = newHeight;
+        mainHandler.removeCallbacks(applyPendingResize);
+        mainHandler.postDelayed(applyPendingResize, RESIZE_DEBOUNCE_MS);
     }
 
-    private void startRenderer(Surface surface, int renderWidth, int renderHeight) {
-        if (surface == null || !surface.isValid() || renderWidth <= 0 || renderHeight <= 0) return;
-        if (renderer != null) renderer.stop();
-        rendererWidth = renderWidth;
-        rendererHeight = renderHeight;
+    private void startRendererIfNeeded() {
+        if (renderer != null) return;
+        if (outputSurface == null || !outputSurface.isValid()) return;
+
         outputReady = false;
         if (overlay != null) overlay.setOutputVisible(false);
 
@@ -255,7 +261,8 @@ public final class FrameGenService extends Service implements OverlayController.
                 });
             }
         });
-        renderer.start(surface, renderWidth, renderHeight);
+        renderer.start(outputSurface, displayWidth, displayHeight);
+        renderer.resizeCaptureBuffer(captureWidth, captureHeight);
     }
 
     private void connectVirtualDisplay(Surface newSurface) {
@@ -270,8 +277,8 @@ public final class FrameGenService extends Service implements OverlayController.
         if (virtualDisplay == null) {
             virtualDisplay = mediaProjection.createVirtualDisplay(
                     "FrameLiftCapture",
-                    width,
-                    height,
+                    captureWidth,
+                    captureHeight,
                     densityDpi,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     captureSurface,
@@ -279,8 +286,8 @@ public final class FrameGenService extends Service implements OverlayController.
                     mainHandler
             );
         } else {
-            virtualDisplay.resize(width, height, densityDpi);
             virtualDisplay.setSurface(captureSurface);
+            virtualDisplay.resize(captureWidth, captureHeight, densityDpi);
         }
 
         if (oldSurface != null && oldSurface != captureSurface) {
@@ -314,13 +321,14 @@ public final class FrameGenService extends Service implements OverlayController.
     private void shutdown() {
         if (shuttingDown) return;
         shuttingDown = true;
+        mainHandler.removeCallbacks(applyPendingResize);
+
         if (renderer != null) {
             renderer.stop();
             renderer = null;
         }
-        rendererWidth = 0;
-        rendererHeight = 0;
         outputSurface = null;
+
         if (virtualDisplay != null) {
             virtualDisplay.release();
             virtualDisplay = null;
@@ -340,6 +348,7 @@ public final class FrameGenService extends Service implements OverlayController.
             overlay.detach();
             overlay = null;
         }
+
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
@@ -389,7 +398,7 @@ public final class FrameGenService extends Service implements OverlayController.
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(com.cardrhyme.framegen.R.drawable.ic_stat_fg)
                 .setContentTitle(paused ? "FrameLift bypassed" : "FrameLift active")
-                .setContentText(inputFps + " → 120 FPS · full display")
+                .setContentText(inputFps + " → 120 FPS · selected app")
                 .setContentIntent(open)
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
