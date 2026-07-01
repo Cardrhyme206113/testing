@@ -56,8 +56,8 @@ final class OverlayController {
             SurfaceHolder.Callback surfaceCallback,
             int outputX,
             int outputY,
-            int outputWidth,
-            int outputHeight
+            int bufferWidth,
+            int bufferHeight
     ) {
         if (attached) return;
         attached = true;
@@ -65,13 +65,13 @@ final class OverlayController {
         outputView = new SurfaceView(context);
         outputView.setSecure(true);
         outputView.getHolder().setFormat(PixelFormat.OPAQUE);
-        outputView.getHolder().setFixedSize(outputWidth, outputHeight);
+        outputView.getHolder().setFixedSize(bufferWidth, bufferHeight);
         outputView.getHolder().addCallback(surfaceCallback);
         outputView.setKeepScreenOn(true);
 
         outputParams = new WindowManager.LayoutParams(
-                outputWidth,
-                outputHeight,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
@@ -81,8 +81,8 @@ final class OverlayController {
                 PixelFormat.OPAQUE
         );
         outputParams.gravity = Gravity.TOP | Gravity.START;
-        outputParams.x = outputX;
-        outputParams.y = outputY;
+        outputParams.x = 0;
+        outputParams.y = 0;
         outputParams.alpha = 0f;
         outputParams.preferredRefreshRate = 120f;
         if (Build.VERSION.SDK_INT >= 28) {
@@ -107,14 +107,12 @@ final class OverlayController {
         windowManager.addView(controlRoot, controlParams);
     }
 
-    void resizeOutput(int outputX, int outputY, int outputWidth, int outputHeight) {
+    void resizeOutput(int ignoredX, int ignoredY, int bufferWidth, int bufferHeight) {
         if (!attached || outputView == null) return;
-        outputParams.x = outputX;
-        outputParams.y = outputY;
-        outputParams.width = Math.max(1, outputWidth);
-        outputParams.height = Math.max(1, outputHeight);
-        outputView.getHolder().setFixedSize(outputParams.width, outputParams.height);
-        windowManager.updateViewLayout(outputView, outputParams);
+        outputView.getHolder().setFixedSize(
+                Math.max(1, bufferWidth),
+                Math.max(1, bufferHeight)
+        );
         positionControlInsideSystemBars();
         if (controlRoot != null) windowManager.updateViewLayout(controlRoot, controlParams);
     }
@@ -124,14 +122,15 @@ final class OverlayController {
             WindowMetrics metrics = windowManager.getMaximumWindowMetrics();
             Rect bounds = metrics.getBounds();
             Insets bars = metrics.getWindowInsets().getInsets(WindowInsets.Type.systemBars());
-            int safeLeft = bounds.left + bars.left;
             int safeTop = bounds.top + bars.top;
             int safeRight = bounds.right - bars.right;
-            controlParams.x = Math.max(safeLeft, safeRight - controlParams.width - dp(12));
+            controlParams.x = Math.max(bounds.left + bars.left,
+                    safeRight - controlParams.width - dp(12));
             controlParams.y = safeTop + dp(12);
         } catch (RuntimeException ignored) {
             controlParams.x = Math.max(0,
-                    context.getResources().getDisplayMetrics().widthPixels - controlParams.width - dp(12));
+                    context.getResources().getDisplayMetrics().widthPixels
+                            - controlParams.width - dp(12));
             controlParams.y = dp(20);
         }
     }
@@ -142,15 +141,13 @@ final class OverlayController {
             android.view.Display display = windowManager.getDefaultDisplay();
             android.view.Display.Mode best = null;
             for (android.view.Display.Mode mode : display.getSupportedModes()) {
-                if (Math.abs(mode.getRefreshRate() - 120f) < 1.0f) {
-                    if (best == null || mode.getPhysicalWidth() > best.getPhysicalWidth()) {
-                        best = mode;
-                    }
+                if (Math.abs(mode.getRefreshRate() - 120f) < 1f
+                        && (best == null || mode.getPhysicalWidth() > best.getPhysicalWidth())) {
+                    best = mode;
                 }
             }
             if (best != null) params.preferredDisplayModeId = best.getModeId();
         } catch (RuntimeException ignored) {
-            // preferredRefreshRate remains as a hint.
         }
     }
 
@@ -171,17 +168,10 @@ final class OverlayController {
         LinearLayout readout = new LinearLayout(context);
         readout.setOrientation(LinearLayout.VERTICAL);
         readout.setGravity(Gravity.CENTER_VERTICAL);
-
         statusView = label(statusText(), 15, Color.WHITE);
         statsView = label("SRC --.-  OUT --.-  GEN --.-", 11, Color.rgb(174, 190, 181));
-        readout.addView(statusView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
-        readout.addView(statsView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+        readout.addView(statusView);
+        readout.addView(statsView);
 
         LinearLayout.LayoutParams readoutParams = new LinearLayout.LayoutParams(
                 0,
@@ -190,10 +180,7 @@ final class OverlayController {
         );
         readoutParams.leftMargin = dp(7);
         header.addView(readout, readoutParams);
-        root.addView(header, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+        root.addView(header);
 
         expandedPanel = new LinearLayout(context);
         expandedPanel.setOrientation(LinearLayout.VERTICAL);
@@ -229,11 +216,7 @@ final class OverlayController {
         );
         stopParams.topMargin = dp(6);
         expandedPanel.addView(stop, stopParams);
-
-        root.addView(expandedPanel, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+        root.addView(expandedPanel);
 
         installDragAndExpand(header);
         return root;
@@ -243,8 +226,8 @@ final class OverlayController {
         header.setOnTouchListener(new View.OnTouchListener() {
             int startX;
             int startY;
-            float downRawX;
-            float downRawY;
+            float downX;
+            float downY;
             boolean moved;
 
             @Override
@@ -253,13 +236,13 @@ final class OverlayController {
                     case MotionEvent.ACTION_DOWN:
                         startX = controlParams.x;
                         startY = controlParams.y;
-                        downRawX = event.getRawX();
-                        downRawY = event.getRawY();
+                        downX = event.getRawX();
+                        downY = event.getRawY();
                         moved = false;
                         return true;
                     case MotionEvent.ACTION_MOVE:
-                        int dx = Math.round(event.getRawX() - downRawX);
-                        int dy = Math.round(event.getRawY() - downRawY);
+                        int dx = Math.round(event.getRawX() - downX);
+                        int dy = Math.round(event.getRawY() - downY);
                         if (Math.abs(dx) + Math.abs(dy) > dp(8)) moved = true;
                         controlParams.x = Math.max(0, startX + dx);
                         controlParams.y = Math.max(0, startY + dy);
