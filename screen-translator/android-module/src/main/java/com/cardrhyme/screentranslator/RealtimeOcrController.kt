@@ -15,10 +15,15 @@ import com.paddle.ocr.PaddleOCR
 import com.paddle.ocr.PaddleOCRConfig
 import com.paddle.ocr.model.OCRResult
 import com.paddle.ocr.util.OpenCVUtils
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.text.Normalizer
@@ -27,8 +32,14 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.max
 
+internal data class PendingTranslation(
+    val source: String,
+    val item: OverlayItem,
+)
+
 internal data class OcrOutput(
     val items: List<OverlayItem>,
+    val pendingTranslations: List<PendingTranslation>,
     val detectedCount: Int,
     val japaneseCount: Int,
     val elapsedMs: Long,
@@ -39,109 +50,127 @@ internal class RealtimeOcrController(
     private val context: Context,
     private val reportStatus: (String) -> Unit,
 ) {
+    private val translationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val translationReady = CompletableDeferred<Boolean>()
     private var ocr: PaddleOCR? = null
     private lateinit var translator: Translator
-    private var modelLabel = "Small NNAPI"
+    private val modelLabel = "Tiny NNAPI full-res"
 
-    private val translations = object : LinkedHashMap<String, String>(256, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 256
+    private val translations = object : LinkedHashMap<String, String>(384, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 384
     }
 
-    suspend fun initialize() = coroutineScope {
+    suspend fun initialize() {
         translator = Translation.getClient(
             TranslatorOptions.Builder()
                 .setSourceLanguage(TranslateLanguage.JAPANESE)
                 .setTargetLanguage(TranslateLanguage.ENGLISH)
                 .build(),
         )
-        val translationJob = async { downloadTranslationModel() }
-        val ocrJob = async(Dispatchers.IO) {
+        translationScope.launch {
+            reportStatus("OCR readying • translator loading separately")
+            val ready = runCatching { downloadTranslationModel() }.isSuccess
+            if (!translationReady.isCompleted) translationReady.complete(ready)
+        }
+
+        ocr = withContext(Dispatchers.IO) {
             check(OpenCVUtils.init(context)) { "OpenCV could not initialize" }
-            val modelPaths = runCatching {
-                OcrModelStore.ensureSmallModels(context) { reportStatus(it) }
-            }.getOrNull()
-
-            val detector = modelPaths?.detector ?: "models/det/inference.onnx"
-            val recognizer = modelPaths?.recognizer ?: "models/rec/inference.onnx"
-            val config = if (modelPaths == null) "models/rec/inference.yml" else "models/rec-small/inference.yml"
-            modelLabel = if (modelPaths == null) "Tiny fallback" else "Small NNAPI"
-
             PaddleOCR.create(
                 context = context,
                 config = PaddleOCRConfig(
                     detLimitSideLen = 64,
                     detLimitType = "min",
                     detMaxSideLimit = 4000,
-                    detThresh = 0.25f,
-                    detBoxThresh = 0.45f,
-                    detUnclipRatio = 1.6f,
-                    detMaxCandidates = 5000,
-                    detUseDilation = true,
-                    detScoreMode = "slow",
-                    recScoreThresh = 0.20f,
-                    recBatchSize = 8,
+                    detThresh = 0.28f,
+                    detBoxThresh = 0.50f,
+                    detUnclipRatio = 1.50f,
+                    detMaxCandidates = 2000,
+                    detUseDilation = false,
+                    detScoreMode = "fast",
+                    recScoreThresh = 0.24f,
+                    recBatchSize = 12,
                 ),
                 engineConfig = EngineConfig(
-                    numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 6),
+                    numThreads = Runtime.getRuntime().availableProcessors().coerceIn(4, 8),
                     executionProvider = OCRExecutionProvider.AUTO,
                     allowFp16 = true,
                 ),
-                detModelAssetPath = detector,
-                recModelAssetPath = recognizer,
-                recConfigAssetPath = config,
+                detModelAssetPath = "models/det/inference.onnx",
+                recModelAssetPath = "models/rec/inference.onnx",
+                recConfigAssetPath = "models/rec/inference.yml",
             )
         }
-        ocr = ocrJob.await()
-        translationJob.await()
     }
 
     suspend fun process(bitmap: Bitmap, screenWidth: Int, screenHeight: Int): OcrOutput {
-        val engine = ocr ?: return OcrOutput(emptyList(), 0, 0, 0, modelLabel)
+        val engine = ocr ?: return OcrOutput(emptyList(), emptyList(), 0, 0, 0, modelLabel)
         val run = engine.recognize(bitmap)
-        val regions = run.results.asSequence()
-            .filter { it.confidence >= 0.20f }
+        val rawRegions = run.results.asSequence()
+            .filter { it.confidence >= 0.24f }
             .map { result ->
-                val bounds = result.toScreenBounds(bitmap, screenWidth, screenHeight)
+                val text = normalize(result.text)
                 OcrRegion(
-                    text = normalize(result.text),
-                    bounds = bounds,
+                    text = text,
+                    bounds = result.toScreenBounds(bitmap, screenWidth, screenHeight),
                     confidence = result.confidence,
-                    backgroundColor = sampleBackground(bitmap, result),
+                    backgroundColor = if (containsJapanese(text)) sampleBackground(bitmap, result) else Color.TRANSPARENT,
                 )
             }
             .filter { it.text.isNotBlank() }
             .filterNot { it.bounds.left < 430f && it.bounds.top < 100f }
-            .take(96)
+            .take(80)
             .toList()
 
-        val grouped = VerticalTextGrouper.merge(regions)
-        val japaneseCount = grouped.count { containsJapanese(it.text) }
-        val items = coroutineScope {
-            grouped.map { region ->
-                async {
-                    if (!containsJapanese(region.text)) {
-                        OverlayItem(region.bounds, kind = OverlayKind.HIGHLIGHT)
-                    } else {
-                        val english = runCatching { translate(region.text) }.getOrDefault("")
-                        if (english.isBlank()) {
-                            OverlayItem(region.bounds, kind = OverlayKind.HIGHLIGHT)
-                        } else {
-                            OverlayItem(
-                                bounds = region.bounds,
-                                text = english,
-                                kind = OverlayKind.TRANSLATED,
-                                backgroundColor = region.backgroundColor,
-                                foregroundColor = contrastingColor(region.backgroundColor),
-                            )
-                        }
-                    }
-                }
-            }.awaitAll()
+        val grouped = VerticalTextGrouper.merge(rawRegions)
+        val outputItems = ArrayList<OverlayItem>(grouped.size)
+        val pending = ArrayList<PendingTranslation>()
+        var japaneseCount = 0
+
+        grouped.forEachIndexed { index, region ->
+            val id = itemId(region, index)
+            if (!containsJapanese(region.text)) {
+                outputItems += OverlayItem(region.bounds, kind = OverlayKind.HIGHLIGHT, id = id)
+                return@forEachIndexed
+            }
+
+            japaneseCount++
+            val cached = synchronized(translations) { translations[region.text] }
+            val base = OverlayItem(
+                bounds = region.bounds,
+                text = cached,
+                kind = OverlayKind.TRANSLATED,
+                backgroundColor = region.backgroundColor,
+                foregroundColor = contrastingColor(region.backgroundColor),
+                id = id,
+            )
+            outputItems += base
+            if (cached == null) pending += PendingTranslation(region.text, base)
         }
-        return OcrOutput(items, grouped.size, japaneseCount, run.totalTimeMs, modelLabel)
+
+        return OcrOutput(
+            items = outputItems,
+            pendingTranslations = pending,
+            detectedCount = grouped.size,
+            japaneseCount = japaneseCount,
+            elapsedMs = run.totalTimeMs,
+            modelLabel = modelLabel,
+        )
+    }
+
+    suspend fun translatePending(pending: List<PendingTranslation>): List<OverlayItem> {
+        if (pending.isEmpty() || !translationReady.await()) return emptyList()
+        return coroutineScope {
+            pending.distinctBy { it.source }.map { work ->
+                async(Dispatchers.IO) {
+                    val english = runCatching { translate(work.source) }.getOrDefault("")
+                    if (english.isBlank()) null else work.item.copy(text = english)
+                }
+            }.awaitAll().filterNotNull()
+        }
     }
 
     suspend fun close() {
+        translationScope.cancel()
         withContext(Dispatchers.IO) { ocr?.release() }
         if (::translator.isInitialized) translator.close()
     }
@@ -163,6 +192,11 @@ internal class RealtimeOcrController(
         }
         synchronized(translations) { translations[value] = result }
         return result
+    }
+
+    private fun itemId(region: OcrRegion, index: Int): String {
+        val box = region.bounds
+        return "${region.text.hashCode()}:$index:${(box.left / 8).toInt()}:${(box.top / 8).toInt()}"
     }
 
     private fun normalize(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFKC)
@@ -189,20 +223,20 @@ internal class RealtimeOcrController(
         val top = result.box.points.minOf { it.y }.toInt().coerceIn(0, bitmap.height - 1)
         val right = result.box.points.maxOf { it.x }.toInt().coerceIn(left, bitmap.width - 1)
         val bottom = result.box.points.maxOf { it.y }.toInt().coerceIn(top, bitmap.height - 1)
-        val margin = max(2, max(right - left, bottom - top) / 16)
-        val samples = mutableListOf<Int>()
-        for (step in 0..12) {
-            val x = left + (right - left) * step / 12
-            val y = top + (bottom - top) * step / 12
-            samples += bitmap.getPixel(x, (top - margin).coerceAtLeast(0))
-            samples += bitmap.getPixel(x, (bottom + margin).coerceAtMost(bitmap.height - 1))
-            samples += bitmap.getPixel((left - margin).coerceAtLeast(0), y)
-            samples += bitmap.getPixel((right + margin).coerceAtMost(bitmap.width - 1), y)
+        val margin = max(2, max(right - left, bottom - top) / 14)
+        val samples = IntArray(32)
+        var count = 0
+        for (step in 0 until 8) {
+            val x = left + (right - left) * step / 7
+            val y = top + (bottom - top) * step / 7
+            samples[count++] = bitmap.getPixel(x, (top - margin).coerceAtLeast(0))
+            samples[count++] = bitmap.getPixel(x, (bottom + margin).coerceAtMost(bitmap.height - 1))
+            samples[count++] = bitmap.getPixel((left - margin).coerceAtLeast(0), y)
+            samples[count++] = bitmap.getPixel((right + margin).coerceAtMost(bitmap.width - 1), y)
         }
-        if (samples.isEmpty()) return Color.rgb(24, 24, 24)
-        val red = samples.map { Color.red(it) }.sorted()[samples.size / 2]
-        val green = samples.map { Color.green(it) }.sorted()[samples.size / 2]
-        val blue = samples.map { Color.blue(it) }.sorted()[samples.size / 2]
+        val red = samples.map { Color.red(it) }.sorted()[count / 2]
+        val green = samples.map { Color.green(it) }.sorted()[count / 2]
+        val blue = samples.map { Color.blue(it) }.sorted()[count / 2]
         return Color.rgb(red, green, blue)
     }
 
