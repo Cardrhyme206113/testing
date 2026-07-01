@@ -39,10 +39,12 @@ final class GpuFrameGenerator {
     private static final String TAG = "FrameLiftGL";
     private static final int COARSE_MIP = 4; // 1/16 linear resolution.
     private static final int FINE_MIP = 3;   // 1/8 linear resolution.
+    private static final int DETAIL_MIP = 2; // 1/4 linear resolution.
     private static final int FLOW_BLOCK = 4;
 
     private final Callback callback;
     private final AtomicInteger inputFps;
+    private final AtomicInteger outputFps;
     private final AtomicBoolean paused = new AtomicBoolean(false);
 
     private HandlerThread thread;
@@ -55,8 +57,12 @@ final class GpuFrameGenerator {
     private int coarseHeight;
     private int fineWidth;
     private int fineHeight;
+    private int detailWidth;
+    private int detailHeight;
     private int coarseFlowWidth;
     private int coarseFlowHeight;
+    private int fineFlowWidth;
+    private int fineFlowHeight;
     private int flowWidth;
     private int flowHeight;
 
@@ -73,6 +79,8 @@ final class GpuFrameGenerator {
     private int copyProgram;
     private int coarseFlowProgram;
     private int refineFlowProgram;
+    private int detailFlowProgram;
+    private int stabilizeFlowProgram;
     private int interpolateProgram;
     private int vao;
 
@@ -80,15 +88,25 @@ final class GpuFrameGenerator {
     private int currTex;
     private int prevFbo;
     private int currFbo;
+
     private int coarseForwardTex;
+    private int fineForwardTex;
+    private int rawForwardTex;
     private int forwardFlowTex;
+    private int forwardHistoryTex;
+
     private int coarseBackwardTex;
+    private int fineBackwardTex;
+    private int rawBackwardTex;
     private int backwardFlowTex;
+    private int backwardHistoryTex;
 
     private int sourceFrames;
     private boolean hasFlow;
+    private boolean hasFlowHistory;
     private long latestSourceArrivalNs;
     private long nextSourceSampleNs;
+    private long nextOutputFrameNs;
     private boolean firstOutputReported;
 
     private long statsWindowStartNs;
@@ -97,8 +115,9 @@ final class GpuFrameGenerator {
     private int outputsWindow;
     private int generatedWindow;
 
-    GpuFrameGenerator(int inputFps, Callback callback) {
-        this.inputFps = new AtomicInteger(Math.max(1, Math.min(120, inputFps)));
+    GpuFrameGenerator(int inputFps, int outputFps, Callback callback) {
+        this.inputFps = new AtomicInteger(clampFps(inputFps));
+        this.outputFps = new AtomicInteger(clampFps(outputFps));
         this.callback = callback;
     }
 
@@ -106,14 +125,20 @@ final class GpuFrameGenerator {
         this.outputSurface = outputSurface;
         this.width = width;
         this.height = height;
+
         coarseWidth = Math.max(1, width >> COARSE_MIP);
         coarseHeight = Math.max(1, height >> COARSE_MIP);
         fineWidth = Math.max(1, width >> FINE_MIP);
         fineHeight = Math.max(1, height >> FINE_MIP);
-        coarseFlowWidth = (coarseWidth + FLOW_BLOCK - 1) / FLOW_BLOCK;
-        coarseFlowHeight = (coarseHeight + FLOW_BLOCK - 1) / FLOW_BLOCK;
-        flowWidth = (fineWidth + FLOW_BLOCK - 1) / FLOW_BLOCK;
-        flowHeight = (fineHeight + FLOW_BLOCK - 1) / FLOW_BLOCK;
+        detailWidth = Math.max(1, width >> DETAIL_MIP);
+        detailHeight = Math.max(1, height >> DETAIL_MIP);
+
+        coarseFlowWidth = ceilDiv(coarseWidth, FLOW_BLOCK);
+        coarseFlowHeight = ceilDiv(coarseHeight, FLOW_BLOCK);
+        fineFlowWidth = ceilDiv(fineWidth, FLOW_BLOCK);
+        fineFlowHeight = ceilDiv(fineHeight, FLOW_BLOCK);
+        flowWidth = ceilDiv(detailWidth, FLOW_BLOCK);
+        flowHeight = ceilDiv(detailHeight, FLOW_BLOCK);
 
         thread = new HandlerThread("FrameLift-GLES");
         thread.start();
@@ -122,13 +147,28 @@ final class GpuFrameGenerator {
     }
 
     void setInputFps(int fps) {
-        inputFps.set(Math.max(1, Math.min(120, fps)));
+        inputFps.set(clampFps(fps));
         Handler localHandler = handler;
-        if (localHandler != null) localHandler.post(() -> nextSourceSampleNs = 0L);
+        if (localHandler != null) {
+            localHandler.post(() -> {
+                nextSourceSampleNs = 0L;
+                hasFlowHistory = false;
+            });
+        }
+    }
+
+    void setOutputFps(int fps) {
+        outputFps.set(clampFps(fps));
+        Handler localHandler = handler;
+        if (localHandler != null) localHandler.post(() -> nextOutputFrameNs = 0L);
     }
 
     void setPaused(boolean value) {
         paused.set(value);
+        if (!value) {
+            Handler localHandler = handler;
+            if (localHandler != null) localHandler.post(() -> nextOutputFrameNs = 0L);
+        }
     }
 
     void resizeCaptureBuffer(int newWidth, int newHeight) {
@@ -142,7 +182,9 @@ final class GpuFrameGenerator {
             framePending = false;
             sourceFrames = 0;
             hasFlow = false;
+            hasFlowHistory = false;
             nextSourceSampleNs = 0L;
+            nextOutputFrameNs = 0L;
             acceptedSourcesWindow = 0;
             generatedWindow = 0;
         });
@@ -266,6 +308,8 @@ final class GpuFrameGenerator {
         copyProgram = linkGraphics(VERTEX_SHADER, COPY_EXTERNAL_SHADER);
         coarseFlowProgram = linkCompute(COARSE_FLOW_SHADER);
         refineFlowProgram = linkCompute(REFINE_FLOW_SHADER);
+        detailFlowProgram = linkCompute(DETAIL_FLOW_SHADER);
+        stabilizeFlowProgram = linkCompute(STABILIZE_FLOW_SHADER);
         interpolateProgram = linkGraphics(VERTEX_SHADER, INTERPOLATE_SHADER);
 
         int[] ids = new int[1];
@@ -277,10 +321,18 @@ final class GpuFrameGenerator {
         currTex = createFrameTexture();
         prevFbo = createFbo(prevTex);
         currFbo = createFbo(currTex);
+
         coarseForwardTex = createFlowTexture(coarseFlowWidth, coarseFlowHeight);
+        fineForwardTex = createFlowTexture(fineFlowWidth, fineFlowHeight);
+        rawForwardTex = createFlowTexture(flowWidth, flowHeight);
         forwardFlowTex = createFlowTexture(flowWidth, flowHeight);
+        forwardHistoryTex = createFlowTexture(flowWidth, flowHeight);
+
         coarseBackwardTex = createFlowTexture(coarseFlowWidth, coarseFlowHeight);
+        fineBackwardTex = createFlowTexture(fineFlowWidth, fineFlowHeight);
+        rawBackwardTex = createFlowTexture(flowWidth, flowHeight);
         backwardFlowTex = createFlowTexture(flowWidth, flowHeight);
+        backwardHistoryTex = createFlowTexture(flowWidth, flowHeight);
 
         checkGl("initializeGlObjects");
     }
@@ -333,7 +385,9 @@ final class GpuFrameGenerator {
                     consumeLatestSourceFrame(frameTimeNanos);
                     nextSourceSampleNs = frameTimeNanos + sourcePeriodNs;
                 }
-                render(frameTimeNanos);
+                if (isOutputFrameDue(frameTimeNanos)) {
+                    render(frameTimeNanos);
+                }
                 reportStatsIfDue(frameTimeNanos);
             } catch (Throwable error) {
                 Log.e(TAG, "Render failed", error);
@@ -343,3 +397,22 @@ final class GpuFrameGenerator {
             if (!stopped && choreographer != null) choreographer.postFrameCallback(this);
         }
     };
+
+    private boolean isOutputFrameDue(long frameTimeNanos) {
+        if (paused.get()) return false;
+        long periodNs = 1_000_000_000L / Math.max(1, outputFps.get());
+        if (nextOutputFrameNs == 0L) nextOutputFrameNs = frameTimeNanos;
+        if (frameTimeNanos + 250_000L < nextOutputFrameNs) return false;
+        do {
+            nextOutputFrameNs += periodNs;
+        } while (nextOutputFrameNs <= frameTimeNanos);
+        return true;
+    }
+
+    private static int clampFps(int value) {
+        return Math.max(1, Math.min(120, value));
+    }
+
+    private static int ceilDiv(int value, int divisor) {
+        return (value + divisor - 1) / divisor;
+    }
