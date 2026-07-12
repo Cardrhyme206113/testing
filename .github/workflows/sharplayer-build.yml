@@ -48,21 +48,21 @@ jobs:
           assets='SharpLayerAndroid/app/src/main/assets'
           mkdir -p "$assets"
           curl -L --fail --retry 4 --retry-delay 2 \
-            'https://raw.githubusercontent.com/callysthenes/depth_estimation/2d5ac271aba049892faf4955a3b0fda4612abb9a/android/app/src/main/assets/midas.tflite' \
+            'https://github.com/isl-org/MiDaS/releases/download/v2_1/model_opt.tflite' \
             -o "$assets/midas.tflite"
           curl -L --fail --retry 4 --retry-delay 2 \
             'https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/latest/deeplab_v3.tflite' \
             -o "$assets/deeplab_v3.tflite"
-          test -s "$assets/midas.tflite"
-          test -s "$assets/deeplab_v3.tflite"
+          test $(stat -c%s "$assets/midas.tflite") -gt 1000000
+          test $(stat -c%s "$assets/deeplab_v3.tflite") -gt 1000000
           ls -lh "$assets"
 
       - name: Verify project
         run: |
           test -f SharpLayerAndroid/settings.gradle.kts
           test -f SharpLayerAndroid/app/build.gradle.kts
-          test -s SharpLayerAndroid/app/src/main/assets/midas.tflite
-          test -s SharpLayerAndroid/app/src/main/assets/deeplab_v3.tflite
+          test $(stat -c%s SharpLayerAndroid/app/src/main/assets/midas.tflite) -gt 1000000
+          test $(stat -c%s SharpLayerAndroid/app/src/main/assets/deeplab_v3.tflite) -gt 1000000
           find SharpLayerAndroid -maxdepth 5 -type f | sort
 
       - name: Build debug APK
