@@ -105,10 +105,13 @@ jobs:
       - name: Add five-second textured depth-mesh demo
         run: python3 SharpLayerAndroid/scripts/patch_depth_mesh_demo.py
 
-      - name: Apply v0.5 demo labels
+      - name: Fix mesh fullscreen and aspect ratio
+        run: python3 SharpLayerAndroid/scripts/patch_depth_mesh_player_fixes.py
+
+      - name: Apply v0.5.1 demo labels
         shell: bash
         run: |
-          sed -i 's/SharpLayer Option D/SharpLayer Option D v0.5 depth demo/' \
+          sed -i 's/SharpLayer Option D/SharpLayer Option D v0.5.1 depth demo/' \
             SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
           sed -i 's/Depth + segmentation + 10 Hz structural deltas/Random middle 5s · depth 6 fps · segmentation 12 fps · reconstructed at 24 fps/' \
             SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
@@ -127,6 +130,8 @@ jobs:
           grep -q 'const val SEGMENTATION_REFRESH_FPS = 12f' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/codec/FastStructureAnalyzer.kt
           grep -q 'textured depth mesh' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           grep -q 'drawBitmapMesh' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/player/DepthMeshPlayerView.kt
+          grep -q 'pixelWidthHeightRatio' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/player/DepthMeshPlayerView.kt
+          grep -q 'stopTickerOnly' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/player/DepthMeshPlayerView.kt
           grep -q 'demoDurationMs = minOf(5_000L' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           grep -q 'MAX_MODEL_SOURCE_LONG_EDGE = 640' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/codec/FastVisionModels.kt
           grep -q 'val outputHeight = 720' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
@@ -146,7 +151,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SharpLayer-v0.5-depth-mesh-demo-build
+          name: SharpLayer-v0.5.1-fullscreen-aspect-fix-build
           path: |
             SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
             SharpLayerAndroid/build.log
