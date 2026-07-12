@@ -60,10 +60,12 @@ jobs:
       - name: Fix exact analysis frame dimensions
         run: python3 SharpLayerAndroid/scripts/patch_exact_analysis_frames.py
 
-      - name: Apply fast mode UI labels
+      - name: Apply v0.4 UI labels
         shell: bash
         run: |
-          sed -i 's/Depth + segmentation + 10 Hz structural deltas/Depth + segmentation + 5 Hz motion-propagated deltas/' \
+          sed -i 's/SharpLayer Option D/SharpLayer Option D v0.4/' \
+            SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
+          sed -i 's/Depth + segmentation + 10 Hz structural deltas/30 fps encoder preflight + 5 Hz motion-propagated deltas/' \
             SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
           sed -i 's/10 updates\/sec, 1-second keyframes/5 updates\/sec, 2-second keyframes/' \
             SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
@@ -75,7 +77,9 @@ jobs:
           test $(stat -c%s SharpLayerAndroid/app/src/main/assets/midas.tflite) -gt 1000000
           test $(stat -c%s SharpLayerAndroid/app/src/main/assets/deeplab_v3.tflite) -gt 1000000
           grep -q 'Frame normalization failed' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/codec/FastStructureAnalyzer.kt
-          grep -q '5 Hz motion-propagated deltas' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
+          grep -q 'SharpLayer Option D v0.4' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
+          grep -q 'Encoder preflight' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
+          grep -q 'setFrameRate(plan.frameRate)' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           find SharpLayerAndroid -maxdepth 5 -type f | sort
 
       - name: Build debug APK
@@ -92,7 +96,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SharpLayer-option-d-fast-framefix-build
+          name: SharpLayer-v0.4-preflight-build
           path: |
             SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
             SharpLayerAndroid/build.log
