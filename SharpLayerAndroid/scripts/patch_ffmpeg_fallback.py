@@ -182,7 +182,7 @@ text = text.replace(insert_anchor, software_function + insert_anchor)
 engine_path.write_text(text)
 
 gradle = gradle_path.read_text()
-dependency = '    implementation("com.arthenica:ffmpeg-kit-full-gpl:6.0-2")\n'
+dependency = '    implementation(files("libs/ffmpeg-kit-full-gpl-7.0.aar"))\n'
 if dependency not in gradle:
     gradle = gradle.replace(
         '    implementation("androidx.media3:media3-ui:1.10.0")\n',
