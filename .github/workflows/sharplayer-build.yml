@@ -57,12 +57,19 @@ jobs:
           test $(stat -c%s "$assets/deeplab_v3.tflite") -gt 1000000
           ls -lh "$assets"
 
+      - name: Apply fast mode UI label
+        shell: bash
+        run: |
+          sed -i 's/Depth + segmentation + 10 Hz structural deltas/Depth + segmentation + 5 Hz motion-propagated deltas/' \
+            SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
+
       - name: Verify project
         run: |
           test -f SharpLayerAndroid/settings.gradle.kts
           test -f SharpLayerAndroid/app/build.gradle.kts
           test $(stat -c%s SharpLayerAndroid/app/src/main/assets/midas.tflite) -gt 1000000
           test $(stat -c%s SharpLayerAndroid/app/src/main/assets/deeplab_v3.tflite) -gt 1000000
+          grep -q '5 Hz motion-propagated deltas' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
           find SharpLayerAndroid -maxdepth 5 -type f | sort
 
       - name: Build debug APK
@@ -79,7 +86,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SharpLayer-option-d-build
+          name: SharpLayer-option-d-fast-build
           path: |
             SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
             SharpLayerAndroid/build.log
