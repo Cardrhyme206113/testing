@@ -21,6 +21,7 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.VideoEncoderSettings
+import com.cardrhyme.sharplayer.codec.FastStructureAnalyzer
 import com.cardrhyme.sharplayer.codec.StructureCodec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -37,13 +38,13 @@ import kotlin.math.roundToInt
 class OptionDExportEngine(private val context: Context) {
     data class Settings(
         val totalBitrateKbps: Int = 300,
-        val outputHeight: Int = 1080
+        val outputHeight: Int = 1080,
     )
 
     data class Update(
         val progress: Float,
         val stage: String,
-        val detail: String
+        val detail: String,
     )
 
     data class Result(
@@ -54,11 +55,12 @@ class OptionDExportEngine(private val context: Context) {
         val audioKbps: Int,
         val structureKbps: Int,
         val attempts: Int,
-        val metadata: JSONObject
+        val metadata: JSONObject,
     )
 
     @Volatile
     private var cancelled = false
+
     @Volatile
     private var activeTransformer: Transformer? = null
 
@@ -71,21 +73,27 @@ class OptionDExportEngine(private val context: Context) {
     suspend fun export(
         source: Uri,
         settings: Settings,
-        onUpdate: (Update) -> Unit
+        onUpdate: (Update) -> Unit,
     ): Result {
         cancelled = false
         val target = settings.totalBitrateKbps.coerceIn(120, 4_000)
-        val structureBudget = (target * 0.16f).roundToInt().coerceIn(12, 96)
+        val structureBudget = (target * 0.14f).roundToInt().coerceIn(10, 84)
 
-        onUpdate(Update(0.01f, "Structure analysis", "Starting MiDaS depth and DeepLab segmentation"))
-        val analysis = StructureCodec.analyze(
+        onUpdate(
+            Update(
+                0.01f,
+                "Fast structure analysis",
+                "5 Hz deltas · 1 Hz depth · 0.5 Hz segmentation · GPU preferred",
+            )
+        )
+        val analysis = FastStructureAnalyzer.analyze(
             context = context,
             source = source,
             structureBudgetKbps = structureBudget,
             onProgress = { p, detail ->
-                onUpdate(Update(0.02f + p * 0.40f, "Structure analysis", detail))
+                onUpdate(Update(0.02f + p * 0.40f, "Fast structure analysis", detail))
             },
-            isCancelled = { cancelled }
+            isCancelled = { cancelled },
         )
         ensureNotCancelled()
 
@@ -118,7 +126,7 @@ class OptionDExportEngine(private val context: Context) {
                     Update(
                         0.43f,
                         "Forced CBR encode",
-                        "Attempt $attempt · ${settings.outputHeight}p H.264 at $requestedVideoKbps kbps"
+                        "Attempt $attempt · ${settings.outputHeight}p H.264 at $requestedVideoKbps kbps",
                     )
                 )
                 transcodeBase(
@@ -128,17 +136,21 @@ class OptionDExportEngine(private val context: Context) {
                     videoBitrate = requestedVideoKbps * 1_000,
                     audioBitrate = audioKbps * 1_000,
                     attempt = attempt,
-                    onUpdate = onUpdate
+                    onUpdate = onUpdate,
                 )
                 ensureNotCancelled()
                 require(base.exists() && base.length() > 0L) { "The hardware encoder produced an empty base MP4." }
 
                 val metadata = JSONObject()
-                    .put("format", "SharpLayer Option D")
-                    .put("version", 2)
-                    .put("updateFps", StructureCodec.UPDATE_FPS)
-                    .put("depthModel", "MiDaS v2.1 model_opt")
+                    .put("format", "SharpLayer Option D Fast")
+                    .put("version", 3)
+                    .put("updateFps", analysis.sequence.fps)
+                    .put("depthRefreshFps", FastStructureAnalyzer.DEPTH_REFRESH_FPS.toDouble())
+                    .put("segmentationRefreshFps", FastStructureAnalyzer.SEGMENTATION_REFRESH_FPS.toDouble())
+                    .put("depthModel", "MiDaS v2.1 mobile")
                     .put("segmentationModel", "DeepLab-v3")
+                    .put("inference", "GPU delegate preferred, CPU fallback")
+                    .put("temporalPropagation", "global motion warp")
                     .put("lineart", "multiscale-gradient")
                     .put("requestedTotalKbps", target)
                     .put("requestedVideoKbps", requestedVideoKbps)
@@ -156,7 +168,7 @@ class OptionDExportEngine(private val context: Context) {
                 val estimatedKbps = ceil(estimatedBytes * 8.0 / durationSeconds / 1_000.0).toInt()
                 metadata.put("actualTotalKbps", estimatedKbps)
 
-                onUpdate(Update(0.88f, "Packing", "Appending the 10 Hz relative structure stream"))
+                onUpdate(Update(0.88f, "Packing", "Appending the 5 Hz relative structure stream"))
                 withContext(Dispatchers.IO) {
                     StructureCodec.pack(base, analysis.encoded, packed, metadata) { percent ->
                         onUpdate(Update(0.88f + percent / 100f * 0.06f, "Packing", "$percent%"))
@@ -176,14 +188,14 @@ class OptionDExportEngine(private val context: Context) {
                 lastMeasured = measured
 
                 if (measured <= ceil(target * 1.04).toInt()) {
-                    val finalFile = File(context.cacheDir, "SharpLayer-OptionD-${session}.mp4")
+                    val finalFile = File(context.cacheDir, "SharpLayer-OptionD-Fast-$session.mp4")
                     finalFile.delete()
                     withContext(Dispatchers.IO) { packed.copyTo(finalFile, overwrite = true) }
                     onUpdate(
                         Update(
                             1f,
                             "Done",
-                            "Measured $measured kbps total · structure ${analysis.bitrateKbps} kbps · $attempt attempt(s)"
+                            "Measured $measured kbps total · structure ${analysis.bitrateKbps} kbps · $attempt attempt(s)",
                         )
                     )
                     return Result(
@@ -194,7 +206,7 @@ class OptionDExportEngine(private val context: Context) {
                         audioKbps = audioKbps,
                         structureKbps = analysis.bitrateKbps,
                         attempts = attempt,
-                        metadata = metadata
+                        metadata = metadata,
                     )
                 }
 
@@ -205,7 +217,7 @@ class OptionDExportEngine(private val context: Context) {
                     Update(
                         0.43f,
                         "Bitrate correction",
-                        "Measured $measured kbps, above $target. Retrying at $next kbps video."
+                        "Measured $measured kbps, above $target. Retrying at $next kbps video.",
                     )
                 )
                 requestedVideoKbps = next
@@ -227,7 +239,7 @@ class OptionDExportEngine(private val context: Context) {
         videoBitrate: Int,
         audioBitrate: Int,
         attempt: Int,
-        onUpdate: (Update) -> Unit
+        onUpdate: (Update) -> Unit,
     ) = withContext(Dispatchers.Main) {
         suspendCancellableCoroutine<Unit> { continuation ->
             val videoSettings = VideoEncoderSettings.Builder()
@@ -243,7 +255,7 @@ class OptionDExportEngine(private val context: Context) {
                 .build()
             val effects = Effects(
                 emptyList(),
-                listOf<Effect>(Presentation.createForHeight(height))
+                listOf<Effect>(Presentation.createForHeight(height)),
             )
             val edited = EditedMediaItem.Builder(MediaItem.fromUri(source))
                 .setEffects(effects)
@@ -266,7 +278,7 @@ class OptionDExportEngine(private val context: Context) {
                     override fun onError(
                         composition: Composition,
                         exportResult: ExportResult,
-                        exportException: ExportException
+                        exportException: ExportException,
                     ) {
                         handler.removeCallbacks(poll)
                         activeTransformer = null
@@ -286,7 +298,7 @@ class OptionDExportEngine(private val context: Context) {
                             Update(
                                 0.43f + progress / 100f * 0.43f,
                                 "Forced CBR encode",
-                                "Attempt $attempt · $progress%"
+                                "Attempt $attempt · $progress%",
                             )
                         )
                     }
