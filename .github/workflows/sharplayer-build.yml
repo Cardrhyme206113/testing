@@ -55,7 +55,6 @@ jobs:
             -o "$assets/deeplab_v3.tflite"
           test $(stat -c%s "$assets/midas.tflite") -gt 1000000
           test $(stat -c%s "$assets/deeplab_v3.tflite") -gt 1000000
-          ls -lh "$assets"
 
       - name: Fix exact analysis frame dimensions
         run: python3 SharpLayerAndroid/scripts/patch_exact_analysis_frames.py
@@ -65,7 +64,6 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           path = Path('SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt')
           text = path.read_text()
           text = text.replace(
@@ -88,7 +86,6 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           path = Path('SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt')
           text = path.read_text()
           text = text.replace(
@@ -105,14 +102,17 @@ jobs:
       - name: Fix output and model input caps
         run: python3 SharpLayerAndroid/scripts/patch_720p_640_model_cap.py
 
-      - name: Apply v0.4 UI labels
+      - name: Add five-second textured depth-mesh demo
+        run: python3 SharpLayerAndroid/scripts/patch_depth_mesh_demo.py
+
+      - name: Apply v0.5 demo labels
         shell: bash
         run: |
-          sed -i 's/SharpLayer Option D/SharpLayer Option D v0.4/' \
+          sed -i 's/SharpLayer Option D/SharpLayer Option D v0.5 depth demo/' \
             SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
-          sed -i 's/Depth + segmentation + 10 Hz structural deltas/30 fps encoder preflight + 5 Hz motion-propagated deltas/' \
+          sed -i 's/Depth + segmentation + 10 Hz structural deltas/Random middle 5s · depth 6 fps · segmentation 12 fps · reconstructed at 24 fps/' \
             SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
-          sed -i 's/10 updates\/sec, 1-second keyframes/5 updates\/sec, 2-second keyframes/' \
+          sed -i 's/10 updates\/sec, 1-second keyframes/24 updates\/sec, 1-second keyframes/' \
             SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
 
       - name: Verify project
@@ -121,17 +121,16 @@ jobs:
           test -f SharpLayerAndroid/app/build.gradle.kts
           test $(stat -c%s SharpLayerAndroid/app/src/main/assets/midas.tflite) -gt 1000000
           test $(stat -c%s SharpLayerAndroid/app/src/main/assets/deeplab_v3.tflite) -gt 1000000
-          grep -q 'Frame normalization failed' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/codec/FastStructureAnalyzer.kt
-          grep -q 'SharpLayer Option D v0.4' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
-          grep -q 'Encoder preflight' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
-          grep -q 'FrameDropEffect.createDefaultFrameDropEffect(plan.frameRate.toFloat())' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
-          grep -q 'if (true)' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
-          grep -q 'val outputHeight = 720' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
+          test -f SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/player/DepthMeshPlayerView.kt
+          grep -q 'const val UPDATE_FPS = 24' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/codec/FastStructureAnalyzer.kt
+          grep -q 'const val DEPTH_REFRESH_FPS = 6f' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/codec/FastStructureAnalyzer.kt
+          grep -q 'const val SEGMENTATION_REFRESH_FPS = 12f' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/codec/FastStructureAnalyzer.kt
+          grep -q 'textured depth mesh' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
+          grep -q 'drawBitmapMesh' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/player/DepthMeshPlayerView.kt
+          grep -q 'demoDurationMs = minOf(5_000L' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           grep -q 'MAX_MODEL_SOURCE_LONG_EDGE = 640' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/codec/FastVisionModels.kt
-          grep -q 'Fixed at 720p' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
+          grep -q 'val outputHeight = 720' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           ! grep -q 'ffmpeg-kit' SharpLayerAndroid/app/build.gradle.kts
-          ! grep -q 'setFrameRate(plan.frameRate)' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
-          find SharpLayerAndroid -maxdepth 5 -type f | sort
 
       - name: Build debug APK
         working-directory: SharpLayerAndroid
@@ -147,7 +146,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SharpLayer-v0.4-720p-640cap-build
+          name: SharpLayer-v0.5-depth-mesh-demo-build
           path: |
             SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
             SharpLayerAndroid/build.log
