@@ -12,8 +12,8 @@ android {
         applicationId = "com.cardrhyme.sharplayer"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0-option-d"
     }
 
     compileOptions {
@@ -24,6 +24,10 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    androidResources {
+        noCompress += "tflite"
     }
 
     packaging {
@@ -49,6 +53,8 @@ dependencies {
     implementation("androidx.media3:media3-effect:1.10.0")
     implementation("androidx.media3:media3-exoplayer:1.10.0")
     implementation("androidx.media3:media3-ui:1.10.0")
+
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
