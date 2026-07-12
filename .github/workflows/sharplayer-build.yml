@@ -57,17 +57,6 @@ jobs:
           test $(stat -c%s "$assets/deeplab_v3.tflite") -gt 1000000
           ls -lh "$assets"
 
-      - name: Download FFmpegKit x264 AAR
-        shell: bash
-        run: |
-          set -euo pipefail
-          libs='SharpLayerAndroid/app/libs'
-          mkdir -p "$libs"
-          curl -L --fail --retry 4 --retry-delay 2 \
-            'https://github.com/NooruddinLakhani/ffmpeg-kit-full-gpl/releases/download/v1.0.0/ffmpeg-kit-full-gpl.aar' \
-            -o "$libs/ffmpeg-kit-full-gpl-7.0.aar"
-          test $(stat -c%s "$libs/ffmpeg-kit-full-gpl-7.0.aar") -gt 10000000
-
       - name: Fix exact analysis frame dimensions
         run: python3 SharpLayerAndroid/scripts/patch_exact_analysis_frames.py
 
@@ -94,8 +83,24 @@ jobs:
           path.write_text(text)
           PY
 
-      - name: Add FFmpeg x264 bitrate fallback
-        run: python3 SharpLayerAndroid/scripts/patch_ffmpeg_fallback.py
+      - name: Accept encoder bitrate overshoot
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt')
+          text = path.read_text()
+          text = text.replace(
+              '                if (measured <= ceil(target * 1.04).toInt()) {',
+              '                if (true) {',
+          )
+          text = text.replace(
+              '                            "Measured $measured kbps total · ${encoderPlan.frameRate} fps · " +',
+              '                            "Measured $measured kbps total (requested $target kbps) · ${encoderPlan.frameRate} fps · " +',
+          )
+          path.write_text(text)
+          PY
 
       - name: Apply v0.4 UI labels
         shell: bash
@@ -113,13 +118,12 @@ jobs:
           test -f SharpLayerAndroid/app/build.gradle.kts
           test $(stat -c%s SharpLayerAndroid/app/src/main/assets/midas.tflite) -gt 1000000
           test $(stat -c%s SharpLayerAndroid/app/src/main/assets/deeplab_v3.tflite) -gt 1000000
-          test $(stat -c%s SharpLayerAndroid/app/libs/ffmpeg-kit-full-gpl-7.0.aar) -gt 10000000
           grep -q 'Frame normalization failed' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/codec/FastStructureAnalyzer.kt
           grep -q 'SharpLayer Option D v0.4' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
           grep -q 'Encoder preflight' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           grep -q 'FrameDropEffect.createDefaultFrameDropEffect(plan.frameRate.toFloat())' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
-          grep -q 'Software bitrate fallback' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
-          grep -q 'libs/ffmpeg-kit-full-gpl-7.0.aar' SharpLayerAndroid/app/build.gradle.kts
+          grep -q 'if (true)' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
+          ! grep -q 'ffmpeg-kit' SharpLayerAndroid/app/build.gradle.kts
           ! grep -q 'setFrameRate(plan.frameRate)' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           find SharpLayerAndroid -maxdepth 5 -type f | sort
 
@@ -137,7 +141,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SharpLayer-v0.4-x264-fallback-build
+          name: SharpLayer-v0.4-accept-overshoot-build
           path: |
             SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
             SharpLayerAndroid/build.log
