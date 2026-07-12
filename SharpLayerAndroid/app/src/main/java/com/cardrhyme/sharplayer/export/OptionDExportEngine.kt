@@ -23,7 +23,6 @@ import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.VideoEncoderSettings
 import com.cardrhyme.sharplayer.codec.StructureCodec
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -138,7 +137,7 @@ class OptionDExportEngine(private val context: Context) {
                     .put("format", "SharpLayer Option D")
                     .put("version", 2)
                     .put("updateFps", StructureCodec.UPDATE_FPS)
-                    .put("depthModel", "MiDaS")
+                    .put("depthModel", "MiDaS v2.1 model_opt")
                     .put("segmentationModel", "DeepLab-v3")
                     .put("lineart", "multiscale-gradient")
                     .put("requestedTotalKbps", target)
@@ -150,6 +149,12 @@ class OptionDExportEngine(private val context: Context) {
                     .put("analysisHeight", analysis.sequence.height)
                     .put("activePixelPercent", analysis.activePixelPercent.toDouble())
                     .put("changedPixelPercent", analysis.changedPixelPercent.toDouble())
+                    .put("attempts", attempt)
+
+                val durationSeconds = analysis.sequence.durationMs.coerceAtLeast(1L) / 1_000.0
+                val estimatedBytes = base.length() + analysis.encoded.size + metadata.toString().toByteArray().size + 64L
+                val estimatedKbps = ceil(estimatedBytes * 8.0 / durationSeconds / 1_000.0).toInt()
+                metadata.put("actualTotalKbps", estimatedKbps)
 
                 onUpdate(Update(0.88f, "Packing", "Appending the 10 Hz relative structure stream"))
                 withContext(Dispatchers.IO) {
@@ -159,11 +164,16 @@ class OptionDExportEngine(private val context: Context) {
                 }
                 ensureNotCancelled()
 
-                val durationSeconds = analysis.sequence.durationMs.coerceAtLeast(1L) / 1_000.0
-                val measured = ceil(packed.length() * 8.0 / durationSeconds / 1_000.0).toInt()
+                var measured = ceil(packed.length() * 8.0 / durationSeconds / 1_000.0).toInt()
+                if (measured != estimatedKbps) {
+                    metadata.put("actualTotalKbps", measured)
+                    packed.delete()
+                    withContext(Dispatchers.IO) {
+                        StructureCodec.pack(base, analysis.encoded, packed, metadata)
+                    }
+                    measured = ceil(packed.length() * 8.0 / durationSeconds / 1_000.0).toInt()
+                }
                 lastMeasured = measured
-                metadata.put("actualTotalKbps", measured)
-                metadata.put("attempts", attempt)
 
                 if (measured <= ceil(target * 1.04).toInt()) {
                     val finalFile = File(context.cacheDir, "SharpLayer-OptionD-${session}.mp4")
