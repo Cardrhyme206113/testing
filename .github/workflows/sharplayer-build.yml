@@ -19,7 +19,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,10 +41,28 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Download Option D vision models
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets='SharpLayerAndroid/app/src/main/assets'
+          mkdir -p "$assets"
+          curl -L --fail --retry 4 --retry-delay 2 \
+            'https://raw.githubusercontent.com/callysthenes/depth_estimation/2d5ac271aba049892faf4955a3b0fda4612abb9a/android/app/src/main/assets/midas.tflite' \
+            -o "$assets/midas.tflite"
+          curl -L --fail --retry 4 --retry-delay 2 \
+            'https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/latest/deeplab_v3.tflite' \
+            -o "$assets/deeplab_v3.tflite"
+          test -s "$assets/midas.tflite"
+          test -s "$assets/deeplab_v3.tflite"
+          ls -lh "$assets"
+
       - name: Verify project
         run: |
           test -f SharpLayerAndroid/settings.gradle.kts
           test -f SharpLayerAndroid/app/build.gradle.kts
+          test -s SharpLayerAndroid/app/src/main/assets/midas.tflite
+          test -s SharpLayerAndroid/app/src/main/assets/deeplab_v3.tflite
           find SharpLayerAndroid -maxdepth 5 -type f | sort
 
       - name: Build debug APK
@@ -54,14 +72,14 @@ jobs:
           set +e
           gradle --stacktrace --no-daemon assembleDebug 2>&1 | tee build.log
           code=${PIPESTATUS[0]}
-          tail -n 250 build.log > build-tail.log
+          tail -n 300 build.log > build-tail.log
           exit $code
 
       - name: Upload APK and build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SharpLayer-build-output
+          name: SharpLayer-option-d-build
           path: |
             SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
             SharpLayerAndroid/build.log
