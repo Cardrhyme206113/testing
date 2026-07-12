@@ -41,12 +41,17 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Add 4x center viewer toggle
+        run: python3 ShrinkAndroid/scripts/patch_viewer_4x_zoom.py
+
       - name: Verify project
         run: |
           test -f ShrinkAndroid/settings.gradle.kts
           test -f ShrinkAndroid/app/build.gradle.kts
           grep -q 'FrameDropEffect.createDefaultFrameDropEffect' ShrinkAndroid/app/src/main/java/com/cardrhyme/shrink/HardwareVideoCompressor.kt
           grep -q '2.5f..25f' ShrinkAndroid/app/src/main/java/com/cardrhyme/shrink/MainActivity.kt
+          grep -q '4× CENTER' ShrinkAndroid/app/src/main/java/com/cardrhyme/shrink/MainActivity.kt
+          grep -q 'contentScale = if (zoomedCenter.value) 4f else 1f' ShrinkAndroid/app/src/main/java/com/cardrhyme/shrink/MainActivity.kt
           grep -q 'listOf(720, 960, 1080, 1440, 2160)' ShrinkAndroid/app/src/main/java/com/cardrhyme/shrink/ShrinkViewModel.kt
 
       - name: Build debug APK
@@ -63,7 +68,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Shrink-hardware-compressor-build
+          name: Shrink-v1.1-4x-center-zoom-build
           path: |
             ShrinkAndroid/app/build/outputs/apk/debug/*.apk
             ShrinkAndroid/build.log
