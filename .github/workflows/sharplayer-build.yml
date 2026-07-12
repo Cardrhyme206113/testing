@@ -45,17 +45,26 @@ jobs:
         run: |
           test -f SharpLayerAndroid/settings.gradle.kts
           test -f SharpLayerAndroid/app/build.gradle.kts
-          find SharpLayerAndroid -maxdepth 4 -type f | sort
+          find SharpLayerAndroid -maxdepth 5 -type f | sort
 
       - name: Build debug APK
         working-directory: SharpLayerAndroid
-        run: gradle --stacktrace --no-daemon assembleDebug
+        shell: bash
+        run: |
+          set +e
+          gradle --stacktrace --no-daemon assembleDebug 2>&1 | tee build.log
+          code=${PIPESTATUS[0]}
+          tail -n 250 build.log > build-tail.log
+          exit $code
 
-      - name: Upload APK
+      - name: Upload APK and build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SharpLayer-debug-apk
-          path: SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
+          name: SharpLayer-build-output
+          path: |
+            SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
+            SharpLayerAndroid/build.log
+            SharpLayerAndroid/build-tail.log
           if-no-files-found: warn
           retention-days: 30
