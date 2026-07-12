@@ -57,6 +57,17 @@ jobs:
           test $(stat -c%s "$assets/deeplab_v3.tflite") -gt 1000000
           ls -lh "$assets"
 
+      - name: Download FFmpegKit x264 AAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          libs='SharpLayerAndroid/app/libs'
+          mkdir -p "$libs"
+          curl -L --fail --retry 4 --retry-delay 2 \
+            'https://github.com/sk3llo/ffmpeg_kit_flutter/releases/download/7.0/ffmpeg-kit-full-gpl-7.0.aar' \
+            -o "$libs/ffmpeg-kit-full-gpl-7.0.aar"
+          test $(stat -c%s "$libs/ffmpeg-kit-full-gpl-7.0.aar") -gt 10000000
+
       - name: Fix exact analysis frame dimensions
         run: python3 SharpLayerAndroid/scripts/patch_exact_analysis_frames.py
 
@@ -102,12 +113,13 @@ jobs:
           test -f SharpLayerAndroid/app/build.gradle.kts
           test $(stat -c%s SharpLayerAndroid/app/src/main/assets/midas.tflite) -gt 1000000
           test $(stat -c%s SharpLayerAndroid/app/src/main/assets/deeplab_v3.tflite) -gt 1000000
+          test $(stat -c%s SharpLayerAndroid/app/libs/ffmpeg-kit-full-gpl-7.0.aar) -gt 10000000
           grep -q 'Frame normalization failed' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/codec/FastStructureAnalyzer.kt
           grep -q 'SharpLayer Option D v0.4' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
           grep -q 'Encoder preflight' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           grep -q 'FrameDropEffect.createDefaultFrameDropEffect(plan.frameRate.toFloat())' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           grep -q 'Software bitrate fallback' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
-          grep -q 'ffmpeg-kit-full-gpl:6.0-2' SharpLayerAndroid/app/build.gradle.kts
+          grep -q 'libs/ffmpeg-kit-full-gpl-7.0.aar' SharpLayerAndroid/app/build.gradle.kts
           ! grep -q 'setFrameRate(plan.frameRate)' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           find SharpLayerAndroid -maxdepth 5 -type f | sort
 
