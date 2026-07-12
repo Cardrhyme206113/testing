@@ -83,6 +83,9 @@ jobs:
           path.write_text(text)
           PY
 
+      - name: Add FFmpeg x264 bitrate fallback
+        run: python3 SharpLayerAndroid/scripts/patch_ffmpeg_fallback.py
+
       - name: Apply v0.4 UI labels
         shell: bash
         run: |
@@ -103,6 +106,8 @@ jobs:
           grep -q 'SharpLayer Option D v0.4' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
           grep -q 'Encoder preflight' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           grep -q 'FrameDropEffect.createDefaultFrameDropEffect(plan.frameRate.toFloat())' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
+          grep -q 'Software bitrate fallback' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
+          grep -q 'ffmpeg-kit-full-gpl:6.0-2' SharpLayerAndroid/app/build.gradle.kts
           ! grep -q 'setFrameRate(plan.frameRate)' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           find SharpLayerAndroid -maxdepth 5 -type f | sort
 
@@ -120,7 +125,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SharpLayer-v0.4-framerate-fix-build
+          name: SharpLayer-v0.4-x264-fallback-build
           path: |
             SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
             SharpLayerAndroid/build.log
