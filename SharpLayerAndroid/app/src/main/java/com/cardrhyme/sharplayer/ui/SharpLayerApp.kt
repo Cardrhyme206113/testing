@@ -26,25 +26,15 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.effect.Presentation
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.transformer.AudioEncoderSettings
-import androidx.media3.transformer.Composition
-import androidx.media3.transformer.DefaultEncoderFactory
-import androidx.media3.transformer.EditedMediaItem
-import androidx.media3.transformer.Effects
-import androidx.media3.transformer.ExportException
-import androidx.media3.transformer.ExportResult
-import androidx.media3.transformer.ProgressHolder
-import androidx.media3.transformer.Transformer
-import androidx.media3.transformer.VideoEncoderSettings
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.cardrhyme.sharplayer.codec.StructureCodec
+import com.cardrhyme.sharplayer.export.OptionDExportEngine
+import com.cardrhyme.sharplayer.player.StructureOverlayView
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -60,21 +50,22 @@ fun SharpLayerApp() {
     val activity = remember(context) { context.findActivity() }
     val configuration = LocalConfiguration.current
     val scope = rememberCoroutineScope()
+    val engine = remember { OptionDExportEngine(context.applicationContext) }
 
     var screen by remember { mutableStateOf(Screen.EXPORT) }
     var source by remember { mutableStateOf<Uri?>(null) }
-    var playerUri by remember { mutableStateOf<Uri?>(null) }
+    var playerSource by remember { mutableStateOf<Uri?>(null) }
+    var preparedMedia by remember { mutableStateOf<StructureCodec.PreparedMedia?>(null) }
     var lastExportUri by remember { mutableStateOf<Uri?>(null) }
 
-    var targetHeight by remember { mutableIntStateOf(720) }
-    var videoBitrateKbps by remember { mutableIntStateOf(1_200) }
-
+    var targetHeight by remember { mutableIntStateOf(1080) }
+    var totalBitrateKbps by remember { mutableIntStateOf(300) }
     var status by remember { mutableStateOf("Choose a source video.") }
+    var playerStatus by remember { mutableStateOf("Open a normal MP4 or a SharpLayer Option D file.") }
     var progress by remember { mutableFloatStateOf(0f) }
     var running by remember { mutableStateOf(false) }
-    var transformer by remember { mutableStateOf<Transformer?>(null) }
-    var activeTemp by remember { mutableStateOf<File?>(null) }
-    var pendingEncodedFile by remember { mutableStateOf<File?>(null) }
+    var stage by remember { mutableStateOf("Idle") }
+    var pendingResult by remember { mutableStateOf<OptionDExportEngine.Result?>(null) }
     var saveRequestToken by remember { mutableIntStateOf(0) }
 
     val isFullscreenPlayer =
@@ -106,6 +97,7 @@ fun SharpLayerApp() {
         source = uri
         if (uri != null) {
             status = "Source selected: ${uri.lastPathSegment ?: "video"}"
+            stage = "Ready"
             progress = 0f
         }
     }
@@ -113,37 +105,28 @@ fun SharpLayerApp() {
     val savePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("video/mp4")
     ) { destination ->
-        val encoded = pendingEncodedFile
-        if (destination == null) {
-            status = if (encoded != null) {
-                "Encoding finished. Tap Save encoded file when ready."
-            } else {
-                "Save cancelled."
-            }
+        val result = pendingResult
+        if (destination == null || result == null) {
+            status = if (result != null) "Encoded file remains available. Tap Save again." else "Save cancelled."
             return@rememberLauncherForActivityResult
         }
-        if (encoded == null || !encoded.exists() || encoded.length() <= 0L) {
-            status = "Save failed: encoded temporary file is missing or empty."
-            return@rememberLauncherForActivityResult
-        }
-
         scope.launch {
             running = true
-            progress = 0.94f
-            status = "Writing ${formatBytes(encoded.length())} to the selected file…"
+            stage = "Saving"
+            status = "Writing ${formatBytes(result.file.length())}…"
             try {
                 val written = withContext(Dispatchers.IO) {
-                    writeFileToUri(context, encoded, destination)
+                    writeFileToUri(context, result.file, destination)
                 }
-                require(written > 0L) { "The destination received zero bytes." }
-
+                require(written == result.file.length()) { "Only $written bytes were written." }
                 lastExportUri = destination
-                pendingEncodedFile = null
-                encoded.delete()
+                status = "Saved ${formatBytes(written)} · measured ${result.actualTotalKbps} kbps total."
+                stage = "Done"
                 progress = 1f
-                status = "Saved ${formatBytes(written)}. Open it manually from the Player tab."
+                result.file.delete()
+                pendingResult = null
             } catch (t: Throwable) {
-                status = "Save failed: ${t.message ?: t::class.java.simpleName}. The encoded cache file is still available to retry."
+                status = "Save failed: ${t.message}. The encoded cache file is still available."
             } finally {
                 running = false
             }
@@ -151,34 +134,44 @@ fun SharpLayerApp() {
     }
 
     val playerPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        playerUri = uri
+        if (uri != null) playerSource = uri
     }
 
     LaunchedEffect(saveRequestToken) {
-        if (saveRequestToken > 0 && pendingEncodedFile != null) {
-            savePicker.launch("SharpLayer-${targetHeight}p-${videoBitrateKbps}kbps.mp4")
+        val result = pendingResult
+        if (saveRequestToken > 0 && result != null) {
+            savePicker.launch(
+                "SharpLayer-OptionD-${targetHeight}p-${result.actualTotalKbps}kbps.mp4"
+            )
         }
     }
 
-    LaunchedEffect(running, transformer) {
-        val active = transformer ?: return@LaunchedEffect
-        if (!running) return@LaunchedEffect
-        val holder = ProgressHolder()
-        while (true) {
-            val state = active.getProgress(holder)
-            if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
-                progress = (holder.progress.coerceIn(0, 100) / 100f) * 0.88f
-                status = "Encoding H.264/AAC… ${holder.progress}%"
+    LaunchedEffect(playerSource) {
+        val uri = playerSource ?: return@LaunchedEffect
+        playerStatus = "Inspecting and preparing video…"
+        val old = preparedMedia
+        preparedMedia = null
+        old?.close()
+        try {
+            val prepared = StructureCodec.prepareForPlayback(context, uri)
+            preparedMedia = prepared
+            playerStatus = if (prepared.sequence != null) {
+                val metadata = prepared.metadata
+                "Option D structure layer · ${prepared.sequence.fps} Hz · " +
+                    "${metadata?.optInt("actualTotalKbps", 0)?.takeIf { it > 0 }?.let { "$it kbps" } ?: "layered file"}"
+            } else {
+                "Normal MP4 · no SharpLayer structure stream"
             }
-            delay(250)
+        } catch (t: Throwable) {
+            playerStatus = "Could not open video: ${t.message}"
         }
     }
 
     DisposableEffect(Unit) {
         onDispose {
-            transformer?.cancel()
-            activeTemp?.delete()
-            pendingEncodedFile?.delete()
+            engine.cancel()
+            pendingResult?.file?.delete()
+            preparedMedia?.close()
         }
     }
 
@@ -187,9 +180,9 @@ fun SharpLayerApp() {
             if (!isFullscreenPlayer) {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp)) {
-                        Text("SharpLayer", style = MaterialTheme.typography.headlineMedium)
+                        Text("SharpLayer Option D", style = MaterialTheme.typography.headlineMedium)
                         Text(
-                            "Hardware compression and separate playback",
+                            "Depth + segmentation + 10 Hz structural deltas",
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -220,104 +213,77 @@ fun SharpLayerApp() {
                 modifier = Modifier.padding(padding),
                 source = source,
                 targetHeight = targetHeight,
-                videoBitrateKbps = videoBitrateKbps,
+                totalBitrateKbps = totalBitrateKbps,
                 status = status,
+                stage = stage,
                 progress = progress,
                 running = running,
-                pendingEncodedFile = pendingEncodedFile,
+                pendingResult = pendingResult,
                 onPickSource = { sourcePicker.launch(arrayOf("video/*")) },
                 onHeightChanged = { targetHeight = it },
-                onBitrateChanged = { videoBitrateKbps = it },
+                onBitrateChanged = { totalBitrateKbps = it },
                 onSaveAgain = { saveRequestToken += 1 },
                 onCancel = {
-                    transformer?.cancel()
-                    transformer = null
-                    activeTemp?.delete()
-                    activeTemp = null
+                    engine.cancel()
                     running = false
                     progress = 0f
-                    status = "Cancelled."
+                    stage = "Cancelled"
+                    status = "Export cancelled."
                 },
                 onStart = {
                     val input = source ?: return@ExportPage
-                    transformer?.cancel()
-                    activeTemp?.delete()
-                    pendingEncodedFile?.delete()
-                    pendingEncodedFile = null
-
-                    val temp = File(context.cacheDir, "sharplayer-${System.currentTimeMillis()}.mp4")
-                    if (temp.exists()) temp.delete()
-                    activeTemp = temp
+                    pendingResult?.file?.delete()
+                    pendingResult = null
                     running = true
-                    progress = 0.01f
-                    status = "Starting hardware encoder at ${targetHeight}p / ${videoBitrateKbps} kbps…"
-
-                    val videoSettings = VideoEncoderSettings.Builder()
-                        .setBitrate(videoBitrateKbps * 1_000)
-                        .build()
-                    val audioSettings = AudioEncoderSettings.Builder()
-                        .setBitrate(64_000)
-                        .build()
-                    val encoderFactory = DefaultEncoderFactory.Builder(context)
-                        .setRequestedVideoEncoderSettings(videoSettings)
-                        .setRequestedAudioEncoderSettings(audioSettings)
-                        .build()
-
-                    val videoEffects: List<Effect> = listOf(Presentation.createForHeight(targetHeight))
-                    val effects = Effects(emptyList(), videoEffects)
-                    val edited = EditedMediaItem.Builder(MediaItem.fromUri(input))
-                        .setEffects(effects)
-                        .build()
-
-                    val built = Transformer.Builder(context)
-                        .setVideoMimeType(MimeTypes.VIDEO_H264)
-                        .setAudioMimeType(MimeTypes.AUDIO_AAC)
-                        .setEncoderFactory(encoderFactory)
-                        .addListener(object : Transformer.Listener {
-                            override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-                                transformer = null
-                                running = false
-                                activeTemp = null
-
-                                if (!temp.exists() || temp.length() <= 0L) {
-                                    temp.delete()
-                                    progress = 0f
-                                    status = "Encoding failed: Media3 reported completion but produced an empty file."
-                                    return
+                    progress = 0f
+                    stage = "Starting"
+                    status = "Preparing Option D export…"
+                    scope.launch {
+                        try {
+                            val result = engine.export(
+                                source = input,
+                                settings = OptionDExportEngine.Settings(
+                                    totalBitrateKbps = totalBitrateKbps,
+                                    outputHeight = targetHeight
+                                ),
+                                onUpdate = { update ->
+                                    scope.launch(Dispatchers.Main) {
+                                        progress = update.progress.coerceIn(0f, 1f)
+                                        stage = update.stage
+                                        status = update.detail
+                                    }
                                 }
-
-                                pendingEncodedFile = temp
-                                progress = 0.92f
-                                status = "Encoded ${formatBytes(temp.length())}. Choose where to save it."
-                                saveRequestToken += 1
+                            )
+                            pendingResult = result
+                            progress = 1f
+                            stage = "Encoded"
+                            status =
+                                "Measured ${result.actualTotalKbps} kbps total · " +
+                                    "video ${result.requestedVideoKbps} · structure ${result.structureKbps} · audio ${result.audioKbps}."
+                            saveRequestToken += 1
+                        } catch (t: Throwable) {
+                            if (t is kotlinx.coroutines.CancellationException) {
+                                status = "Export cancelled."
+                                stage = "Cancelled"
+                            } else {
+                                status = "Export failed: ${t.message ?: t::class.java.simpleName}"
+                                stage = "Failed"
                             }
-
-                            override fun onError(
-                                composition: Composition,
-                                exportResult: ExportResult,
-                                exportException: ExportException
-                            ) {
-                                transformer = null
-                                running = false
-                                activeTemp = null
-                                temp.delete()
-                                progress = 0f
-                                status = "Export failed: ${exportException.message ?: exportException.errorCodeName}"
-                            }
-                        })
-                        .build()
-
-                    transformer = built
-                    built.start(edited, temp.absolutePath)
+                            progress = 0f
+                        } finally {
+                            running = false
+                        }
+                    }
                 }
             )
 
             Screen.PLAYER -> PlayerPage(
                 modifier = if (isFullscreenPlayer) Modifier.fillMaxSize() else Modifier.padding(padding),
-                uri = playerUri,
+                prepared = preparedMedia,
+                status = playerStatus,
                 lastExportUri = lastExportUri,
                 fullscreen = isFullscreenPlayer,
-                onUseLastExport = { playerUri = lastExportUri },
+                onUseLastExport = { playerSource = lastExportUri },
                 onPick = { playerPicker.launch(arrayOf("video/mp4", "video/*")) },
                 onEnterFullscreen = {
                     activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -335,11 +301,12 @@ private fun ExportPage(
     modifier: Modifier,
     source: Uri?,
     targetHeight: Int,
-    videoBitrateKbps: Int,
+    totalBitrateKbps: Int,
     status: String,
+    stage: String,
     progress: Float,
     running: Boolean,
-    pendingEncodedFile: File?,
+    pendingResult: OptionDExportEngine.Result?,
     onPickSource: () -> Unit,
     onHeightChanged: (Int) -> Unit,
     onBitrateChanged: (Int) -> Unit,
@@ -361,7 +328,7 @@ private fun ExportPage(
 
         Card {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Real compression settings", style = MaterialTheme.typography.titleMedium)
+                Text("Strict total-file target", style = MaterialTheme.typography.titleMedium)
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Output height")
@@ -378,20 +345,22 @@ private fun ExportPage(
                 )
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Video bitrate")
-                    Text("$videoBitrateKbps kbps", color = MaterialTheme.colorScheme.primary)
+                    Text("Total output bitrate")
+                    Text("$totalBitrateKbps kbps", color = MaterialTheme.colorScheme.primary)
                 }
                 Slider(
-                    value = videoBitrateKbps.toFloat(),
+                    value = totalBitrateKbps.toFloat(),
                     onValueChange = {
-                        onBitrateChanged(((it / 50f).roundToInt() * 50).coerceIn(300, 4_000))
+                        onBitrateChanged(((it / 10f).roundToInt() * 10).coerceIn(120, 2_000))
                     },
-                    valueRange = 300f..4_000f,
-                    steps = 73,
+                    valueRange = 120f..2_000f,
+                    steps = 187,
                     enabled = !running
                 )
+
                 Text(
-                    "Audio is re-encoded to AAC at 64 kbps. Scaling and an explicit encoder bitrate force a real transcode instead of copying the input stream.",
+                    "This is the measured target for the complete file, not merely a request to the encoder. " +
+                        "H.264 uses CBR; oversized results are automatically retried at a lower video rate.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -399,8 +368,22 @@ private fun ExportPage(
         }
 
         Card {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text("Option D structure layer", style = MaterialTheme.typography.titleMedium)
+                Text("• MiDaS monocular depth", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("• DeepLab-v3 semantic regions", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("• Faithful gradient lineart + depth/normal edges", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("• 10 updates/sec, 1-second keyframes, relative changes between them", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        Card {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(stage)
+                    Text("${(progress * 100).roundToInt()}%")
+                }
                 Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -408,8 +391,7 @@ private fun ExportPage(
                         enabled = source != null && !running,
                         onClick = onStart,
                         modifier = Modifier.weight(1f)
-                    ) { Text("Encode and export") }
-
+                    ) { Text("Encode Option D") }
                     OutlinedButton(
                         enabled = running,
                         onClick = onCancel,
@@ -417,24 +399,165 @@ private fun ExportPage(
                     ) { Text("Cancel") }
                 }
 
-                if (pendingEncodedFile != null && !running) {
+                if (pendingResult != null && !running) {
                     OutlinedButton(onClick = onSaveAgain, modifier = Modifier.fillMaxWidth()) {
-                        Text("Save encoded file")
+                        Text("Save encoded file again")
                     }
                 }
             }
         }
 
         Text(
-            "Export and playback are intentionally separate. Finishing an export no longer opens or auto-plays anything.",
+            "The MP4 remains playable in ordinary players as the H.264 fallback. SharpLayer reads the appended structure stream and overlays it during playback.",
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
 
+@Composable
+private fun PlayerPage(
+    modifier: Modifier,
+    prepared: StructureCodec.PreparedMedia?,
+    status: String,
+    lastExportUri: Uri?,
+    fullscreen: Boolean,
+    onUseLastExport: () -> Unit,
+    onPick: () -> Unit,
+    onEnterFullscreen: () -> Unit,
+    onExitFullscreen: () -> Unit
+) {
+    val context = LocalContext.current
+    var player by remember { mutableStateOf<ExoPlayer?>(null) }
+    var structureEnabled by remember { mutableStateOf(true) }
+    var opacity by remember { mutableFloatStateOf(0.72f) }
+
+    LaunchedEffect(prepared?.baseFile?.absolutePath) {
+        player?.release()
+        player = prepared?.let {
+            ExoPlayer.Builder(context).build().apply {
+                setMediaItem(MediaItem.fromUri(Uri.fromFile(it.baseFile)))
+                prepare()
+                playWhenReady = false
+            }
+        }
+    }
+    DisposableEffect(Unit) { onDispose { player?.release() } }
+
+    if (fullscreen) {
+        Box(modifier.background(Color.Black)) {
+            PlayerSurface(
+                player = player,
+                sequence = if (structureEnabled) prepared?.sequence else null,
+                opacity = opacity,
+                modifier = Modifier.fillMaxSize(),
+                rounded = false
+            )
+            FilledTonalButton(
+                onClick = onExitFullscreen,
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+            ) { Text("Exit fullscreen") }
+        }
+        return
+    }
+
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = onPick, modifier = Modifier.weight(1f)) { Text("Open video") }
+            OutlinedButton(
+                onClick = onUseLastExport,
+                enabled = lastExportUri != null,
+                modifier = Modifier.weight(1f)
+            ) { Text("Load last export") }
+        }
+
+        PlayerSurface(
+            player = player,
+            sequence = if (structureEnabled) prepared?.sequence else null,
+            opacity = opacity,
+            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+            rounded = true
+        )
+
+        if (prepared?.sequence != null) {
+            Card {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(checked = structureEnabled, onCheckedChange = { structureEnabled = it })
+                        Spacer(Modifier.width(10.dp))
+                        Text("Option D reconstruction overlay")
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Line strength")
+                        Text("${(opacity * 100).roundToInt()}%", color = MaterialTheme.colorScheme.primary)
+                    }
+                    Slider(value = opacity, onValueChange = { opacity = it }, valueRange = 0.15f..1f)
+                }
+            }
+        }
+
+        Button(
+            onClick = onEnterFullscreen,
+            enabled = player != null,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Fullscreen landscape") }
+
+        Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Rotating sideways on the Player tab enters immersive fullscreen automatically.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+@Composable
+private fun PlayerSurface(
+    player: ExoPlayer?,
+    sequence: StructureCodec.Sequence?,
+    opacity: Float,
+    modifier: Modifier,
+    rounded: Boolean
+) {
+    Surface(
+        modifier = modifier,
+        color = Color.Black,
+        shape = if (rounded) RoundedCornerShape(16.dp) else RoundedCornerShape(0.dp)
+    ) {
+        if (player == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No video loaded", color = Color.Gray)
+            }
+        } else {
+            Box(Modifier.fillMaxSize()) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            useController = true
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            this.player = player
+                        }
+                    },
+                    update = { it.player = player }
+                )
+                if (sequence != null) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx -> StructureOverlayView(ctx) },
+                        update = { overlay ->
+                            overlay.bind(player, sequence)
+                            overlay.setLineOpacity(opacity)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
 private fun writeFileToUri(context: Context, source: File, destination: Uri): Long {
     require(source.exists() && source.length() > 0L) { "Encoded source is empty." }
-
     val descriptor = try {
         context.contentResolver.openFileDescriptor(destination, "rwt")
     } catch (_: Throwable) {
@@ -451,10 +574,6 @@ private fun writeFileToUri(context: Context, source: File, destination: Uri): Lo
             runCatching { output.fd.sync() }
         }
     }
-
-    require(copied == source.length()) {
-        "Only $copied of ${source.length()} bytes were written."
-    }
     return copied
 }
 
@@ -465,109 +584,6 @@ private fun formatBytes(bytes: Long): String {
     val mb = kb / 1024.0
     if (mb < 1024.0) return "%.2f MB".format(mb)
     return "%.2f GB".format(mb / 1024.0)
-}
-
-@Composable
-private fun PlayerPage(
-    modifier: Modifier,
-    uri: Uri?,
-    lastExportUri: Uri?,
-    fullscreen: Boolean,
-    onUseLastExport: () -> Unit,
-    onPick: () -> Unit,
-    onEnterFullscreen: () -> Unit,
-    onExitFullscreen: () -> Unit
-) {
-    val context = LocalContext.current
-    var player by remember { mutableStateOf<ExoPlayer?>(null) }
-
-    LaunchedEffect(uri) {
-        player?.release()
-        player = uri?.let {
-            ExoPlayer.Builder(context).build().apply {
-                setMediaItem(MediaItem.fromUri(it))
-                prepare()
-                playWhenReady = false
-            }
-        }
-    }
-    DisposableEffect(Unit) { onDispose { player?.release() } }
-
-    if (fullscreen) {
-        Box(modifier.background(Color.Black)) {
-            PlayerSurface(player = player, modifier = Modifier.fillMaxSize(), rounded = false)
-            FilledTonalButton(
-                onClick = onExitFullscreen,
-                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Text("Exit fullscreen")
-            }
-        }
-        return
-    }
-
-    Column(modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = onPick, modifier = Modifier.weight(1f)) { Text("Open video") }
-            OutlinedButton(
-                onClick = onUseLastExport,
-                enabled = lastExportUri != null,
-                modifier = Modifier.weight(1f)
-            ) { Text("Load last export") }
-        }
-
-        PlayerSurface(
-            player = player,
-            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-            rounded = true
-        )
-
-        Button(
-            onClick = onEnterFullscreen,
-            enabled = player != null,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Fullscreen landscape")
-        }
-
-        Text(
-            uri?.lastPathSegment ?: "The player stays empty until you explicitly open a file.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            "Rotating the phone sideways while this tab is open also enters fullscreen automatically.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall
-        )
-    }
-}
-
-@Composable
-private fun PlayerSurface(player: ExoPlayer?, modifier: Modifier, rounded: Boolean) {
-    Surface(
-        modifier = modifier,
-        color = Color.Black,
-        shape = if (rounded) RoundedCornerShape(16.dp) else RoundedCornerShape(0.dp)
-    ) {
-        if (player == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No video loaded", color = Color.Gray)
-            }
-        } else {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = true
-                        resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        this.player = player
-                    }
-                },
-                update = { it.player = player }
-            )
-        }
-    }
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
