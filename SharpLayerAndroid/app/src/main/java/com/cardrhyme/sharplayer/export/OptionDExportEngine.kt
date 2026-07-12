@@ -374,7 +374,6 @@ class OptionDExportEngine(private val context: Context) {
 
             val encoderFactory = DefaultEncoderFactory.Builder(context)
                 .setEnableFallback(true)
-                .setEnableFormatFallback(true)
                 .setRequestedVideoEncoderSettings(videoSettings)
                 .setRequestedAudioEncoderSettings(audioSettings)
                 .build()
