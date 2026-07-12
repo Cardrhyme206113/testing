@@ -58,6 +58,12 @@ class OptionDExportEngine(private val context: Context) {
         val metadata: JSONObject,
     )
 
+    private data class EncoderPlan(
+        val label: String,
+        val frameRate: Int,
+        val bitrateMode: Int?,
+    )
+
     @Volatile
     private var cancelled = false
 
@@ -78,25 +84,6 @@ class OptionDExportEngine(private val context: Context) {
         cancelled = false
         val target = settings.totalBitrateKbps.coerceIn(120, 4_000)
         val structureBudget = (target * 0.14f).roundToInt().coerceIn(10, 84)
-
-        onUpdate(
-            Update(
-                0.01f,
-                "Fast structure analysis",
-                "5 Hz deltas · 1 Hz depth · 0.5 Hz segmentation · GPU preferred",
-            )
-        )
-        val analysis = FastStructureAnalyzer.analyze(
-            context = context,
-            source = source,
-            structureBudgetKbps = structureBudget,
-            onProgress = { p, detail ->
-                onUpdate(Update(0.02f + p * 0.40f, "Fast structure analysis", detail))
-            },
-            isCancelled = { cancelled },
-        )
-        ensureNotCancelled()
-
         val audioKbps = when {
             target <= 220 -> 16
             target <= 450 -> 24
@@ -104,16 +91,48 @@ class OptionDExportEngine(private val context: Context) {
             else -> 48
         }
         val containerReserve = max(6, (target * 0.025f).roundToInt())
-        var requestedVideoKbps = target - audioKbps - analysis.bitrateKbps - containerReserve
-        require(requestedVideoKbps >= 40) {
-            "The ${target} kbps target is below the ${analysis.bitrateKbps} kbps structure layer plus audio overhead."
-        }
+        val probeVideoKbps = (target - audioKbps - structureBudget - containerReserve).coerceAtLeast(40)
 
         val session = System.currentTimeMillis()
         val workDir = File(context.cacheDir, "sharp-option-d-$session").apply { mkdirs() }
-        var lastMeasured = Int.MAX_VALUE
-        var attempt = 0
+
         try {
+            // Check the phone's real MediaCodec behavior before running any models.
+            val encoderPlan = preflightEncoder(
+                source = source,
+                workDir = workDir,
+                height = settings.outputHeight,
+                videoBitrate = probeVideoKbps * 1_000,
+                audioBitrate = audioKbps * 1_000,
+                onUpdate = onUpdate,
+            )
+            ensureNotCancelled()
+
+            onUpdate(
+                Update(
+                    0.035f,
+                    "Fast structure analysis",
+                    "Encoder passed (${encoderPlan.frameRate} fps ${encoderPlan.label}); starting models",
+                )
+            )
+            val analysis = FastStructureAnalyzer.analyze(
+                context = context,
+                source = source,
+                structureBudgetKbps = structureBudget,
+                onProgress = { p, detail ->
+                    onUpdate(Update(0.04f + p * 0.38f, "Fast structure analysis", detail))
+                },
+                isCancelled = { cancelled },
+            )
+            ensureNotCancelled()
+
+            var requestedVideoKbps = target - audioKbps - analysis.bitrateKbps - containerReserve
+            require(requestedVideoKbps >= 40) {
+                "The $target kbps target is below the ${analysis.bitrateKbps} kbps structure layer plus audio overhead."
+            }
+
+            var lastMeasured = Int.MAX_VALUE
+            var attempt = 0
             while (attempt < 4) {
                 ensureNotCancelled()
                 attempt++
@@ -125,8 +144,9 @@ class OptionDExportEngine(private val context: Context) {
                 onUpdate(
                     Update(
                         0.43f,
-                        "Forced CBR encode",
-                        "Attempt $attempt · ${settings.outputHeight}p H.264 at $requestedVideoKbps kbps",
+                        "Low-bitrate encode",
+                        "Attempt $attempt · ${settings.outputHeight}p · ${encoderPlan.frameRate} fps · " +
+                            "${encoderPlan.label} · $requestedVideoKbps kbps video",
                     )
                 )
                 transcodeBase(
@@ -135,15 +155,20 @@ class OptionDExportEngine(private val context: Context) {
                     height = settings.outputHeight,
                     videoBitrate = requestedVideoKbps * 1_000,
                     audioBitrate = audioKbps * 1_000,
+                    plan = encoderPlan,
                     attempt = attempt,
+                    clipEndMs = null,
+                    reportProgress = true,
                     onUpdate = onUpdate,
                 )
                 ensureNotCancelled()
-                require(base.exists() && base.length() > 0L) { "The hardware encoder produced an empty base MP4." }
+                require(base.exists() && base.length() > 0L) {
+                    "The hardware encoder produced an empty base MP4."
+                }
 
                 val metadata = JSONObject()
                     .put("format", "SharpLayer Option D Fast")
-                    .put("version", 3)
+                    .put("version", 4)
                     .put("updateFps", analysis.sequence.fps)
                     .put("depthRefreshFps", FastStructureAnalyzer.DEPTH_REFRESH_FPS.toDouble())
                     .put("segmentationRefreshFps", FastStructureAnalyzer.SEGMENTATION_REFRESH_FPS.toDouble())
@@ -157,6 +182,8 @@ class OptionDExportEngine(private val context: Context) {
                     .put("audioKbps", audioKbps)
                     .put("structureKbps", analysis.bitrateKbps)
                     .put("outputHeight", settings.outputHeight)
+                    .put("outputFrameRate", encoderPlan.frameRate)
+                    .put("encoderMode", encoderPlan.label)
                     .put("analysisWidth", analysis.sequence.width)
                     .put("analysisHeight", analysis.sequence.height)
                     .put("activePixelPercent", analysis.activePixelPercent.toDouble())
@@ -164,11 +191,18 @@ class OptionDExportEngine(private val context: Context) {
                     .put("attempts", attempt)
 
                 val durationSeconds = analysis.sequence.durationMs.coerceAtLeast(1L) / 1_000.0
-                val estimatedBytes = base.length() + analysis.encoded.size + metadata.toString().toByteArray().size + 64L
+                val estimatedBytes =
+                    base.length() + analysis.encoded.size + metadata.toString().toByteArray().size + 64L
                 val estimatedKbps = ceil(estimatedBytes * 8.0 / durationSeconds / 1_000.0).toInt()
                 metadata.put("actualTotalKbps", estimatedKbps)
 
-                onUpdate(Update(0.88f, "Packing", "Appending the 5 Hz relative structure stream"))
+                onUpdate(
+                    Update(
+                        0.88f,
+                        "Packing",
+                        "Appending the ${analysis.sequence.fps} Hz relative structure stream",
+                    )
+                )
                 withContext(Dispatchers.IO) {
                     StructureCodec.pack(base, analysis.encoded, packed, metadata) { percent ->
                         onUpdate(Update(0.88f + percent / 100f * 0.06f, "Packing", "$percent%"))
@@ -195,7 +229,8 @@ class OptionDExportEngine(private val context: Context) {
                         Update(
                             1f,
                             "Done",
-                            "Measured $measured kbps total · structure ${analysis.bitrateKbps} kbps · $attempt attempt(s)",
+                            "Measured $measured kbps total · ${encoderPlan.frameRate} fps · " +
+                                "structure ${analysis.bitrateKbps} kbps · $attempt attempt(s)",
                         )
                     )
                     return Result(
@@ -222,6 +257,7 @@ class OptionDExportEngine(private val context: Context) {
                 )
                 requestedVideoKbps = next
             }
+
             error(
                 "This device's encoder would not stay under the forced $target kbps ceiling " +
                     "(last measured $lastMeasured kbps). No misleading export was saved."
@@ -232,33 +268,134 @@ class OptionDExportEngine(private val context: Context) {
         }
     }
 
+    private suspend fun preflightEncoder(
+        source: Uri,
+        workDir: File,
+        height: Int,
+        videoBitrate: Int,
+        audioBitrate: Int,
+        onUpdate: (Update) -> Unit,
+    ): EncoderPlan {
+        val candidates = listOf(
+            EncoderPlan(
+                label = "CBR",
+                frameRate = 30,
+                bitrateMode = MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR,
+            ),
+            EncoderPlan(
+                label = "VBR",
+                frameRate = 30,
+                bitrateMode = MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
+            ),
+            EncoderPlan(
+                label = "device default",
+                frameRate = 30,
+                bitrateMode = null,
+            ),
+            EncoderPlan(
+                label = "VBR compatibility",
+                frameRate = 24,
+                bitrateMode = MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
+            ),
+        )
+
+        var lastFailure: Throwable? = null
+        for ((index, candidate) in candidates.withIndex()) {
+            ensureNotCancelled()
+            val probe = File(workDir, "encoder-probe-$index.mp4")
+            probe.delete()
+            onUpdate(
+                Update(
+                    0.005f + index * 0.006f,
+                    "Encoder preflight",
+                    "Testing ${candidate.frameRate} fps ${candidate.label} before neural analysis…",
+                )
+            )
+            try {
+                transcodeBase(
+                    source = source,
+                    output = probe,
+                    height = height,
+                    videoBitrate = videoBitrate,
+                    audioBitrate = audioBitrate,
+                    plan = candidate,
+                    attempt = 0,
+                    clipEndMs = 700L,
+                    reportProgress = false,
+                    onUpdate = onUpdate,
+                )
+                if (probe.exists() && probe.length() > 0L) {
+                    probe.delete()
+                    onUpdate(
+                        Update(
+                            0.03f,
+                            "Encoder preflight",
+                            "Passed: ${candidate.frameRate} fps ${candidate.label}",
+                        )
+                    )
+                    return candidate
+                }
+            } catch (t: Throwable) {
+                lastFailure = t
+            } finally {
+                probe.delete()
+            }
+        }
+
+        throw IllegalStateException(
+            "This phone rejected every tested low-bitrate H.264 configuration " +
+                "(30 fps CBR, 30 fps VBR, device-default, and 24 fps VBR). " +
+                "The check stopped before depth/segmentation analysis.",
+            lastFailure,
+        )
+    }
+
     private suspend fun transcodeBase(
         source: Uri,
         output: File,
         height: Int,
         videoBitrate: Int,
         audioBitrate: Int,
+        plan: EncoderPlan,
         attempt: Int,
+        clipEndMs: Long?,
+        reportProgress: Boolean,
         onUpdate: (Update) -> Unit,
     ) = withContext(Dispatchers.Main) {
         suspendCancellableCoroutine<Unit> { continuation ->
-            val videoSettings = VideoEncoderSettings.Builder()
+            val videoSettingsBuilder = VideoEncoderSettings.Builder()
                 .setBitrate(videoBitrate)
-                .setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
-                .build()
+            plan.bitrateMode?.let { videoSettingsBuilder.setBitrateMode(it) }
+            val videoSettings = videoSettingsBuilder.build()
+
             val audioSettings = AudioEncoderSettings.Builder()
                 .setBitrate(audioBitrate)
                 .build()
+
             val encoderFactory = DefaultEncoderFactory.Builder(context)
+                .setEnableFallback(true)
+                .setEnableFormatFallback(true)
                 .setRequestedVideoEncoderSettings(videoSettings)
                 .setRequestedAudioEncoderSettings(audioSettings)
                 .build()
+
             val effects = Effects(
                 emptyList(),
                 listOf<Effect>(Presentation.createForHeight(height)),
             )
-            val edited = EditedMediaItem.Builder(MediaItem.fromUri(source))
+
+            val mediaItemBuilder = MediaItem.Builder().setUri(source)
+            if (clipEndMs != null) {
+                mediaItemBuilder.setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setEndPositionMs(clipEndMs)
+                        .build()
+                )
+            }
+
+            val edited = EditedMediaItem.Builder(mediaItemBuilder.build())
                 .setEffects(effects)
+                .setFrameRate(plan.frameRate)
                 .build()
 
             val handler = Handler(Looper.getMainLooper())
@@ -291,16 +428,18 @@ class OptionDExportEngine(private val context: Context) {
             poll = object : Runnable {
                 override fun run() {
                     if (!continuation.isActive) return
-                    val state = transformer.getProgress(holder)
-                    if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
-                        val progress = holder.progress.coerceIn(0, 100)
-                        onUpdate(
-                            Update(
-                                0.43f + progress / 100f * 0.43f,
-                                "Forced CBR encode",
-                                "Attempt $attempt · $progress%",
+                    if (reportProgress) {
+                        val state = transformer.getProgress(holder)
+                        if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
+                            val encodeProgress = holder.progress.coerceIn(0, 100)
+                            onUpdate(
+                                Update(
+                                    0.43f + encodeProgress / 100f * 0.43f,
+                                    "Low-bitrate encode",
+                                    "Attempt $attempt · $encodeProgress% · ${plan.frameRate} fps ${plan.label}",
+                                )
                             )
-                        )
+                        }
                     }
                     handler.postDelayed(this, 250L)
                 }
@@ -311,7 +450,9 @@ class OptionDExportEngine(private val context: Context) {
                 transformer.cancel()
                 activeTransformer = null
             }
+
             try {
+                output.delete()
                 transformer.start(edited, output.absolutePath)
                 handler.post(poll)
             } catch (t: Throwable) {
