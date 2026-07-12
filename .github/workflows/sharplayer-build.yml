@@ -4,12 +4,12 @@ on:
   push:
     branches: [sharplayer-android]
     paths:
-      - 'sharplayer-ci/**'
+      - 'SharpLayerAndroid/**'
       - '.github/workflows/sharplayer-build.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'sharplayer-ci/**'
+      - 'SharpLayerAndroid/**'
       - '.github/workflows/sharplayer-build.yml'
   workflow_dispatch:
 
@@ -41,15 +41,14 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Restore project source
+      - name: Verify project
         run: |
-          mkdir -p .ci-build
-          base64 --decode sharplayer-ci/SharpLayerAndroid-v0.1.zip.b64 > .ci-build/project.zip
-          unzip -q .ci-build/project.zip -d .ci-build
-          ls -la .ci-build/SharpLayerAndroid
+          test -f SharpLayerAndroid/settings.gradle.kts
+          test -f SharpLayerAndroid/app/build.gradle.kts
+          find SharpLayerAndroid -maxdepth 4 -type f | sort
 
       - name: Build debug APK
-        working-directory: .ci-build/SharpLayerAndroid
+        working-directory: SharpLayerAndroid
         run: gradle --stacktrace --no-daemon assembleDebug
 
       - name: Upload APK
@@ -57,6 +56,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SharpLayer-debug-apk
-          path: .ci-build/SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
+          path: SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
           retention-days: 30
