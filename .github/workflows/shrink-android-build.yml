@@ -6,6 +6,11 @@ on:
     paths:
       - 'ShrinkAndroid/**'
       - '.github/workflows/shrink-android-build.yml'
+  pull_request:
+    branches: [sharplayer-android]
+    paths:
+      - 'ShrinkAndroid/**'
+      - '.github/workflows/shrink-android-build.yml'
   workflow_dispatch:
 
 permissions:
