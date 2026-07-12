@@ -24,7 +24,7 @@ import kotlin.math.min
 class FastVisionModels(context: Context) : Closeable {
     private val appContext = context.applicationContext
 
-    private data class Runtime(
+    private data class ModelRuntime(
         val interpreter: Interpreter,
         val delegate: GpuDelegate?,
         val label: String,
@@ -166,7 +166,7 @@ class FastVisionModels(context: Context) : Closeable {
         segmentation.delegate?.close()
     }
 
-    private fun createRuntime(assetName: String, modelName: String): Runtime {
+    private fun createRuntime(assetName: String, modelName: String): ModelRuntime {
         val model = loadModel(assetName)
         var delegate: GpuDelegate? = null
         return try {
@@ -174,13 +174,13 @@ class FastVisionModels(context: Context) : Closeable {
             val options = Interpreter.Options()
                 .addDelegate(delegate)
                 .setNumThreads(2)
-            Runtime(Interpreter(model, options), delegate, "$modelName GPU")
+            ModelRuntime(Interpreter(model, options), delegate, "$modelName GPU")
         } catch (_: Throwable) {
             runCatching { delegate?.close() }
             val options = Interpreter.Options().setNumThreads(
-                Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+                java.lang.Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
             )
-            Runtime(Interpreter(model, options), null, "$modelName CPU")
+            ModelRuntime(Interpreter(model, options), null, "$modelName CPU")
         }
     }
 
