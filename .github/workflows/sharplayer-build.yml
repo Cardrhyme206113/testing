@@ -6,6 +6,11 @@ on:
     paths:
       - 'sharplayer-ci/**'
       - '.github/workflows/sharplayer-build.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'sharplayer-ci/**'
+      - '.github/workflows/sharplayer-build.yml'
   workflow_dispatch:
 
 permissions:
