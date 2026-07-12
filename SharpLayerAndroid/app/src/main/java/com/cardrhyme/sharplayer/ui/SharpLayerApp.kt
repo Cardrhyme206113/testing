@@ -20,6 +20,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
@@ -60,7 +61,7 @@ fun SharpLayerApp() {
     Scaffold(
         topBar = {
             Surface(color = MaterialTheme.colorScheme.background) {
-                Column(Modifier.statusBarsPadding().padding(16.dp, 10.dp)) {
+                Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp)) {
                     Text("SharpLayer", style = MaterialTheme.typography.headlineMedium)
                     Text("Hardware video export and playback", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -68,8 +69,18 @@ fun SharpLayerApp() {
         },
         bottomBar = {
             NavigationBar {
-                NavigationBarItem(screen == Screen.EXPORT, { screen = Screen.EXPORT }, { Text("⇩") }, label = { Text("Export") })
-                NavigationBarItem(screen == Screen.PLAYER, { screen = Screen.PLAYER }, { Text("▶") }, label = { Text("Player") })
+                NavigationBarItem(
+                    selected = screen == Screen.EXPORT,
+                    onClick = { screen = Screen.EXPORT },
+                    icon = { Text("⇩") },
+                    label = { Text("Export") }
+                )
+                NavigationBarItem(
+                    selected = screen == Screen.PLAYER,
+                    onClick = { screen = Screen.PLAYER },
+                    icon = { Text("▶") },
+                    label = { Text("Player") }
+                )
             }
         }
     ) { padding ->
@@ -113,7 +124,7 @@ fun SharpLayerApp() {
                                                         status = "Writing final MP4…"
                                                         withContext(Dispatchers.IO) {
                                                             context.contentResolver.openOutputStream(destination, "w")!!.use { out ->
-                                                                temp.inputStream().use { it.copyTo(out) }
+                                                                temp.inputStream().use { inputStream -> inputStream.copyTo(out) }
                                                             }
                                                             temp.delete()
                                                         }
@@ -128,7 +139,11 @@ fun SharpLayerApp() {
                                                 }
                                             }
 
-                                            override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
+                                            override fun onError(
+                                                composition: Composition,
+                                                exportResult: ExportResult,
+                                                exportException: ExportException
+                                            ) {
                                                 status = "Export failed: ${exportException.message}"
                                                 running = false
                                                 temp.delete()
@@ -136,7 +151,8 @@ fun SharpLayerApp() {
                                         })
                                         .build()
                                     transformer = built
-                                    built.start(MediaItem.fromUri(input), temp.absolutePath)
+                                    val edited = EditedMediaItem.Builder(MediaItem.fromUri(input)).build()
+                                    built.start(edited, temp.absolutePath)
                                     progress = 0.2f
                                     status = "Encoding H.264/AAC with MediaCodec…"
                                 },
@@ -155,7 +171,7 @@ fun SharpLayerApp() {
                     }
                 }
                 Text(
-                    "This first native build proves hardware transcoding, file export, and playback without FFmpeg. The custom dual-layer residual format comes next.",
+                    "This native baseline proves hardware transcoding, file export, and playback without FFmpeg. The dual-layer residual format is the next stage.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -187,7 +203,11 @@ private fun PlayerPage(modifier: Modifier, uri: Uri?, onPick: () -> Unit) {
 
     Column(modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Button(onClick = onPick, modifier = Modifier.fillMaxWidth()) { Text("Open video") }
-        Surface(Modifier.fillMaxWidth().aspectRatio(16f / 9f), color = Color.Black, shape = MaterialTheme.shapes.large) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+            color = Color.Black,
+            shape = MaterialTheme.shapes.large
+        ) {
             val active = player
             if (active == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No video loaded", color = Color.Gray) }
