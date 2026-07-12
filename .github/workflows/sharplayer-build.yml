@@ -64,7 +64,7 @@ jobs:
           libs='SharpLayerAndroid/app/libs'
           mkdir -p "$libs"
           curl -L --fail --retry 4 --retry-delay 2 \
-            'https://github.com/sk3llo/ffmpeg_kit_flutter/releases/download/7.0/ffmpeg-kit-full-gpl-7.0.aar' \
+            'https://github.com/NooruddinLakhani/ffmpeg-kit-full-gpl/releases/download/v1.0.0/ffmpeg-kit-full-gpl.aar' \
             -o "$libs/ffmpeg-kit-full-gpl-7.0.aar"
           test $(stat -c%s "$libs/ffmpeg-kit-full-gpl-7.0.aar") -gt 10000000
 
