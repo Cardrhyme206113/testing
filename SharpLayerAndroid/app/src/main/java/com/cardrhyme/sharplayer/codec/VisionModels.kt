@@ -39,7 +39,8 @@ class VisionModels(context: Context) : Closeable {
         require(shape.size >= 4) { "Unsupported MiDaS input shape: ${shape.contentToString()}" }
         val modelHeight = shape[1]
         val modelWidth = shape[2]
-        val input = bitmapInput(bitmap, modelWidth, modelHeight, inputTensor.dataType())
+        // Official MiDaS v2.1 model_opt uses RGB float input normalized to [-1, 1].
+        val input = bitmapInput(bitmap, modelWidth, modelHeight, inputTensor.dataType(), signedFloat = true)
 
         val outputTensor = depthInterpreter.getOutputTensor(0)
         val output = ByteBuffer.allocateDirect(outputTensor.numBytes()).order(ByteOrder.nativeOrder())
@@ -81,7 +82,6 @@ class VisionModels(context: Context) : Closeable {
         val spatial = if (raw.size == outWidth * outHeight) {
             raw
         } else {
-            // Some exported models keep a singleton channel dimension.
             FloatArray(outWidth * outHeight) { i -> raw[min(i, raw.lastIndex)] }
         }
         normalizeInPlace(spatial)
@@ -94,7 +94,7 @@ class VisionModels(context: Context) : Closeable {
         require(shape.size >= 4) { "Unsupported DeepLab input shape: ${shape.contentToString()}" }
         val modelHeight = shape[1]
         val modelWidth = shape[2]
-        val input = bitmapInput(bitmap, modelWidth, modelHeight, inputTensor.dataType())
+        val input = bitmapInput(bitmap, modelWidth, modelHeight, inputTensor.dataType(), signedFloat = false)
 
         val outputTensor = segmentationInterpreter.getOutputTensor(0)
         val outputShape = outputTensor.shape()
@@ -169,7 +169,13 @@ class VisionModels(context: Context) : Closeable {
         segmentationInterpreter.close()
     }
 
-    private fun bitmapInput(bitmap: Bitmap, width: Int, height: Int, type: DataType): ByteBuffer {
+    private fun bitmapInput(
+        bitmap: Bitmap,
+        width: Int,
+        height: Int,
+        type: DataType,
+        signedFloat: Boolean
+    ): ByteBuffer {
         val scaled = if (bitmap.width == width && bitmap.height == height) {
             bitmap
         } else {
@@ -184,9 +190,13 @@ class VisionModels(context: Context) : Closeable {
             .order(ByteOrder.nativeOrder())
         when (type) {
             DataType.FLOAT32 -> pixels.forEach { p ->
-                buffer.putFloat(((p ushr 16) and 0xFF) / 255f)
-                buffer.putFloat(((p ushr 8) and 0xFF) / 255f)
-                buffer.putFloat((p and 0xFF) / 255f)
+                fun normalize(channel: Int): Float {
+                    val zeroToOne = channel / 255f
+                    return if (signedFloat) zeroToOne * 2f - 1f else zeroToOne
+                }
+                buffer.putFloat(normalize((p ushr 16) and 0xFF))
+                buffer.putFloat(normalize((p ushr 8) and 0xFF))
+                buffer.putFloat(normalize(p and 0xFF))
             }
             DataType.UINT8 -> pixels.forEach { p ->
                 buffer.put(((p ushr 16) and 0xFF).toByte())
