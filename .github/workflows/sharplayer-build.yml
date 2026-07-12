@@ -102,6 +102,9 @@ jobs:
           path.write_text(text)
           PY
 
+      - name: Fix output and model input caps
+        run: python3 SharpLayerAndroid/scripts/patch_720p_640_model_cap.py
+
       - name: Apply v0.4 UI labels
         shell: bash
         run: |
@@ -123,6 +126,9 @@ jobs:
           grep -q 'Encoder preflight' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           grep -q 'FrameDropEffect.createDefaultFrameDropEffect(plan.frameRate.toFloat())' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           grep -q 'if (true)' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
+          grep -q 'val outputHeight = 720' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
+          grep -q 'MAX_MODEL_SOURCE_LONG_EDGE = 640' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/codec/FastVisionModels.kt
+          grep -q 'Fixed at 720p' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/ui/SharpLayerApp.kt
           ! grep -q 'ffmpeg-kit' SharpLayerAndroid/app/build.gradle.kts
           ! grep -q 'setFrameRate(plan.frameRate)' SharpLayerAndroid/app/src/main/java/com/cardrhyme/sharplayer/export/OptionDExportEngine.kt
           find SharpLayerAndroid -maxdepth 5 -type f | sort
@@ -141,7 +147,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SharpLayer-v0.4-accept-overshoot-build
+          name: SharpLayer-v0.4-720p-640cap-build
           path: |
             SharpLayerAndroid/app/build/outputs/apk/debug/*.apk
             SharpLayerAndroid/build.log
