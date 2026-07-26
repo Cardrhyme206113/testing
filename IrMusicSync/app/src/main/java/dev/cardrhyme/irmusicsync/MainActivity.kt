@@ -2,13 +2,18 @@ package dev.cardrhyme.irmusicsync
 
 import android.Manifest
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.hardware.ConsumerIrManager
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
+import android.view.View
 import android.widget.*
 
 class MainActivity : Activity() {
@@ -26,6 +31,9 @@ class MainActivity : Activity() {
     private lateinit var colorDelay: SeekBar
     private lateinit var colorDelayLabel: TextView
     private lateinit var captureButton: Button
+    private lateinit var beatFlash: TextView
+    private lateinit var sentFlash: TextView
+    private var receiverRegistered = false
 
     private data class LedColor(val name: String, val rgb: Int, val code: Long)
     private data class IrProfile(val carrier: Int, val mode: Int, val repeats: Int) {
@@ -44,6 +52,16 @@ class MainActivity : Activity() {
         LedColor("White", 0xFFFFFF, 0xF7E01FL)
     )
 
+    private val beatEvents = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val rgb = intent?.getIntExtra(CaptureService.EXTRA_COLOR_RGB, Color.WHITE) ?: Color.WHITE
+            when (intent?.action) {
+                CaptureService.ACTION_BEAT_DETECTED -> flashIndicator(beatFlash, rgb)
+                CaptureService.ACTION_BEAT_SENT -> flashIndicator(sentFlash, rgb)
+            }
+        }
+    }
+
     private var activeProfile = IrProfile(38_000, 0, 1)
     private var captureRunning = false
 
@@ -58,17 +76,46 @@ class MainActivity : Activity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        if (!receiverRegistered) {
+            val filter = IntentFilter().apply {
+                addAction(CaptureService.ACTION_BEAT_DETECTED)
+                addAction(CaptureService.ACTION_BEAT_SENT)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(beatEvents, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                registerReceiver(beatEvents, filter)
+            }
+            receiverRegistered = true
+        }
+    }
+
+    override fun onStop() {
+        if (receiverRegistered) {
+            try { unregisterReceiver(beatEvents) } catch (_: Throwable) {}
+            receiverRegistered = false
+        }
+        super.onStop()
+    }
+
     private fun buildUi() {
+        val density = resources.displayMetrics.density
+        fun dp(value: Int) = (value * density).toInt()
+
+        val root = FrameLayout(this).apply { setBackgroundColor(0xFF101014.toInt()) }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 48, 32, 48)
+            setPadding(dp(16), dp(24), dp(16), dp(120))
             setBackgroundColor(0xFF101014.toInt())
         }
         fun label(value: String, size: Float = 16f) = TextView(this).apply {
             text = value
             textSize = size
             setTextColor(Color.WHITE)
-            setPadding(0, 10, 0, 10)
+            setPadding(0, dp(5), 0, dp(5))
         }
 
         content.addView(label("IR Music Sync", 26f))
@@ -77,7 +124,7 @@ class MainActivity : Activity() {
 
         swatch = label("Warm-spectrum beat mode", 20f).apply {
             setBackgroundColor(0xFF222228.toInt())
-            setPadding(24, 40, 24, 40)
+            setPadding(dp(12), dp(20), dp(12), dp(20))
         }
         content.addView(swatch)
 
@@ -85,12 +132,12 @@ class MainActivity : Activity() {
         sensitivity = SeekBar(this).apply { max = 100; progress = 55 }
         content.addView(sensitivity)
 
-        intervalLabel = label("Minimum beat cooldown: 200 ms")
+        intervalLabel = label("Minimum beat cooldown: 100 ms")
         content.addView(intervalLabel)
         interval = SeekBar(this).apply {
-            max = 800
+            max = 900
             progress = 0
-            setOnSeekBarChangeListener(simpleListener { intervalLabel.text = "Minimum beat cooldown: ${200 + it} ms" })
+            setOnSeekBarChangeListener(simpleListener { intervalLabel.text = "Minimum beat cooldown: ${100 + it} ms" })
         }
         content.addView(interval)
 
@@ -112,12 +159,12 @@ class MainActivity : Activity() {
         }
         content.addView(commandGap)
 
-        colorDelayLabel = label("Delay before showing new color: 75 ms")
+        colorDelayLabel = label("Dim new-color hold before OFF: 75 ms")
         content.addView(colorDelayLabel)
         colorDelay = SeekBar(this).apply {
             max = 275
             progress = 50
-            setOnSeekBarChangeListener(simpleListener { colorDelayLabel.text = "Delay before showing new color: ${25 + it} ms" })
+            setOnSeekBarChangeListener(simpleListener { colorDelayLabel.text = "Dim new-color hold before OFF: ${25 + it} ms" })
         }
         content.addView(colorDelay)
 
@@ -146,9 +193,41 @@ class MainActivity : Activity() {
             })
         }
         content.addView(grid)
-        content.addView(label("On a real note/beat change: fade down by the selected step count, OFF, wait for cooldown, ON, fade up by the same count, then show the new warm-spectrum color after the selected delay.", 13f))
+        content.addView(label("Beat detected: the left tile flashes. The strip fades down, switches to the new color at its lowest brightness, holds it briefly, then turns OFF. After the cooldown it turns ON and fades up; the right tile flashes when the full signal sequence reaches peak brightness.", 13f))
 
-        setContentView(ScrollView(this).apply { addView(content) })
+        root.addView(ScrollView(this).apply { addView(content) }, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        fun flashTile(textValue: String) = TextView(this).apply {
+            text = textValue
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0xFF24242A.toInt())
+            alpha = 0.12f
+        }
+
+        beatFlash = flashTile("BEAT")
+        sentFlash = flashTile("SENT")
+        root.addView(beatFlash, FrameLayout.LayoutParams(dp(100), dp(64), Gravity.BOTTOM or Gravity.START).apply {
+            leftMargin = dp(16); bottomMargin = dp(16)
+        })
+        root.addView(sentFlash, FrameLayout.LayoutParams(dp(100), dp(64), Gravity.BOTTOM or Gravity.END).apply {
+            rightMargin = dp(16); bottomMargin = dp(16)
+        })
+
+        setContentView(root)
+    }
+
+    private fun flashIndicator(view: TextView, rgb: Int) {
+        view.animate().cancel()
+        val opaque = rgb or 0xFF000000.toInt()
+        view.setBackgroundColor(opaque)
+        view.setTextColor(if (Color.luminance(rgb) < 0.45) Color.WHITE else Color.BLACK)
+        view.alpha = 1f
+        view.animate().alpha(0.12f).setStartDelay(70).setDuration(190).start()
     }
 
     private fun simpleListener(onChanged: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
@@ -187,7 +266,7 @@ class MainActivity : Activity() {
         startForegroundService(serviceIntent)
         captureRunning = true
         captureButton.text = "STOP CAPTURE"
-        status.text = "Capture started · ${fadeLevels.progress} steps · ${5 + commandGap.progress} ms gap"
+        status.text = "Capture started · ${100 + interval.progress} ms cooldown · ${fadeLevels.progress} steps"
     }
 
     private fun stopCaptureService() {
