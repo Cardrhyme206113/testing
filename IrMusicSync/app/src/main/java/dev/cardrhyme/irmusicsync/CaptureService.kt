@@ -20,6 +20,9 @@ class CaptureService : Service() {
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_SENSITIVITY = "sensitivity"
         const val EXTRA_INTERVAL = "interval"
+        const val EXTRA_FADE_LEVELS = "fade_levels"
+        const val EXTRA_COMMAND_GAP = "command_gap"
+        const val EXTRA_COLOR_DELAY = "color_delay"
         private const val CHANNEL_ID = "ir_music_capture"
         private const val NOTIFICATION_ID = 4201
 
@@ -36,22 +39,24 @@ class CaptureService : Service() {
     @Volatile private var animating = false
     private var sensitivity = 55
     private var intervalProgress = 0
+    private var fadeLevels = 2
+    private var commandGapMs = 12L
+    private var colorDelayMs = 75L
     private var lastBeatAt = 0L
     private var previousEnergy = DoubleArray(8)
     private var previousBand = -1
     private lateinit var ir: ConsumerIrManager
 
-    // No blue/cyan colors: low -> warm, high -> green/purple/magenta/white.
     private val colorCodes = longArrayOf(
-        0xF720DFL, // red
-        0xF710EFL, // orange
-        0xF730CFL, // light orange
-        0xF708F7L, // amber
-        0xF728D7L, // yellow
-        0xF7A05FL, // green
-        0xF748B7L, // purple
-        0xF76897L, // violet
-        0xF7E01FL  // white
+        0xF720DFL,
+        0xF710EFL,
+        0xF730CFL,
+        0xF708F7L,
+        0xF728D7L,
+        0xF7A05FL,
+        0xF748B7L,
+        0xF76897L,
+        0xF7E01FL
     )
 
     override fun onCreate() {
@@ -79,6 +84,10 @@ class CaptureService : Service() {
 
         sensitivity = intent.getIntExtra(EXTRA_SENSITIVITY, 55).coerceIn(0, 100)
         intervalProgress = intent.getIntExtra(EXTRA_INTERVAL, 0).coerceIn(0, 800)
+        fadeLevels = intent.getIntExtra(EXTRA_FADE_LEVELS, 2).coerceIn(0, 6)
+        commandGapMs = intent.getIntExtra(EXTRA_COMMAND_GAP, 12).coerceIn(5, 50).toLong()
+        colorDelayMs = intent.getIntExtra(EXTRA_COLOR_DELAY, 75).coerceIn(25, 300).toLong()
+
         startForeground(
             NOTIFICATION_ID,
             buildNotification("Starting playback capture…"),
@@ -120,7 +129,7 @@ class CaptureService : Service() {
             .build()
         recorder?.startRecording()
         running = true
-        updateNotification("Beat-change mode · 200 ms minimum")
+        updateNotification("${fadeLevels}-step fade · ${commandGapMs} ms gap · ${200 + intervalProgress} ms cooldown")
 
         worker = thread(name = "ir-playback-analyzer") {
             val pcm = ShortArray(2048)
@@ -186,27 +195,23 @@ class CaptureService : Service() {
         animating = true
         thread(name = "ir-fade-animation") {
             try {
-                // Fade out from current level, then go fully dark.
-                repeat(6) {
+                repeat(fadeLevels) {
                     sendCode(BRIGHTNESS_DOWN)
-                    Thread.sleep(80)
+                    Thread.sleep(commandGapMs)
                 }
                 sendCode(POWER_OFF)
 
-                // Keep it dark until the selected beat cooldown has elapsed.
                 val elapsed = System.currentTimeMillis() - lastBeatAt
                 if (elapsed < cooldownMs) Thread.sleep(cooldownMs - elapsed)
 
-                // Turn back on at minimum brightness, then fade up through all 6 steps.
                 sendCode(POWER_ON)
-                Thread.sleep(80)
-                repeat(6) {
+                Thread.sleep(commandGapMs)
+                repeat(fadeLevels) {
                     sendCode(BRIGHTNESS_UP)
-                    Thread.sleep(80)
+                    Thread.sleep(commandGapMs)
                 }
 
-                // Show the new note color shortly after the full fade-in.
-                Thread.sleep(100)
+                Thread.sleep(colorDelayMs)
                 sendCode(colorCode)
             } catch (_: InterruptedException) {
             } finally {
