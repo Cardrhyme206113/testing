@@ -9,6 +9,7 @@ import android.media.*
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.IBinder
+import android.os.SystemClock
 import kotlin.concurrent.thread
 import kotlin.math.*
 
@@ -18,14 +19,17 @@ class CaptureService : Service() {
         const val ACTION_STOP = "dev.cardrhyme.irmusicsync.STOP"
         const val ACTION_BEAT_DETECTED = "dev.cardrhyme.irmusicsync.BEAT_DETECTED"
         const val ACTION_BEAT_SENT = "dev.cardrhyme.irmusicsync.BEAT_SENT"
+        const val ACTION_TIMING_UPDATED = "dev.cardrhyme.irmusicsync.TIMING_UPDATED"
         const val EXTRA_COLOR_RGB = "color_rgb"
+        const val EXTRA_AUTO_COOLDOWN_MS = "auto_cooldown_ms"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_SENSITIVITY = "sensitivity"
-        const val EXTRA_INTERVAL = "interval"
         const val EXTRA_FADE_LEVELS = "fade_levels"
         const val EXTRA_COMMAND_GAP = "command_gap"
         const val EXTRA_COLOR_DELAY = "color_delay"
+        const val EXTRA_FADE_OUT_ENABLED = "fade_out_enabled"
+        const val EXTRA_FADE_IN_ENABLED = "fade_in_enabled"
         private const val CHANNEL_ID = "ir_music_capture"
         private const val NOTIFICATION_ID = 4201
 
@@ -38,14 +42,16 @@ class CaptureService : Service() {
     private var projection: MediaProjection? = null
     private var recorder: AudioRecord? = null
     private var worker: Thread? = null
+    private var animationWorker: Thread? = null
     @Volatile private var running = false
     @Volatile private var animating = false
+    @Volatile private var nextBeatAllowedAt = 0L
     private var sensitivity = 55
-    private var intervalProgress = 0
     private var fadeLevels = 2
     private var commandGapMs = 12L
     private var colorHoldMs = 75L
-    private var lastBeatAt = 0L
+    private var fadeOutEnabled = true
+    private var fadeInEnabled = true
     private var previousEnergy = DoubleArray(8)
     private var previousBand = -1
     private var lastColorIndex = -1
@@ -96,13 +102,18 @@ class CaptureService : Service() {
         if (running) return
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
         val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-        if (resultCode != Activity.RESULT_OK || resultData == null) { stopSelf(); return }
+        if (resultCode != Activity.RESULT_OK || resultData == null) {
+            stopSelf()
+            return
+        }
 
         sensitivity = intent.getIntExtra(EXTRA_SENSITIVITY, 55).coerceIn(0, 100)
-        intervalProgress = intent.getIntExtra(EXTRA_INTERVAL, 0).coerceIn(0, 900)
         fadeLevels = intent.getIntExtra(EXTRA_FADE_LEVELS, 2).coerceIn(0, 6)
         commandGapMs = intent.getIntExtra(EXTRA_COMMAND_GAP, 12).coerceIn(5, 50).toLong()
         colorHoldMs = intent.getIntExtra(EXTRA_COLOR_DELAY, 75).coerceIn(25, 300).toLong()
+        fadeOutEnabled = intent.getBooleanExtra(EXTRA_FADE_OUT_ENABLED, true)
+        fadeInEnabled = intent.getBooleanExtra(EXTRA_FADE_IN_ENABLED, true)
+        nextBeatAllowedAt = 0L
 
         startForeground(
             NOTIFICATION_ID,
@@ -137,7 +148,11 @@ class CaptureService : Service() {
             .addMatchingUsage(AudioAttributes.USAGE_GAME)
             .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
             .build()
-        val minimum = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val minimum = AudioRecord.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
         recorder = AudioRecord.Builder()
             .setAudioFormat(format)
             .setBufferSizeInBytes(max(8192, minimum * 2))
@@ -145,7 +160,9 @@ class CaptureService : Service() {
             .build()
         recorder?.startRecording()
         running = true
-        updateNotification("${fadeLevels}-step fade · ${commandGapMs} ms gap · ${100 + intervalProgress} ms cooldown")
+        updateNotification(
+            "Auto cooldown · fade out ${if (fadeOutEnabled) "ON" else "OFF"} · fade in ${if (fadeInEnabled) "ON" else "OFF"}"
+        )
 
         worker = thread(name = "ir-playback-analyzer") {
             val pcm = ShortArray(2048)
@@ -186,7 +203,9 @@ class CaptureService : Service() {
         val total = energies.sum().coerceAtLeast(1.0)
         val normalized = DoubleArray(energies.size) { energies[it] / total }
         var flux = 0.0
-        for (i in normalized.indices) flux += max(0.0, normalized[i] - previousEnergy[i])
+        for (i in normalized.indices) {
+            flux += max(0.0, normalized[i] - previousEnergy[i])
+        }
         val dominantBand = normalized.indices.maxByOrNull { normalized[it] } ?: return
         val bandChanged = previousBand >= 0 && abs(dominantBand - previousBand) >= 1
         val fluxThreshold = 0.24 - sensitivity * 0.0015
@@ -196,52 +215,63 @@ class CaptureService : Service() {
         previousBand = dominantBand
         if (!actualChange || animating) return
 
-        val now = System.currentTimeMillis()
-        val cooldownMs = 100L + intervalProgress
-        if (now - lastBeatAt < cooldownMs) return
-        lastBeatAt = now
+        val now = SystemClock.elapsedRealtime()
+        if (now < nextBeatAllowedAt) return
 
         val centroid = frequencies.indices.sumOf { frequencies[it] * normalized[it] }
         val position = (ln(centroid / 55.0) / ln(8000.0 / 55.0)).coerceIn(0.0, 0.999)
         var colorIndex = (position * colorCodes.size).toInt().coerceIn(0, colorCodes.lastIndex)
-        if (colorIndex == lastColorIndex) colorIndex = (colorIndex + 1) % colorCodes.size
+        if (colorIndex == lastColorIndex) {
+            colorIndex = (colorIndex + 1) % colorCodes.size
+        }
         lastColorIndex = colorIndex
 
         sendUiEvent(ACTION_BEAT_DETECTED, colorRgb[colorIndex])
-        animateBeat(colorCodes[colorIndex], colorRgb[colorIndex], cooldownMs)
+        animateBeat(colorCodes[colorIndex], colorRgb[colorIndex])
     }
 
-    private fun animateBeat(colorCode: Long, rgb: Int, cooldownMs: Long) {
+    private fun animateBeat(colorCode: Long, rgb: Int) {
         animating = true
-        thread(name = "ir-fade-animation") {
+        animationWorker = thread(name = "ir-fade-animation") {
+            val sequenceStartedAt = SystemClock.elapsedRealtime()
             try {
-                // Fade to the selected low point.
-                repeat(fadeLevels) {
-                    sendCode(BRIGHTNESS_DOWN)
-                    Thread.sleep(commandGapMs)
+                if (fadeOutEnabled) {
+                    repeat(fadeLevels) {
+                        sendCode(BRIGHTNESS_DOWN)
+                        Thread.sleep(commandGapMs)
+                    }
                 }
 
-                // Set the next color while the strip is still on and dim, then let it show briefly.
+                // The color is always selected while the strip is still ON.
                 sendCode(colorCode)
                 Thread.sleep(colorHoldMs)
+
                 sendCode(POWER_OFF)
-
-                // Remain dark until the configured cooldown has elapsed. The animation itself is also a hard cap.
-                val elapsed = System.currentTimeMillis() - lastBeatAt
-                if (elapsed < cooldownMs) Thread.sleep(cooldownMs - elapsed)
-
-                // Power back on with the already-selected color and climb to the chosen peak.
-                sendCode(POWER_ON)
                 Thread.sleep(commandGapMs)
-                repeat(fadeLevels) {
-                    sendCode(BRIGHTNESS_UP)
+                sendCode(POWER_ON)
+
+                if (fadeInEnabled) {
                     Thread.sleep(commandGapMs)
+                    repeat(fadeLevels) { index ->
+                        sendCode(BRIGHTNESS_UP)
+                        if (index < fadeLevels - 1) {
+                            Thread.sleep(commandGapMs)
+                        }
+                    }
                 }
 
-                // The full beat sequence is complete at the peak of the new ON cycle.
                 sendUiEvent(ACTION_BEAT_SENT, rgb)
             } catch (_: InterruptedException) {
             } finally {
+                val sequenceDurationMs = (SystemClock.elapsedRealtime() - sequenceStartedAt).coerceAtLeast(1L)
+                val autoCooldownMs = sequenceDurationMs + 5L
+
+                // The sequence itself blocks beats. After it finishes, only a 5 ms guard remains.
+                nextBeatAllowedAt = sequenceStartedAt + autoCooldownMs
+                sendTimingEvent(autoCooldownMs)
+                updateNotification(
+                    "Auto cooldown ${autoCooldownMs} ms · fade out ${if (fadeOutEnabled) "ON" else "OFF"} · fade in ${if (fadeInEnabled) "ON" else "OFF"}"
+                )
                 animating = false
             }
         }
@@ -252,6 +282,14 @@ class CaptureService : Service() {
             Intent(action)
                 .setPackage(packageName)
                 .putExtra(EXTRA_COLOR_RGB, rgb)
+        )
+    }
+
+    private fun sendTimingEvent(autoCooldownMs: Long) {
+        sendBroadcast(
+            Intent(ACTION_TIMING_UPDATED)
+                .setPackage(packageName)
+                .putExtra(EXTRA_AUTO_COOLDOWN_MS, autoCooldownMs)
         )
     }
 
@@ -272,8 +310,10 @@ class CaptureService : Service() {
     private fun stopEverything() {
         running = false
         worker?.interrupt()
+        animationWorker?.interrupt()
         try { recorder?.stop() } catch (_: Throwable) {}
-        recorder?.release(); recorder = null
+        recorder?.release()
+        recorder = null
         try { projection?.stop() } catch (_: Throwable) {}
         projection = null
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -282,8 +322,11 @@ class CaptureService : Service() {
 
     override fun onDestroy() {
         running = false
+        worker?.interrupt()
+        animationWorker?.interrupt()
         try { recorder?.stop() } catch (_: Throwable) {}
-        recorder?.release(); recorder = null
+        recorder?.release()
+        recorder = null
         super.onDestroy()
     }
 
