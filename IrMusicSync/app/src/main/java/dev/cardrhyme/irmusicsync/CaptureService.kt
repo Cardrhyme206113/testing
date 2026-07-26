@@ -16,6 +16,9 @@ class CaptureService : Service() {
     companion object {
         const val ACTION_START = "dev.cardrhyme.irmusicsync.START"
         const val ACTION_STOP = "dev.cardrhyme.irmusicsync.STOP"
+        const val ACTION_BEAT_DETECTED = "dev.cardrhyme.irmusicsync.BEAT_DETECTED"
+        const val ACTION_BEAT_SENT = "dev.cardrhyme.irmusicsync.BEAT_SENT"
+        const val EXTRA_COLOR_RGB = "color_rgb"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_SENSITIVITY = "sensitivity"
@@ -41,10 +44,11 @@ class CaptureService : Service() {
     private var intervalProgress = 0
     private var fadeLevels = 2
     private var commandGapMs = 12L
-    private var colorDelayMs = 75L
+    private var colorHoldMs = 75L
     private var lastBeatAt = 0L
     private var previousEnergy = DoubleArray(8)
     private var previousBand = -1
+    private var lastColorIndex = -1
     private lateinit var ir: ConsumerIrManager
 
     private val colorCodes = longArrayOf(
@@ -57,6 +61,18 @@ class CaptureService : Service() {
         0xF748B7L,
         0xF76897L,
         0xF7E01FL
+    )
+
+    private val colorRgb = intArrayOf(
+        0xFF0000,
+        0xFF4000,
+        0xFF7000,
+        0xFFAA00,
+        0xFFFF00,
+        0x00FF00,
+        0x7030A0,
+        0xA040FF,
+        0xFFFFFF
     )
 
     override fun onCreate() {
@@ -83,10 +99,10 @@ class CaptureService : Service() {
         if (resultCode != Activity.RESULT_OK || resultData == null) { stopSelf(); return }
 
         sensitivity = intent.getIntExtra(EXTRA_SENSITIVITY, 55).coerceIn(0, 100)
-        intervalProgress = intent.getIntExtra(EXTRA_INTERVAL, 0).coerceIn(0, 800)
+        intervalProgress = intent.getIntExtra(EXTRA_INTERVAL, 0).coerceIn(0, 900)
         fadeLevels = intent.getIntExtra(EXTRA_FADE_LEVELS, 2).coerceIn(0, 6)
         commandGapMs = intent.getIntExtra(EXTRA_COMMAND_GAP, 12).coerceIn(5, 50).toLong()
-        colorDelayMs = intent.getIntExtra(EXTRA_COLOR_DELAY, 75).coerceIn(25, 300).toLong()
+        colorHoldMs = intent.getIntExtra(EXTRA_COLOR_DELAY, 75).coerceIn(25, 300).toLong()
 
         startForeground(
             NOTIFICATION_ID,
@@ -129,7 +145,7 @@ class CaptureService : Service() {
             .build()
         recorder?.startRecording()
         running = true
-        updateNotification("${fadeLevels}-step fade · ${commandGapMs} ms gap · ${200 + intervalProgress} ms cooldown")
+        updateNotification("${fadeLevels}-step fade · ${commandGapMs} ms gap · ${100 + intervalProgress} ms cooldown")
 
         worker = thread(name = "ir-playback-analyzer") {
             val pcm = ShortArray(2048)
@@ -181,29 +197,40 @@ class CaptureService : Service() {
         if (!actualChange || animating) return
 
         val now = System.currentTimeMillis()
-        val cooldownMs = 200L + intervalProgress
+        val cooldownMs = 100L + intervalProgress
         if (now - lastBeatAt < cooldownMs) return
         lastBeatAt = now
 
         val centroid = frequencies.indices.sumOf { frequencies[it] * normalized[it] }
         val position = (ln(centroid / 55.0) / ln(8000.0 / 55.0)).coerceIn(0.0, 0.999)
-        val colorIndex = (position * colorCodes.size).toInt().coerceIn(0, colorCodes.lastIndex)
-        animateBeat(colorCodes[colorIndex], cooldownMs)
+        var colorIndex = (position * colorCodes.size).toInt().coerceIn(0, colorCodes.lastIndex)
+        if (colorIndex == lastColorIndex) colorIndex = (colorIndex + 1) % colorCodes.size
+        lastColorIndex = colorIndex
+
+        sendUiEvent(ACTION_BEAT_DETECTED, colorRgb[colorIndex])
+        animateBeat(colorCodes[colorIndex], colorRgb[colorIndex], cooldownMs)
     }
 
-    private fun animateBeat(colorCode: Long, cooldownMs: Long) {
+    private fun animateBeat(colorCode: Long, rgb: Int, cooldownMs: Long) {
         animating = true
         thread(name = "ir-fade-animation") {
             try {
+                // Fade to the selected low point.
                 repeat(fadeLevels) {
                     sendCode(BRIGHTNESS_DOWN)
                     Thread.sleep(commandGapMs)
                 }
+
+                // Set the next color while the strip is still on and dim, then let it show briefly.
+                sendCode(colorCode)
+                Thread.sleep(colorHoldMs)
                 sendCode(POWER_OFF)
 
+                // Remain dark until the configured cooldown has elapsed. The animation itself is also a hard cap.
                 val elapsed = System.currentTimeMillis() - lastBeatAt
                 if (elapsed < cooldownMs) Thread.sleep(cooldownMs - elapsed)
 
+                // Power back on with the already-selected color and climb to the chosen peak.
                 sendCode(POWER_ON)
                 Thread.sleep(commandGapMs)
                 repeat(fadeLevels) {
@@ -211,13 +238,21 @@ class CaptureService : Service() {
                     Thread.sleep(commandGapMs)
                 }
 
-                Thread.sleep(colorDelayMs)
-                sendCode(colorCode)
+                // The full beat sequence is complete at the peak of the new ON cycle.
+                sendUiEvent(ACTION_BEAT_SENT, rgb)
             } catch (_: InterruptedException) {
             } finally {
                 animating = false
             }
         }
+    }
+
+    private fun sendUiEvent(action: String, rgb: Int) {
+        sendBroadcast(
+            Intent(action)
+                .setPackage(packageName)
+                .putExtra(EXTRA_COLOR_RGB, rgb)
+        )
     }
 
     private fun sendCode(code: Long) {
