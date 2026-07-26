@@ -22,23 +22,36 @@ class CaptureService : Service() {
         const val EXTRA_INTERVAL = "interval"
         private const val CHANNEL_ID = "ir_music_capture"
         private const val NOTIFICATION_ID = 4201
+
+        private const val BRIGHTNESS_DOWN = 0xF7807FL
+        private const val BRIGHTNESS_UP = 0xF700FFL
+        private const val POWER_OFF = 0xF740BFL
+        private const val POWER_ON = 0xF7C03FL
     }
 
     private var projection: MediaProjection? = null
     private var recorder: AudioRecord? = null
     private var worker: Thread? = null
     @Volatile private var running = false
-    private var lastColor = -1
-    private var lastSend = 0L
-    private var sensitivity = 45
-    private var intervalProgress = 100
+    @Volatile private var animating = false
+    private var sensitivity = 55
+    private var intervalProgress = 0
+    private var lastBeatAt = 0L
+    private var previousEnergy = DoubleArray(8)
+    private var previousBand = -1
     private lateinit var ir: ConsumerIrManager
 
-    private val codes = longArrayOf(
-        0x00F720DFL, 0x00F710EFL, 0x00F730CFL, 0x00F708F7L,
-        0x00F728D7L, 0x00F7A05FL, 0x00F7906FL, 0x00F7B04FL,
-        0x00F78877L, 0x00F7A857L, 0x00F7609FL, 0x00F750AFL,
-        0x00F7708FL, 0x00F748B7L, 0x00F76897L, 0x00F7E01FL
+    // No blue/cyan colors: low -> warm, high -> green/purple/magenta/white.
+    private val colorCodes = longArrayOf(
+        0xF720DFL, // red
+        0xF710EFL, // orange
+        0xF730CFL, // light orange
+        0xF708F7L, // amber
+        0xF728D7L, // yellow
+        0xF7A05FL, // green
+        0xF748B7L, // purple
+        0xF76897L, // violet
+        0xF7E01FL  // white
     )
 
     override fun onCreate() {
@@ -62,20 +75,20 @@ class CaptureService : Service() {
         if (running) return
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
         val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-        if (resultCode != Activity.RESULT_OK || resultData == null) {
-            stopSelf()
-            return
-        }
-        sensitivity = intent.getIntExtra(EXTRA_SENSITIVITY, 45).coerceIn(0, 100)
-        intervalProgress = intent.getIntExtra(EXTRA_INTERVAL, 100).coerceIn(0, 420)
+        if (resultCode != Activity.RESULT_OK || resultData == null) { stopSelf(); return }
 
-        val notification = buildNotification("Starting playback capture…")
-        startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        sensitivity = intent.getIntExtra(EXTRA_SENSITIVITY, 55).coerceIn(0, 100)
+        intervalProgress = intent.getIntExtra(EXTRA_INTERVAL, 0).coerceIn(0, 800)
+        startForeground(
+            NOTIFICATION_ID,
+            buildNotification("Starting playback capture…"),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        )
 
         try {
             val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            projection = manager.getMediaProjection(resultCode, resultData).also { mediaProjection ->
-                mediaProjection.registerCallback(object : MediaProjection.Callback() {
+            projection = manager.getMediaProjection(resultCode, resultData).also {
+                it.registerCallback(object : MediaProjection.Callback() {
                     override fun onStop() = stopEverything()
                 }, null)
             }
@@ -99,11 +112,7 @@ class CaptureService : Service() {
             .addMatchingUsage(AudioAttributes.USAGE_GAME)
             .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
             .build()
-        val minimum = AudioRecord.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
+        val minimum = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         recorder = AudioRecord.Builder()
             .setAudioFormat(format)
             .setBufferSizeInBytes(max(8192, minimum * 2))
@@ -111,33 +120,31 @@ class CaptureService : Service() {
             .build()
         recorder?.startRecording()
         running = true
-        updateNotification("Listening to device playback audio")
+        updateNotification("Beat-change mode · 200 ms minimum")
 
         worker = thread(name = "ir-playback-analyzer") {
             val pcm = ShortArray(2048)
             while (running) {
                 val count = recorder?.read(pcm, 0, pcm.size, AudioRecord.READ_BLOCKING) ?: break
-                if (count > 256) analyze(pcm, count, sampleRate)
+                if (count > 512) analyze(pcm, count, sampleRate)
             }
         }
     }
 
     private fun analyze(samples: ShortArray, count: Int, sampleRate: Int) {
-        var squareSum = 0.0
-        for (i in 0 until count) {
-            val value = samples[i] / 32768.0
-            squareSum += value * value
-        }
-        val rms = sqrt(squareSum / count)
-        val threshold = (0.055 - sensitivity * 0.00048).coerceAtLeast(0.003)
-        if (rms < threshold) return
-
-        val frequencies = doubleArrayOf(
-            45.0, 70.0, 105.0, 160.0, 240.0, 360.0, 540.0, 800.0,
-            1200.0, 1800.0, 2700.0, 4000.0, 6000.0, 8500.0, 12000.0, 16000.0
-        )
+        val frequencies = doubleArrayOf(60.0, 110.0, 220.0, 440.0, 900.0, 1800.0, 3600.0, 7200.0)
         val energies = DoubleArray(frequencies.size)
         val limit = min(count, 1024)
+
+        var rmsSum = 0.0
+        for (i in 0 until limit) {
+            val v = samples[i] / 32768.0
+            rmsSum += v * v
+        }
+        val rms = sqrt(rmsSum / limit)
+        val silenceThreshold = (0.040 - sensitivity * 0.00034).coerceAtLeast(0.004)
+        if (rms < silenceThreshold) return
+
         for (band in frequencies.indices) {
             val omega = 2.0 * Math.PI * frequencies[band] / sampleRate
             var real = 0.0
@@ -151,31 +158,65 @@ class CaptureService : Service() {
             energies[band] = real * real + imaginary * imaginary
         }
 
-        val total = energies.sum()
-        if (total <= 0.0) return
-        var weighted = 0.0
-        var peak = 0.0
-        for (i in energies.indices) {
-            weighted += energies[i] * frequencies[i]
-            peak = max(peak, energies[i])
-        }
-        val centroid = (weighted / total).coerceIn(35.0, 16_000.0)
-        val thinness = (peak / (total / energies.size)).coerceIn(1.0, 16.0)
-        val logPosition = (ln(centroid / 35.0) / ln(16_000.0 / 35.0)).coerceIn(0.0, 1.0)
-        val shifted = (logPosition + (thinness - 4.0) * 0.018).coerceIn(0.0, 0.999)
-        var index = (shifted * codes.size).toInt()
-        if (lastColor >= 0 && abs(index - lastColor) == 1 && thinness < 6.0) index = lastColor
+        val total = energies.sum().coerceAtLeast(1.0)
+        val normalized = DoubleArray(energies.size) { energies[it] / total }
+        var flux = 0.0
+        for (i in normalized.indices) flux += max(0.0, normalized[i] - previousEnergy[i])
+        val dominantBand = normalized.indices.maxByOrNull { normalized[it] } ?: return
+        val bandChanged = previousBand >= 0 && abs(dominantBand - previousBand) >= 1
+        val fluxThreshold = 0.24 - sensitivity * 0.0015
+        val actualChange = bandChanged && flux >= fluxThreshold.coerceAtLeast(0.07)
+
+        previousEnergy = normalized
+        previousBand = dominantBand
+        if (!actualChange || animating) return
 
         val now = System.currentTimeMillis()
-        if (index != lastColor && now - lastSend >= 80L + intervalProgress) {
-            sendCode(codes[index])
-            lastColor = index
-            lastSend = now
+        val cooldownMs = 200L + intervalProgress
+        if (now - lastBeatAt < cooldownMs) return
+        lastBeatAt = now
+
+        val centroid = frequencies.indices.sumOf { frequencies[it] * normalized[it] }
+        val position = (ln(centroid / 55.0) / ln(8000.0 / 55.0)).coerceIn(0.0, 0.999)
+        val colorIndex = (position * colorCodes.size).toInt().coerceIn(0, colorCodes.lastIndex)
+        animateBeat(colorCodes[colorIndex], cooldownMs)
+    }
+
+    private fun animateBeat(colorCode: Long, cooldownMs: Long) {
+        animating = true
+        thread(name = "ir-fade-animation") {
+            try {
+                // Fade out from current level, then go fully dark.
+                repeat(6) {
+                    sendCode(BRIGHTNESS_DOWN)
+                    Thread.sleep(80)
+                }
+                sendCode(POWER_OFF)
+
+                // Keep it dark until the selected beat cooldown has elapsed.
+                val elapsed = System.currentTimeMillis() - lastBeatAt
+                if (elapsed < cooldownMs) Thread.sleep(cooldownMs - elapsed)
+
+                // Turn back on at minimum brightness, then fade up through all 6 steps.
+                sendCode(POWER_ON)
+                Thread.sleep(80)
+                repeat(6) {
+                    sendCode(BRIGHTNESS_UP)
+                    Thread.sleep(80)
+                }
+
+                // Show the new note color shortly after the full fade-in.
+                Thread.sleep(100)
+                sendCode(colorCode)
+            } catch (_: InterruptedException) {
+            } finally {
+                animating = false
+            }
         }
     }
 
     private fun sendCode(code: Long) {
-        if (!ir.hasIrEmitter()) return
+        if (!running || !ir.hasIrEmitter()) return
         val prefs = getSharedPreferences("ir_profile", MODE_PRIVATE)
         val carrier = prefs.getInt("carrier", 38_000)
         val mode = prefs.getInt("mode", 0)
@@ -185,20 +226,14 @@ class CaptureService : Service() {
                 ir.transmit(carrier, IrProtocol.necPattern(code, mode))
                 if (repeats > 1) Thread.sleep(35)
             }
-        } catch (_: Throwable) {
-        }
+        } catch (_: Throwable) {}
     }
 
     private fun stopEverything() {
-        if (!running && projection == null) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return
-        }
         running = false
+        worker?.interrupt()
         try { recorder?.stop() } catch (_: Throwable) {}
-        recorder?.release()
-        recorder = null
+        recorder?.release(); recorder = null
         try { projection?.stop() } catch (_: Throwable) {}
         projection = null
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -208,14 +243,12 @@ class CaptureService : Service() {
     override fun onDestroy() {
         running = false
         try { recorder?.stop() } catch (_: Throwable) {}
-        recorder?.release()
-        recorder = null
+        recorder?.release(); recorder = null
         super.onDestroy()
     }
 
     private fun createNotificationChannel() {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
+        getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "IR music capture", NotificationManager.IMPORTANCE_LOW)
         )
     }
