@@ -7,6 +7,11 @@ on:
     paths:
       - 'IrMusicSync/**'
       - '.github/workflows/build-ir-music-sync.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'IrMusicSync/**'
+      - '.github/workflows/build-ir-music-sync.yml'
 
 jobs:
   build:
