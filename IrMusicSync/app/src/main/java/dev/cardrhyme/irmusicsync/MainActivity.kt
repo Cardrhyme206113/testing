@@ -13,7 +13,6 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
-import android.view.View
 import android.widget.*
 
 class MainActivity : Activity() {
@@ -22,8 +21,9 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var swatch: TextView
     private lateinit var sensitivity: SeekBar
-    private lateinit var interval: SeekBar
-    private lateinit var intervalLabel: TextView
+    private lateinit var autoTimingLabel: TextView
+    private lateinit var fadeOutSwitch: Switch
+    private lateinit var fadeInSwitch: Switch
     private lateinit var fadeLevels: SeekBar
     private lateinit var fadeLevelsLabel: TextView
     private lateinit var commandGap: SeekBar
@@ -54,10 +54,21 @@ class MainActivity : Activity() {
 
     private val beatEvents = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val rgb = intent?.getIntExtra(CaptureService.EXTRA_COLOR_RGB, Color.WHITE) ?: Color.WHITE
             when (intent?.action) {
-                CaptureService.ACTION_BEAT_DETECTED -> flashIndicator(beatFlash, rgb)
-                CaptureService.ACTION_BEAT_SENT -> flashIndicator(sentFlash, rgb)
+                CaptureService.ACTION_BEAT_DETECTED -> {
+                    val rgb = intent.getIntExtra(CaptureService.EXTRA_COLOR_RGB, Color.WHITE)
+                    flashIndicator(beatFlash, rgb)
+                }
+                CaptureService.ACTION_BEAT_SENT -> {
+                    val rgb = intent.getIntExtra(CaptureService.EXTRA_COLOR_RGB, Color.WHITE)
+                    flashIndicator(sentFlash, rgb)
+                }
+                CaptureService.ACTION_TIMING_UPDATED -> {
+                    val cooldown = intent.getLongExtra(CaptureService.EXTRA_AUTO_COOLDOWN_MS, 0L)
+                    if (cooldown > 0L) {
+                        autoTimingLabel.text = "Automatic beat cooldown: ${cooldown} ms (last sequence + 5 ms)"
+                    }
+                }
             }
         }
     }
@@ -82,6 +93,7 @@ class MainActivity : Activity() {
             val filter = IntentFilter().apply {
                 addAction(CaptureService.ACTION_BEAT_DETECTED)
                 addAction(CaptureService.ACTION_BEAT_SENT)
+                addAction(CaptureService.ACTION_TIMING_UPDATED)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(beatEvents, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -132,21 +144,31 @@ class MainActivity : Activity() {
         sensitivity = SeekBar(this).apply { max = 100; progress = 55 }
         content.addView(sensitivity)
 
-        intervalLabel = label("Minimum beat cooldown: 100 ms")
-        content.addView(intervalLabel)
-        interval = SeekBar(this).apply {
-            max = 900
-            progress = 0
-            setOnSeekBarChangeListener(simpleListener { intervalLabel.text = "Minimum beat cooldown: ${100 + it} ms" })
-        }
-        content.addView(interval)
+        autoTimingLabel = label("Automatic beat cooldown: awaiting first sequence")
+        content.addView(autoTimingLabel)
 
-        fadeLevelsLabel = label("Fade brightness steps each way: 2")
+        fadeOutSwitch = Switch(this).apply {
+            text = "Fade out before OFF"
+            setTextColor(Color.WHITE)
+            isChecked = true
+        }
+        content.addView(fadeOutSwitch)
+
+        fadeInSwitch = Switch(this).apply {
+            text = "Fade in after ON"
+            setTextColor(Color.WHITE)
+            isChecked = true
+        }
+        content.addView(fadeInSwitch)
+
+        fadeLevelsLabel = label("Fade brightness steps each enabled direction: 2")
         content.addView(fadeLevelsLabel)
         fadeLevels = SeekBar(this).apply {
             max = 6
             progress = 2
-            setOnSeekBarChangeListener(simpleListener { fadeLevelsLabel.text = "Fade brightness steps each way: $it" })
+            setOnSeekBarChangeListener(simpleListener {
+                fadeLevelsLabel.text = "Fade brightness steps each enabled direction: $it"
+            })
         }
         content.addView(fadeLevels)
 
@@ -155,7 +177,9 @@ class MainActivity : Activity() {
         commandGap = SeekBar(this).apply {
             max = 45
             progress = 7
-            setOnSeekBarChangeListener(simpleListener { commandGapLabel.text = "Gap after each IR command: ${5 + it} ms" })
+            setOnSeekBarChangeListener(simpleListener {
+                commandGapLabel.text = "Gap after each IR command: ${5 + it} ms"
+            })
         }
         content.addView(commandGap)
 
@@ -164,7 +188,9 @@ class MainActivity : Activity() {
         colorDelay = SeekBar(this).apply {
             max = 275
             progress = 50
-            setOnSeekBarChangeListener(simpleListener { colorDelayLabel.text = "Dim new-color hold before OFF: ${25 + it} ms" })
+            setOnSeekBarChangeListener(simpleListener {
+                colorDelayLabel.text = "Dim new-color hold before OFF: ${25 + it} ms"
+            })
         }
         content.addView(colorDelay)
 
@@ -193,7 +219,7 @@ class MainActivity : Activity() {
             })
         }
         content.addView(grid)
-        content.addView(label("Beat detected: the left tile flashes. The strip fades down, switches to the new color at its lowest brightness, holds it briefly, then turns OFF. After the cooldown it turns ON and fades up; the right tile flashes when the full signal sequence reaches peak brightness.", 13f))
+        content.addView(label("Beat detected: left tile flashes. Enabled fade-out steps run, the new color is selected while the strip is still ON, then it turns OFF. It turns back ON immediately; enabled fade-in steps run and the right tile flashes at completion. The next beat unlocks 5 ms later, and the displayed cooldown is measured from the completed sequence.", 13f))
 
         root.addView(ScrollView(this).apply { addView(content) }, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
@@ -212,10 +238,12 @@ class MainActivity : Activity() {
         beatFlash = flashTile("BEAT")
         sentFlash = flashTile("SENT")
         root.addView(beatFlash, FrameLayout.LayoutParams(dp(100), dp(64), Gravity.BOTTOM or Gravity.START).apply {
-            leftMargin = dp(16); bottomMargin = dp(16)
+            leftMargin = dp(16)
+            bottomMargin = dp(16)
         })
         root.addView(sentFlash, FrameLayout.LayoutParams(dp(100), dp(64), Gravity.BOTTOM or Gravity.END).apply {
-            rightMargin = dp(16); bottomMargin = dp(16)
+            rightMargin = dp(16)
+            bottomMargin = dp(16)
         })
 
         setContentView(root)
@@ -237,7 +265,10 @@ class MainActivity : Activity() {
     }
 
     private fun requestPlaybackCapture() {
-        if (!ir.hasIrEmitter()) { status.text = "No IR emitter"; return }
+        if (!ir.hasIrEmitter()) {
+            status.text = "No IR emitter"
+            return
+        }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 7)
             return
@@ -258,15 +289,17 @@ class MainActivity : Activity() {
             putExtra(CaptureService.EXTRA_RESULT_CODE, resultCode)
             putExtra(CaptureService.EXTRA_RESULT_DATA, data)
             putExtra(CaptureService.EXTRA_SENSITIVITY, sensitivity.progress)
-            putExtra(CaptureService.EXTRA_INTERVAL, interval.progress)
             putExtra(CaptureService.EXTRA_FADE_LEVELS, fadeLevels.progress)
             putExtra(CaptureService.EXTRA_COMMAND_GAP, 5 + commandGap.progress)
             putExtra(CaptureService.EXTRA_COLOR_DELAY, 25 + colorDelay.progress)
+            putExtra(CaptureService.EXTRA_FADE_OUT_ENABLED, fadeOutSwitch.isChecked)
+            putExtra(CaptureService.EXTRA_FADE_IN_ENABLED, fadeInSwitch.isChecked)
         }
         startForegroundService(serviceIntent)
         captureRunning = true
         captureButton.text = "STOP CAPTURE"
-        status.text = "Capture started · ${100 + interval.progress} ms cooldown · ${fadeLevels.progress} steps"
+        autoTimingLabel.text = "Automatic beat cooldown: measuring first sequence…"
+        status.text = "Capture started · fade out ${if (fadeOutSwitch.isChecked) "ON" else "OFF"} · fade in ${if (fadeInSwitch.isChecked) "ON" else "OFF"}"
     }
 
     private fun stopCaptureService() {
