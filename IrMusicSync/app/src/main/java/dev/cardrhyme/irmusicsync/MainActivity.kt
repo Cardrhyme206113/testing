@@ -19,6 +19,12 @@ class MainActivity : Activity() {
     private lateinit var sensitivity: SeekBar
     private lateinit var interval: SeekBar
     private lateinit var intervalLabel: TextView
+    private lateinit var fadeLevels: SeekBar
+    private lateinit var fadeLevelsLabel: TextView
+    private lateinit var commandGap: SeekBar
+    private lateinit var commandGapLabel: TextView
+    private lateinit var colorDelay: SeekBar
+    private lateinit var colorDelayLabel: TextView
     private lateinit var captureButton: Button
 
     private data class LedColor(val name: String, val rgb: Int, val code: Long)
@@ -84,15 +90,36 @@ class MainActivity : Activity() {
         interval = SeekBar(this).apply {
             max = 800
             progress = 0
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    intervalLabel.text = "Minimum beat cooldown: ${200 + progress} ms"
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-            })
+            setOnSeekBarChangeListener(simpleListener { intervalLabel.text = "Minimum beat cooldown: ${200 + it} ms" })
         }
         content.addView(interval)
+
+        fadeLevelsLabel = label("Fade brightness steps each way: 2")
+        content.addView(fadeLevelsLabel)
+        fadeLevels = SeekBar(this).apply {
+            max = 6
+            progress = 2
+            setOnSeekBarChangeListener(simpleListener { fadeLevelsLabel.text = "Fade brightness steps each way: $it" })
+        }
+        content.addView(fadeLevels)
+
+        commandGapLabel = label("Gap after each IR command: 12 ms")
+        content.addView(commandGapLabel)
+        commandGap = SeekBar(this).apply {
+            max = 45
+            progress = 7
+            setOnSeekBarChangeListener(simpleListener { commandGapLabel.text = "Gap after each IR command: ${5 + it} ms" })
+        }
+        content.addView(commandGap)
+
+        colorDelayLabel = label("Delay before showing new color: 75 ms")
+        content.addView(colorDelayLabel)
+        colorDelay = SeekBar(this).apply {
+            max = 275
+            progress = 50
+            setOnSeekBarChangeListener(simpleListener { colorDelayLabel.text = "Delay before showing new color: ${25 + it} ms" })
+        }
+        content.addView(colorDelay)
 
         captureButton = Button(this).apply {
             text = "START DEVICE AUDIO CAPTURE"
@@ -119,9 +146,15 @@ class MainActivity : Activity() {
             })
         }
         content.addView(grid)
-        content.addView(label("On a real note/beat change: 6-step fade down, OFF, wait for cooldown, ON, 6-step fade up, then change color after 100 ms. Blue/cyan colors are excluded.", 13f))
+        content.addView(label("On a real note/beat change: fade down by the selected step count, OFF, wait for cooldown, ON, fade up by the same count, then show the new warm-spectrum color after the selected delay.", 13f))
 
         setContentView(ScrollView(this).apply { addView(content) })
+    }
+
+    private fun simpleListener(onChanged: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) = onChanged(progress)
+        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
     }
 
     private fun requestPlaybackCapture() {
@@ -147,11 +180,14 @@ class MainActivity : Activity() {
             putExtra(CaptureService.EXTRA_RESULT_DATA, data)
             putExtra(CaptureService.EXTRA_SENSITIVITY, sensitivity.progress)
             putExtra(CaptureService.EXTRA_INTERVAL, interval.progress)
+            putExtra(CaptureService.EXTRA_FADE_LEVELS, fadeLevels.progress)
+            putExtra(CaptureService.EXTRA_COMMAND_GAP, 5 + commandGap.progress)
+            putExtra(CaptureService.EXTRA_COLOR_DELAY, 25 + colorDelay.progress)
         }
         startForegroundService(serviceIntent)
         captureRunning = true
         captureButton.text = "STOP CAPTURE"
-        status.text = "Beat-change capture started · ${200 + interval.progress} ms cooldown"
+        status.text = "Capture started · ${fadeLevels.progress} steps · ${5 + commandGap.progress} ms gap"
     }
 
     private fun stopCaptureService() {
