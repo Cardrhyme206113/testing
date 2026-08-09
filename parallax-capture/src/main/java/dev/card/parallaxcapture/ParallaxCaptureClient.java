@@ -22,11 +22,12 @@ public final class ParallaxCaptureClient implements ClientModInitializer {
     );
 
     private static CaptureSession session;
+    private static CaptureConfig config;
 
     @Override
     public void onInitializeClient() {
         KeyBindingHelper.registerKeyBinding(CAPTURE_KEY);
-        CaptureConfig.load();
+        config = CaptureConfig.load();
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (CAPTURE_KEY.wasPressed()) {
@@ -39,10 +40,21 @@ public final class ParallaxCaptureClient implements ClientModInitializer {
         });
     }
 
+    public static CaptureConfig getConfig() {
+        if (config == null) config = CaptureConfig.load();
+        return config;
+    }
+
+    public static void applyConfig(CaptureConfig newConfig) {
+        newConfig.clamp();
+        config = newConfig.copy();
+        config.save();
+    }
+
     private static void start(MinecraftClient client) {
         if (client.player == null || client.world == null) return;
         try {
-            CaptureConfig cfg = CaptureConfig.load();
+            CaptureConfig cfg = getConfig().copy();
             session = new CaptureSession(client, cfg);
             client.player.sendMessage(Text.literal("Parallax capture started. F8 cancels. Don't touch the camera until it finishes.").formatted(Formatting.GREEN), false);
         } catch (Throwable t) {
