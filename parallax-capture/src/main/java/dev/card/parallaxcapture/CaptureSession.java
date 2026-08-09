@@ -22,7 +22,7 @@ public final class CaptureSession {
     }
 
     private record Pose(int index, int rightIndex, int upIndex, double x, double y, double z, float yaw, float pitch) {}
-    private record Pass(String folder, String shader) {}
+    private record Pass(String folder, String shader, long postF2SettleMs) {}
 
     private final MinecraftClient client;
     private final CaptureConfig cfg;
@@ -48,7 +48,7 @@ public final class CaptureSession {
     private final String relativeSessionDir;
 
     private int oldWidth, oldHeight;
-    private boolean oldHudHidden;
+    private final boolean originalHudHidden;
     private boolean resized;
 
     public CaptureSession(MinecraftClient client, CaptureConfig cfg) throws Exception {
@@ -65,6 +65,11 @@ public final class CaptureSession {
         this.originalFov = client.options.getFov().getValue();
         this.originalShader = iris.configuredPackName();
         this.originalShadersEnabled = iris.shadersEnabled();
+        this.originalHudHidden = client.options.hudHidden;
+
+        // Capture mode is UI-free from the moment the session starts. This also
+        // makes the F2-style warm-up screenshots clean, not just the final 4K frames.
+        forceUiHidden();
 
         String beauty = "@current".equalsIgnoreCase(cfg.beautyShader) ? originalShader : cfg.beautyShader;
         if (beauty == null || beauty.isBlank() || "(off)".equals(beauty)) {
@@ -72,8 +77,8 @@ public final class CaptureSession {
         }
         validateShaderExists(beauty, "beauty");
         validateShaderExists(cfg.depthShader, "depth");
-        passes.add(new Pass("beauty", beauty));
-        passes.add(new Pass("depth", cfg.depthShader));
+        passes.add(new Pass("beauty", beauty, cfg.beautySettleAfterWarmupMs));
+        passes.add(new Pass("depth", cfg.depthShader, cfg.depthSettleAfterWarmupMs));
 
         buildPoses();
 
@@ -103,6 +108,7 @@ public final class CaptureSession {
         double rightZ = -Math.sin(yawRad);
 
         int idx = 0;
+        // Center first, then the rest of the configurable camera-plane grid.
         poses.add(new Pose(idx++, 0, 0, originalX, originalY, originalZ, originalYaw, originalPitch));
         for (int up = cfg.gridRadius; up >= -cfg.gridRadius; up--) {
             for (int right = -cfg.gridRadius; right <= cfg.gridRadius; right++) {
@@ -126,6 +132,7 @@ public final class CaptureSession {
     public void onPreRender() {
         if (state == State.DONE) return;
         long now = System.currentTimeMillis();
+        forceUiHidden();
 
         try {
             switch (state) {
@@ -202,6 +209,7 @@ public final class CaptureSession {
         double dz = client.player.getZ() - p.z();
         boolean arrived = dx * dx + dy * dy + dz * dz < 0.01;
         if (arrived || now - teleportSentMs >= cfg.teleportTimeoutMs) {
+            // Keep a short margin between the actual teleport arrival and the F2-style warm-up.
             deadlineMs = now + cfg.warmupDelayMs;
             state = State.WAIT_WARMUP;
         }
@@ -219,15 +227,14 @@ public final class CaptureSession {
                     ignored -> {}
             );
         }
-        // Bliss warm-up requested by the capture workflow: TP -> 1s -> F2-style shot -> ~5s settle.
-        deadlineMs = now + cfg.settleAfterWarmupMs;
+        // Beauty needs a long accumulation window; depth can be captured much sooner.
+        deadlineMs = now + pass.postF2SettleMs();
         state = State.WAIT_SETTLE;
     }
 
     private void resizeForCapture() {
         oldWidth = client.getWindow().getWidth();
         oldHeight = client.getWindow().getHeight();
-        oldHudHidden = client.options.hudHidden;
         client.options.hudHidden = true;
         MinecraftInterface.resize(cfg.captureWidth, cfg.captureHeight);
         resized = true;
@@ -240,7 +247,6 @@ public final class CaptureSession {
         try {
             MinecraftInterface.resize(oldWidth, oldHeight);
         } finally {
-            client.options.hudHidden = oldHudHidden;
             resized = false;
         }
     }
@@ -271,6 +277,8 @@ public final class CaptureSession {
             ParallaxCaptureClient.LOGGER.warn("Could not fully restore capture state", t);
         }
 
+        client.options.hudHidden = originalHudHidden;
+
         if (client.player != null) {
             String msg = cancelled ? "Parallax capture cancelled." : "Parallax capture complete: screenshots/" + relativeSessionDir;
             client.player.sendMessage(Text.literal(msg).formatted(cancelled ? Formatting.YELLOW : Formatting.GREEN), false);
@@ -290,7 +298,8 @@ public final class CaptureSession {
         sb.append("  \"offsetStepBlocks\": ").append(cfg.offsetStepBlocks).append(",\n");
         sb.append("  \"gridRadius\": ").append(cfg.gridRadius).append(",\n");
         sb.append("  \"warmupDelayMs\": ").append(cfg.warmupDelayMs).append(",\n");
-        sb.append("  \"settleAfterWarmupMs\": ").append(cfg.settleAfterWarmupMs).append(",\n");
+        sb.append("  \"beautySettleAfterF2Ms\": ").append(cfg.beautySettleAfterWarmupMs).append(",\n");
+        sb.append("  \"depthSettleAfterF2Ms\": ").append(cfg.depthSettleAfterWarmupMs).append(",\n");
         sb.append("  \"beautyShader\": ").append(json(passes.isEmpty() ? null : passes.get(0).shader())).append(",\n");
         sb.append("  \"depthShader\": ").append(json(passes.size() < 2 ? cfg.depthShader : passes.get(1).shader())).append(",\n");
         sb.append("  \"captures\": [\n");
@@ -312,6 +321,13 @@ public final class CaptureSession {
                 ",\"poseIndex\":" + p.index() + ",\"rightIndex\":" + p.rightIndex() + ",\"upIndex\":" + p.upIndex() +
                 ",\"x\":" + p.x() + ",\"y\":" + p.y() + ",\"z\":" + p.z() +
                 ",\"yaw\":" + p.yaw() + ",\"pitch\":" + p.pitch() + ",\"file\":" + json(file) + "}";
+    }
+
+    private void forceUiHidden() {
+        client.options.hudHidden = true;
+        if (client.currentScreen != null) {
+            client.setScreen(null);
+        }
     }
 
     private void deleteWarmupDirectory() {
