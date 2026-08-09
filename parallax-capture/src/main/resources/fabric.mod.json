@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "parallaxcapture",
+  "version": "${version}",
+  "name": "Parallax Capture",
+  "description": "Automated multi-view beauty + depth shader capture for parallax wallpapers.",
+  "authors": ["Card + OpenAI"],
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.card.parallaxcapture.ParallaxCaptureClient"]
+  },
+  "mixins": ["parallaxcapture.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.14.21",
+    "fabric-api": "*",
+    "minecraft": "1.20.1",
+    "java": ">=17"
+  },
+  "suggests": {
+    "iris": "*"
+  }
+}
