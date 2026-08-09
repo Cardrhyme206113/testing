@@ -25,7 +25,8 @@ public final class CaptureConfigScreen extends Screen {
     private TextFieldWidget beautyShaderField;
     private TextFieldWidget depthShaderField;
     private TextFieldWidget warmupDelayField;
-    private TextFieldWidget settleField;
+    private TextFieldWidget beautySettleField;
+    private TextFieldWidget depthSettleField;
     private TextFieldWidget shaderSettleField;
     private TextFieldWidget teleportTimeoutField;
 
@@ -50,16 +51,17 @@ public final class CaptureConfigScreen extends Screen {
 
         widthField = addField("Capture width", Integer.toString(draft.captureWidth), left, top + row * 0, colWidth);
         heightField = addField("Capture height", Integer.toString(draft.captureHeight), left, top + row * 1, colWidth);
-        gridRadiusField = addField("Grid radius (1 = 3x3)", Integer.toString(draft.gridRadius), left, top + row * 2, colWidth);
+        gridRadiusField = addField("Grid radius (1=3x3, 2=5x5)", Integer.toString(draft.gridRadius), left, top + row * 2, colWidth);
         offsetField = addField("Offset per step (blocks)", fmt(draft.offsetStepBlocks), left, top + row * 3, colWidth);
         renderFramesField = addField("4K settle/render frames", Integer.toString(draft.highResRenderFrames), left, top + row * 4, colWidth);
         beautyShaderField = addField("Beauty shader (@current allowed)", draft.beautyShader, left, top + row * 5, colWidth);
 
         depthShaderField = addField("Depth shader filename/folder", draft.depthShader, right, top + row * 0, colWidth);
         warmupDelayField = addField("Delay after teleport before F2 (ms)", Long.toString(draft.warmupDelayMs), right, top + row * 1, colWidth);
-        settleField = addField("Settle after F2 (ms)", Long.toString(draft.settleAfterWarmupMs), right, top + row * 2, colWidth);
-        shaderSettleField = addField("Shader switch settle (ms)", Long.toString(draft.shaderSwitchSettleMs), right, top + row * 3, colWidth);
-        teleportTimeoutField = addField("Teleport timeout (ms)", Long.toString(draft.teleportTimeoutMs), right, top + row * 4, colWidth);
+        beautySettleField = addField("Beauty post-F2 settle (ms)", Long.toString(draft.beautySettleAfterWarmupMs), right, top + row * 2, colWidth);
+        depthSettleField = addField("Depth post-F2 settle (ms)", Long.toString(draft.depthSettleAfterWarmupMs), right, top + row * 3, colWidth);
+        shaderSettleField = addField("Shader switch settle (ms)", Long.toString(draft.shaderSwitchSettleMs), right, top + row * 4, colWidth);
+        teleportTimeoutField = addField("Teleport timeout (ms)", Long.toString(draft.teleportTimeoutMs), right, top + row * 5, colWidth);
 
         int boolY = top + row * 6 + 2;
         addDrawableChild(ButtonWidget.builder(toggleText("F2 warm-up", draft.warmupF2), b -> {
@@ -110,7 +112,8 @@ public final class CaptureConfigScreen extends Screen {
             c.beautyShader = beautyShaderField.getText().trim();
             c.depthShader = depthShaderField.getText().trim();
             c.warmupDelayMs = parseLong(warmupDelayField, "Warm-up delay");
-            c.settleAfterWarmupMs = parseLong(settleField, "Post-F2 settle");
+            c.beautySettleAfterWarmupMs = parseLong(beautySettleField, "Beauty post-F2 settle");
+            c.depthSettleAfterWarmupMs = parseLong(depthSettleField, "Depth post-F2 settle");
             c.shaderSwitchSettleMs = parseLong(shaderSettleField, "Shader settle");
             c.teleportTimeoutMs = parseLong(teleportTimeoutField, "Teleport timeout");
             c.clamp();
