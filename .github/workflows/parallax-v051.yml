@@ -1,0 +1,57 @@
+name: Build Parallax Capture v0.5.1 Surface Depth24
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - parallax-surface-fusion-v051
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Restore Fabric project source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          base64 -d parallax_capture_v051_project.tgz.b64 > /tmp/parallax.tgz
+          mkdir -p /tmp/parallax-src
+          tar -xzf /tmp/parallax.tgz -C /tmp/parallax-src
+          test -f /tmp/parallax-src/build.gradle
+          find /tmp/parallax-src/src/main -maxdepth 5 -type f | sort
+
+      - name: Build Fabric mod
+        working-directory: /tmp/parallax-src
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon clean build 2>&1 | tee /tmp/parallax-build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-capture-v051-build-log
+          path: /tmp/parallax-build.log
+          if-no-files-found: ignore
+
+      - name: Upload remapped jars
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-capture-v0.5.1-surface-depth24
+          path: /tmp/parallax-src/build/libs/*.jar
