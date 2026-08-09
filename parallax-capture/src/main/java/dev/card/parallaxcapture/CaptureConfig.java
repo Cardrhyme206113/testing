@@ -28,6 +28,44 @@ public final class CaptureConfig {
 
     private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve("parallax-capture.properties");
 
+    public static CaptureConfig defaults() {
+        return new CaptureConfig();
+    }
+
+    public CaptureConfig copy() {
+        CaptureConfig c = new CaptureConfig();
+        c.beautyShader = beautyShader;
+        c.depthShader = depthShader;
+        c.captureWidth = captureWidth;
+        c.captureHeight = captureHeight;
+        c.offsetStepBlocks = offsetStepBlocks;
+        c.gridRadius = gridRadius;
+        c.warmupDelayMs = warmupDelayMs;
+        c.settleAfterWarmupMs = settleAfterWarmupMs;
+        c.shaderSwitchSettleMs = shaderSwitchSettleMs;
+        c.teleportTimeoutMs = teleportTimeoutMs;
+        c.highResRenderFrames = highResRenderFrames;
+        c.warmupF2 = warmupF2;
+        c.keepWarmupImages = keepWarmupImages;
+        c.restoreOriginalPosition = restoreOriginalPosition;
+        c.restoreOriginalShader = restoreOriginalShader;
+        return c;
+    }
+
+    public void clamp() {
+        captureWidth = clamp(captureWidth, 320, 16384);
+        captureHeight = clamp(captureHeight, 180, 16384);
+        offsetStepBlocks = clamp(offsetStepBlocks, 0.0, 16.0);
+        gridRadius = clamp(gridRadius, 0, 5);
+        warmupDelayMs = clamp(warmupDelayMs, 0, 60000);
+        settleAfterWarmupMs = clamp(settleAfterWarmupMs, 0, 60000);
+        shaderSwitchSettleMs = clamp(shaderSwitchSettleMs, 0, 60000);
+        teleportTimeoutMs = clamp(teleportTimeoutMs, 500, 60000);
+        highResRenderFrames = clamp(highResRenderFrames, 1, 30);
+        beautyShader = beautyShader == null || beautyShader.isBlank() ? "@current" : beautyShader.trim();
+        depthShader = depthShader == null ? "" : depthShader.trim();
+    }
+
     public static CaptureConfig load() {
         CaptureConfig c = new CaptureConfig();
         Properties p = new Properties();
@@ -55,12 +93,13 @@ public final class CaptureConfig {
         c.keepWarmupImages = parseBoolean(p, "keep_warmup_images", c.keepWarmupImages);
         c.restoreOriginalPosition = parseBoolean(p, "restore_original_position", c.restoreOriginalPosition);
         c.restoreOriginalShader = parseBoolean(p, "restore_original_shader", c.restoreOriginalShader);
-
+        c.clamp();
         c.save();
         return c;
     }
 
     public void save() {
+        clamp();
         Properties p = new Properties();
         p.setProperty("beauty_shader", beautyShader);
         p.setProperty("depth_shader", depthShader);
@@ -81,7 +120,7 @@ public final class CaptureConfig {
         try {
             Files.createDirectories(PATH.getParent());
             try (BufferedWriter w = Files.newBufferedWriter(PATH)) {
-                p.store(w, "Parallax Capture 1.20.1\nShader names must exactly match files/folders in .minecraft/shaderpacks\nbeauty_shader=@current uses whatever Iris shader is active when capture starts.");
+                p.store(w, "Parallax Capture 1.20.1 - normally edit this through Mod Menu > Parallax Capture > Configure");
             }
         } catch (IOException e) {
             ParallaxCaptureClient.LOGGER.warn("Could not save {}", PATH, e);
@@ -89,22 +128,22 @@ public final class CaptureConfig {
     }
 
     private static int parseInt(Properties p, String k, int d, int min, int max) {
-        try { return Math.max(min, Math.min(max, Integer.parseInt(p.getProperty(k, Integer.toString(d)).trim()))); }
+        try { return clamp(Integer.parseInt(p.getProperty(k, Integer.toString(d)).trim()), min, max); }
         catch (Exception ignored) { return d; }
     }
-
     private static long parseLong(Properties p, String k, long d, long min, long max) {
-        try { return Math.max(min, Math.min(max, Long.parseLong(p.getProperty(k, Long.toString(d)).trim()))); }
+        try { return clamp(Long.parseLong(p.getProperty(k, Long.toString(d)).trim()), min, max); }
         catch (Exception ignored) { return d; }
     }
-
     private static double parseDouble(Properties p, String k, double d, double min, double max) {
-        try { return Math.max(min, Math.min(max, Double.parseDouble(p.getProperty(k, Double.toString(d)).trim()))); }
+        try { return clamp(Double.parseDouble(p.getProperty(k, Double.toString(d)).trim()), min, max); }
         catch (Exception ignored) { return d; }
     }
-
     private static boolean parseBoolean(Properties p, String k, boolean d) {
         String v = p.getProperty(k);
         return v == null ? d : Boolean.parseBoolean(v.trim());
     }
+    private static int clamp(int v, int min, int max) { return Math.max(min, Math.min(max, v)); }
+    private static long clamp(long v, long min, long max) { return Math.max(min, Math.min(max, v)); }
+    private static double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
 }
