@@ -67,10 +67,6 @@ public final class CaptureSession {
         this.originalShadersEnabled = iris.shadersEnabled();
         this.originalHudHidden = client.options.hudHidden;
 
-        // Capture mode is UI-free from the moment the session starts. This also
-        // makes the F2-style warm-up screenshots clean, not just the final 4K frames.
-        forceUiHidden();
-
         String beauty = "@current".equalsIgnoreCase(cfg.beautyShader) ? originalShader : cfg.beautyShader;
         if (beauty == null || beauty.isBlank() || "(off)".equals(beauty)) {
             throw new IllegalStateException("No beauty shader is active. Select one in Iris first or set beauty_shader in config.");
@@ -89,6 +85,10 @@ public final class CaptureSession {
         Files.createDirectories(sessionDir.resolve("depth"));
         Files.createDirectories(sessionDir.resolve("_warmup"));
         writeMetadata(false);
+
+        // Only enter UI-free mode after validation/setup succeeds, so a bad shader
+        // name can never leave the user's HUD/menu state altered.
+        forceUiHidden();
     }
 
     private void validateShaderExists(String name, String label) {
