@@ -6,6 +6,11 @@ on:
     paths:
       - 'parallax-capture/**'
       - '.github/workflows/parallax-capture-build.yml'
+  pull_request:
+    branches: [parallax-capture-mod]
+    paths:
+      - 'parallax-capture/**'
+      - '.github/workflows/parallax-capture-build.yml'
   workflow_dispatch:
 
 jobs:
