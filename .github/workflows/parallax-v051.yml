@@ -28,11 +28,11 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          base64 -d parallax_capture_v051_project.tgz.b64 > /tmp/parallax.tgz
+          cat pc051_chunks/chunk_* | base64 -d > /tmp/parallax.tgz
           mkdir -p /tmp/parallax-src
           tar -xzf /tmp/parallax.tgz -C /tmp/parallax-src
           test -f /tmp/parallax-src/build.gradle
-          find /tmp/parallax-src/src/main -maxdepth 5 -type f | sort
+          find /tmp/parallax-src/src/main -maxdepth 8 -type f | sort
 
       - name: Build Fabric mod
         working-directory: /tmp/parallax-src
