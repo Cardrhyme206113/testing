@@ -14,10 +14,11 @@ public final class CaptureConfig {
     public String depthShader = "PUT_DEPTH_SHADER_FILENAME_HERE.zip";
     public int captureWidth = 3840;
     public int captureHeight = 2160;
-    public double offsetStepBlocks = 0.20;
+    public double offsetStepBlocks = 2.0;
     public int gridRadius = 1;
     public long warmupDelayMs = 1000;
-    public long settleAfterWarmupMs = 5000;
+    public long beautySettleAfterWarmupMs = 5000;
+    public long depthSettleAfterWarmupMs = 500;
     public long shaderSwitchSettleMs = 5000;
     public long teleportTimeoutMs = 5000;
     public int highResRenderFrames = 3;
@@ -41,7 +42,8 @@ public final class CaptureConfig {
         c.offsetStepBlocks = offsetStepBlocks;
         c.gridRadius = gridRadius;
         c.warmupDelayMs = warmupDelayMs;
-        c.settleAfterWarmupMs = settleAfterWarmupMs;
+        c.beautySettleAfterWarmupMs = beautySettleAfterWarmupMs;
+        c.depthSettleAfterWarmupMs = depthSettleAfterWarmupMs;
         c.shaderSwitchSettleMs = shaderSwitchSettleMs;
         c.teleportTimeoutMs = teleportTimeoutMs;
         c.highResRenderFrames = highResRenderFrames;
@@ -58,7 +60,8 @@ public final class CaptureConfig {
         offsetStepBlocks = clamp(offsetStepBlocks, 0.0, 16.0);
         gridRadius = clamp(gridRadius, 0, 5);
         warmupDelayMs = clamp(warmupDelayMs, 0, 60000);
-        settleAfterWarmupMs = clamp(settleAfterWarmupMs, 0, 60000);
+        beautySettleAfterWarmupMs = clamp(beautySettleAfterWarmupMs, 0, 60000);
+        depthSettleAfterWarmupMs = clamp(depthSettleAfterWarmupMs, 0, 60000);
         shaderSwitchSettleMs = clamp(shaderSwitchSettleMs, 0, 60000);
         teleportTimeoutMs = clamp(teleportTimeoutMs, 500, 60000);
         highResRenderFrames = clamp(highResRenderFrames, 1, 30);
@@ -85,7 +88,9 @@ public final class CaptureConfig {
         c.offsetStepBlocks = parseDouble(p, "offset_step_blocks", c.offsetStepBlocks, 0.0, 16.0);
         c.gridRadius = parseInt(p, "grid_radius", c.gridRadius, 0, 5);
         c.warmupDelayMs = parseLong(p, "warmup_delay_ms", c.warmupDelayMs, 0, 60000);
-        c.settleAfterWarmupMs = parseLong(p, "settle_after_warmup_ms", c.settleAfterWarmupMs, 0, 60000);
+        long legacySettle = parseLong(p, "settle_after_warmup_ms", c.beautySettleAfterWarmupMs, 0, 60000);
+        c.beautySettleAfterWarmupMs = parseLong(p, "beauty_settle_after_f2_ms", legacySettle, 0, 60000);
+        c.depthSettleAfterWarmupMs = parseLong(p, "depth_settle_after_f2_ms", c.depthSettleAfterWarmupMs, 0, 60000);
         c.shaderSwitchSettleMs = parseLong(p, "shader_switch_settle_ms", c.shaderSwitchSettleMs, 0, 60000);
         c.teleportTimeoutMs = parseLong(p, "teleport_timeout_ms", c.teleportTimeoutMs, 500, 60000);
         c.highResRenderFrames = parseInt(p, "high_res_render_frames", c.highResRenderFrames, 1, 30);
@@ -108,7 +113,8 @@ public final class CaptureConfig {
         p.setProperty("offset_step_blocks", Double.toString(offsetStepBlocks));
         p.setProperty("grid_radius", Integer.toString(gridRadius));
         p.setProperty("warmup_delay_ms", Long.toString(warmupDelayMs));
-        p.setProperty("settle_after_warmup_ms", Long.toString(settleAfterWarmupMs));
+        p.setProperty("beauty_settle_after_f2_ms", Long.toString(beautySettleAfterWarmupMs));
+        p.setProperty("depth_settle_after_f2_ms", Long.toString(depthSettleAfterWarmupMs));
         p.setProperty("shader_switch_settle_ms", Long.toString(shaderSwitchSettleMs));
         p.setProperty("teleport_timeout_ms", Long.toString(teleportTimeoutMs));
         p.setProperty("high_res_render_frames", Integer.toString(highResRenderFrames));
