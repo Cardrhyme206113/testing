@@ -16,14 +16,23 @@ public final class CaptureConfig {
     public int captureHeight = 2160;
     public double offsetStepBlocks = 2.0;
     public int gridRadius = 1;
-    public long warmupDelayMs = 1000;
-    public long beautySettleAfterWarmupMs = 5000;
-    public long depthSettleAfterWarmupMs = 500;
-    public long shaderSwitchSettleMs = 5000;
+
+    // Pass-level shader reload settle. Depth is intentionally much faster.
+    public long beautyShaderSwitchSettleMs = 5000;
+    public long depthShaderSwitchSettleMs = 1000;
+
+    // Per-pose target-resolution timing.
+    // Beauty: resize -> 3s -> F2 -> 1s -> final screenshot -> restore.
+    public long beautyPreF2HighResMs = 3000;
+    public long beautyPostF2SettleMs = 1000;
+    // Depth does not need temporal accumulation like Bliss.
+    public long depthPreF2HighResMs = 0;
+    public long depthPostF2SettleMs = 500;
+
     public long teleportTimeoutMs = 5000;
-    public int highResRenderFrames = 3;
+    public int finalCaptureRenderFrames = 1;
     public boolean warmupF2 = true;
-    public boolean keepWarmupImages = false;
+    public boolean keepWarmupImages = true;
     public boolean restoreOriginalPosition = true;
     public boolean restoreOriginalShader = true;
 
@@ -41,12 +50,14 @@ public final class CaptureConfig {
         c.captureHeight = captureHeight;
         c.offsetStepBlocks = offsetStepBlocks;
         c.gridRadius = gridRadius;
-        c.warmupDelayMs = warmupDelayMs;
-        c.beautySettleAfterWarmupMs = beautySettleAfterWarmupMs;
-        c.depthSettleAfterWarmupMs = depthSettleAfterWarmupMs;
-        c.shaderSwitchSettleMs = shaderSwitchSettleMs;
+        c.beautyShaderSwitchSettleMs = beautyShaderSwitchSettleMs;
+        c.depthShaderSwitchSettleMs = depthShaderSwitchSettleMs;
+        c.beautyPreF2HighResMs = beautyPreF2HighResMs;
+        c.beautyPostF2SettleMs = beautyPostF2SettleMs;
+        c.depthPreF2HighResMs = depthPreF2HighResMs;
+        c.depthPostF2SettleMs = depthPostF2SettleMs;
         c.teleportTimeoutMs = teleportTimeoutMs;
-        c.highResRenderFrames = highResRenderFrames;
+        c.finalCaptureRenderFrames = finalCaptureRenderFrames;
         c.warmupF2 = warmupF2;
         c.keepWarmupImages = keepWarmupImages;
         c.restoreOriginalPosition = restoreOriginalPosition;
@@ -57,14 +68,16 @@ public final class CaptureConfig {
     public void clamp() {
         captureWidth = clamp(captureWidth, 320, 16384);
         captureHeight = clamp(captureHeight, 180, 16384);
-        offsetStepBlocks = clamp(offsetStepBlocks, 0.0, 16.0);
+        offsetStepBlocks = clamp(offsetStepBlocks, 0.0, 32.0);
         gridRadius = clamp(gridRadius, 0, 5);
-        warmupDelayMs = clamp(warmupDelayMs, 0, 60000);
-        beautySettleAfterWarmupMs = clamp(beautySettleAfterWarmupMs, 0, 60000);
-        depthSettleAfterWarmupMs = clamp(depthSettleAfterWarmupMs, 0, 60000);
-        shaderSwitchSettleMs = clamp(shaderSwitchSettleMs, 0, 60000);
+        beautyShaderSwitchSettleMs = clamp(beautyShaderSwitchSettleMs, 0, 60000);
+        depthShaderSwitchSettleMs = clamp(depthShaderSwitchSettleMs, 0, 60000);
+        beautyPreF2HighResMs = clamp(beautyPreF2HighResMs, 0, 60000);
+        beautyPostF2SettleMs = clamp(beautyPostF2SettleMs, 0, 60000);
+        depthPreF2HighResMs = clamp(depthPreF2HighResMs, 0, 60000);
+        depthPostF2SettleMs = clamp(depthPostF2SettleMs, 0, 60000);
         teleportTimeoutMs = clamp(teleportTimeoutMs, 500, 60000);
-        highResRenderFrames = clamp(highResRenderFrames, 1, 30);
+        finalCaptureRenderFrames = clamp(finalCaptureRenderFrames, 1, 30);
         beautyShader = beautyShader == null || beautyShader.isBlank() ? "@current" : beautyShader.trim();
         depthShader = depthShader == null ? "" : depthShader.trim();
     }
@@ -85,17 +98,25 @@ public final class CaptureConfig {
         c.depthShader = p.getProperty("depth_shader", c.depthShader).trim();
         c.captureWidth = parseInt(p, "capture_width", c.captureWidth, 320, 16384);
         c.captureHeight = parseInt(p, "capture_height", c.captureHeight, 180, 16384);
-        c.offsetStepBlocks = parseDouble(p, "offset_step_blocks", c.offsetStepBlocks, 0.0, 16.0);
+        c.offsetStepBlocks = parseDouble(p, "offset_step_blocks", c.offsetStepBlocks, 0.0, 32.0);
         c.gridRadius = parseInt(p, "grid_radius", c.gridRadius, 0, 5);
-        c.warmupDelayMs = parseLong(p, "warmup_delay_ms", c.warmupDelayMs, 0, 60000);
-        long legacySettle = parseLong(p, "settle_after_warmup_ms", c.beautySettleAfterWarmupMs, 0, 60000);
-        c.beautySettleAfterWarmupMs = parseLong(p, "beauty_settle_after_f2_ms", legacySettle, 0, 60000);
-        c.depthSettleAfterWarmupMs = parseLong(p, "depth_settle_after_f2_ms", c.depthSettleAfterWarmupMs, 0, 60000);
-        c.shaderSwitchSettleMs = parseLong(p, "shader_switch_settle_ms", c.shaderSwitchSettleMs, 0, 60000);
+
+        // v0.4 uses new, explicit timing keys. Old ambiguous v0.1-v0.3 timing
+        // keys are deliberately not inherited, so upgrading gets the corrected
+        // 3s-high-res -> F2 -> 1s-high-res beauty pipeline automatically.
+        c.beautyShaderSwitchSettleMs = parseLong(p, "beauty_shader_switch_settle_ms", c.beautyShaderSwitchSettleMs, 0, 60000);
+        c.depthShaderSwitchSettleMs = parseLong(p, "depth_shader_switch_settle_ms", c.depthShaderSwitchSettleMs, 0, 60000);
+        c.beautyPreF2HighResMs = parseLong(p, "beauty_pre_f2_highres_ms", c.beautyPreF2HighResMs, 0, 60000);
+        c.beautyPostF2SettleMs = parseLong(p, "beauty_post_f2_ms", c.beautyPostF2SettleMs, 0, 60000);
+        c.depthPreF2HighResMs = parseLong(p, "depth_pre_f2_highres_ms", c.depthPreF2HighResMs, 0, 60000);
+        c.depthPostF2SettleMs = parseLong(p, "depth_post_f2_ms", c.depthPostF2SettleMs, 0, 60000);
         c.teleportTimeoutMs = parseLong(p, "teleport_timeout_ms", c.teleportTimeoutMs, 500, 60000);
-        c.highResRenderFrames = parseInt(p, "high_res_render_frames", c.highResRenderFrames, 1, 30);
+        c.finalCaptureRenderFrames = parseInt(p, "final_capture_render_frames", c.finalCaptureRenderFrames, 1, 30);
         c.warmupF2 = parseBoolean(p, "warmup_f2", c.warmupF2);
-        c.keepWarmupImages = parseBoolean(p, "keep_warmup_images", c.keepWarmupImages);
+
+        // F2 images are real useful captures in v0.4. Use a new key so an old
+        // keep_warmup_images=false does not silently delete them after upgrade.
+        c.keepWarmupImages = parseBoolean(p, "keep_f2_images", c.keepWarmupImages);
         c.restoreOriginalPosition = parseBoolean(p, "restore_original_position", c.restoreOriginalPosition);
         c.restoreOriginalShader = parseBoolean(p, "restore_original_shader", c.restoreOriginalShader);
         c.clamp();
@@ -112,14 +133,16 @@ public final class CaptureConfig {
         p.setProperty("capture_height", Integer.toString(captureHeight));
         p.setProperty("offset_step_blocks", Double.toString(offsetStepBlocks));
         p.setProperty("grid_radius", Integer.toString(gridRadius));
-        p.setProperty("warmup_delay_ms", Long.toString(warmupDelayMs));
-        p.setProperty("beauty_settle_after_f2_ms", Long.toString(beautySettleAfterWarmupMs));
-        p.setProperty("depth_settle_after_f2_ms", Long.toString(depthSettleAfterWarmupMs));
-        p.setProperty("shader_switch_settle_ms", Long.toString(shaderSwitchSettleMs));
+        p.setProperty("beauty_shader_switch_settle_ms", Long.toString(beautyShaderSwitchSettleMs));
+        p.setProperty("depth_shader_switch_settle_ms", Long.toString(depthShaderSwitchSettleMs));
+        p.setProperty("beauty_pre_f2_highres_ms", Long.toString(beautyPreF2HighResMs));
+        p.setProperty("beauty_post_f2_ms", Long.toString(beautyPostF2SettleMs));
+        p.setProperty("depth_pre_f2_highres_ms", Long.toString(depthPreF2HighResMs));
+        p.setProperty("depth_post_f2_ms", Long.toString(depthPostF2SettleMs));
         p.setProperty("teleport_timeout_ms", Long.toString(teleportTimeoutMs));
-        p.setProperty("high_res_render_frames", Integer.toString(highResRenderFrames));
+        p.setProperty("final_capture_render_frames", Integer.toString(finalCaptureRenderFrames));
         p.setProperty("warmup_f2", Boolean.toString(warmupF2));
-        p.setProperty("keep_warmup_images", Boolean.toString(keepWarmupImages));
+        p.setProperty("keep_f2_images", Boolean.toString(keepWarmupImages));
         p.setProperty("restore_original_position", Boolean.toString(restoreOriginalPosition));
         p.setProperty("restore_original_shader", Boolean.toString(restoreOriginalShader));
 
