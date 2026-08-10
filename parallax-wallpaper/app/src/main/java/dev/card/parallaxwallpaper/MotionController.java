@@ -3,31 +3,35 @@ package dev.card.parallaxwallpaper;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.hardware.*;
+import android.view.Surface;
+import android.view.WindowManager;
 
 /**
- * Produces normalized -1..+1 wallpaper parallax from the gravity direction in
- * device coordinates. For a live wallpaper we only need tilt, not absolute 3D
- * heading, so TYPE_GRAVITY is simpler and more reliable than rotation vectors.
- * Falls back to a low-pass filtered accelerometer on devices without GRAVITY.
+ * Produces normalized -1..+1 wallpaper parallax from the gravity direction.
+ * Gravity is remapped into the CURRENT DISPLAY orientation so phones/tablets
+ * behave the same in portrait, landscape-left and landscape-right.
  */
 public final class MotionController implements SensorEventListener {
     private final SensorManager sm;
     private final Sensor sensor;
     private final Context context;
     private final boolean accelerometerFallback;
+    private final WindowManager windowManager;
 
     private boolean baselineSet = false;
     private boolean filterSet = false;
     private final float[] filtered = new float[3];
-    private float baseX, baseZ;
+    private float baseScreenX, baseZ;
     private volatile float x, y;
     private long eventCount = 0;
     private float maxExcursion = 0f;
     private boolean registered = false;
+    private int lastRotation = -1;
 
     public MotionController(Context c) {
         context = c.getApplicationContext();
         sm = (SensorManager)c.getSystemService(Context.SENSOR_SERVICE);
+        windowManager = (WindowManager)c.getSystemService(Context.WINDOW_SERVICE);
         Sensor s = sm.getDefaultSensor(Sensor.TYPE_GRAVITY);
         boolean accel = false;
         if (s == null) {
@@ -44,6 +48,7 @@ public final class MotionController implements SensorEventListener {
         x = y = 0f;
         eventCount = 0;
         maxExcursion = 0f;
+        lastRotation = displayRotation();
         registered = sensor != null && sm.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME);
         persistDiagnostics();
     }
@@ -63,7 +68,6 @@ public final class MotionController implements SensorEventListener {
 
         float gx=e.values[0], gy=e.values[1], gz=e.values[2];
         if(accelerometerFallback){
-            // Remove hand motion / taps and keep the slowly varying gravity component.
             final float a=0.86f;
             if(!filterSet){
                 filtered[0]=gx; filtered[1]=gy; filtered[2]=gz; filterSet=true;
@@ -77,28 +81,54 @@ public final class MotionController implements SensorEventListener {
 
         float g=(float)Math.sqrt(gx*gx+gy*gy+gz*gz);
         if(g<1e-3f) return;
-        float nx=gx/g, nz=gz/g;
+        float nx=gx/g, ny=gy/g, nz=gz/g;
+
+        int rotation=displayRotation();
+        if(rotation!=lastRotation){
+            lastRotation=rotation;
+            baselineSet=false;
+            x=y=0f;
+        }
+
+        // Sensor coordinates are tied to the device's natural orientation. Remap the
+        // horizontal component into screen space so landscape tablets/phones don't swap axes.
+        float screenX;
+        switch(rotation){
+            case Surface.ROTATION_90:  screenX=ny;  break;
+            case Surface.ROTATION_180: screenX=-nx; break;
+            case Surface.ROTATION_270: screenX=-ny; break;
+            case Surface.ROTATION_0:
+            default:                   screenX=nx;  break;
+        }
 
         if(!baselineSet){
-            baseX=nx; baseZ=nz; baselineSet=true;
+            baseScreenX=screenX;
+            baseZ=nz;
+            baselineSet=true;
             return;
         }
 
-        // Roughly 45 degrees of physical tilt from the starting pose reaches full travel.
+        // Roughly 45 degrees of physical tilt from the current orientation reaches full travel.
         final float full=(float)Math.sin(Math.toRadians(45.0));
 
-        // Horizontal direction intentionally opposes the raw gravity-axis change so the
-        // virtual viewpoint follows the side the phone is tilted toward.
-        float targetX=clamp(-(nx-baseX)/full,-1f,1f);
+        // Horizontal sign is intentionally inverted so the virtual viewpoint follows the
+        // side the screen is tilted toward. Z handles forward/back tilt in every rotation.
+        float targetX=clamp(-(screenX-baseScreenX)/full,-1f,1f);
         float targetY=clamp(-(nz-baseZ)/full,-1f,1f);
 
-        // Fast enough to feel attached to the phone, still filtered against tiny hand shake.
         x += (targetX-x)*0.28f;
         y += (targetY-y)*0.28f;
         maxExcursion=Math.max(maxExcursion,Math.max(Math.abs(x),Math.abs(y)));
 
-        // Roughly once per second at GAME rate. Lets the activity prove that sensor data moved.
         if((eventCount%60)==0) persistDiagnostics();
+    }
+
+    private int displayRotation(){
+        try {
+            return windowManager != null ? windowManager.getDefaultDisplay().getRotation() : Surface.ROTATION_0;
+        } catch(Throwable ignored) {
+            return Surface.ROTATION_0;
+        }
     }
 
     private void persistDiagnostics(){
@@ -109,6 +139,7 @@ public final class MotionController implements SensorEventListener {
         ed.putFloat("motion_x",x);
         ed.putFloat("motion_y",y);
         ed.putFloat("motion_max",maxExcursion);
+        ed.putInt("motion_rotation",lastRotation);
         ed.apply();
     }
 
