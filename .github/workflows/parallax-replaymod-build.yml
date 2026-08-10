@@ -19,7 +19,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Restore latest intact Parallax Capture source
+      - name: Restore consistent Parallax Capture v0.5.1 source
         shell: bash
         run: |
           set -euxo pipefail
@@ -27,15 +27,23 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import base64, re
-          s=Path('parallax_capture_v051_project.tgz.b64').read_text(encoding='utf-8')
-          s=re.sub(r'[^A-Za-z0-9+/=]', '', s)
-          s += '='*((-len(s))%4)
-          raw=base64.b64decode(s, validate=False)
+          # The branch head contains only chunk_00 from an unfinished v0.5.2
+          # repack. Recover the original v0.5.1 chunk_00 from the prefix copy,
+          # then append the still-v0.5.1 chunks 01..07.
+          prefix=Path('parallax_capture_v051_project.tgz.b64').read_text(encoding='utf-8')
+          prefix=re.sub(r'\s+', '', prefix)
+          parts=[prefix[:3497]]
+          for i in range(1,8):
+              s=Path(f'pc051_chunks/chunk_{i:02d}').read_text(encoding='utf-8')
+              parts.append(re.sub(r'\s+', '', s))
+          text=''.join(parts)
+          text=re.sub(r'[^A-Za-z0-9+/=]', '', text)
+          text += '='*((-len(text))%4)
+          raw=base64.b64decode(text, validate=False)
           Path('.reconstructed/source.tgz').write_bytes(raw)
-          print('chars',len(s),'bytes',len(raw),'magic',raw[:16])
+          print('base64 chars',len(text),'tgz bytes',len(raw),'magic',raw[:16])
           PY
-          file .reconstructed/source.tgz
-          tar -tzf .reconstructed/source.tgz | head -100
+          gzip -t .reconstructed/source.tgz
           tar -xzf .reconstructed/source.tgz -C .reconstructed/src
           test -f .reconstructed/src/build.gradle
           echo '--- reconstructed tree ---'
