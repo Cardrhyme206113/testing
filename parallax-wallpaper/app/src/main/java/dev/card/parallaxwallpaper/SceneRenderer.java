@@ -70,8 +70,8 @@ public final class SceneRenderer {
         float mx=motion.x(), my=motion.y();
         boolean landscape=width>height;
 
-        // The center capture fills tiny disocclusion gaps. In landscape we crop/zoom it a
-        // little so wide tablet screens don't feel like the camera suddenly pulled backward.
+        // Slight overscan in portrait and a stronger crop in landscape. The extra margin also
+        // helps hide edges/disocclusion while the camera moves farther for a stronger effect.
         if(fallbackTexture!=0){
             GLES30.glDisable(GLES30.GL_DEPTH_TEST);
             GLES30.glUseProgram(bgProgram);
@@ -80,8 +80,8 @@ public final class SceneRenderer {
             GLES30.glUniform1i(bgTex,0);
             GLES30.glUniform1f(bgScreenAspect,(float)width/height);
             GLES30.glUniform1f(bgTexAspect,textureAspect);
-            GLES30.glUniform1f(bgZoom,landscape?1.10f:1.0f);
-            float bgMotion=landscape?0.030f:0.025f;
+            GLES30.glUniform1f(bgZoom,landscape?1.22f:1.03f);
+            float bgMotion=landscape?0.045f:0.035f;
             GLES30.glUniform2f(bgShift,-mx*bgMotion,my*bgMotion);
             GLES30.glDrawArrays(GLES30.GL_TRIANGLES,0,3);
         }
@@ -89,23 +89,23 @@ public final class SceneRenderer {
 
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
 
-        // Slight landscape zoom: narrower FOV gives tablets a more intentional crop and also
-        // makes the authored depth separation read more clearly on large/wide displays.
-        float renderFov=landscape?Math.max(42f,fovY*0.88f):fovY;
+        // Narrower FOV = stronger zoom. Landscape gets a deliberately stronger crop so wide
+        // tablet screens retain a cinematic, depth-heavy framing instead of feeling pulled back.
+        float renderFov=landscape?Math.max(38f,fovY*0.80f):Math.max(46f,fovY*0.97f);
         float[] proj=new float[16];
         Matrix.perspectiveM(proj,0,renderFov,(float)width/height,.03f,2048f);
         GLES30.glUseProgram(program);
         GLES30.glUniformMatrix4fv(uProj,1,false,proj,0);
 
-        // Stay close to the +/-0.5 world-unit capture baseline but use more of it than before.
-        // Landscape gets a touch more travel because the extra screen width makes it useful.
-        float requested=Math.max(landscape?0.52f:0.50f,maxParallax*1.55f);
-        float travel=Math.min(requested,0.55f);
+        // Stronger than v0.6. This intentionally reaches a little past the original +/-0.5
+        // authored capture baseline; the center beauty layer remains behind it to fill gaps.
+        float requested=Math.max(landscape?0.64f:0.60f,maxParallax*1.90f);
+        float travel=Math.min(requested,0.68f);
         GLES30.glUniform3f(uCamera,mx*travel,my*travel,0f);
 
-        // Camera rotation is a lightweight visual amplifier: the mesh translation remains the
-        // actual depth parallax, while this makes the effect easier to perceive at normal tilts.
-        float tilt=(float)Math.toRadians(landscape?6.0:5.25);
+        // Extra rotation makes depth separation obvious even before the translation reaches
+        // its maximum. Landscape is amplified slightly more for large tablet displays.
+        float tilt=(float)Math.toRadians(landscape?9.0:7.5);
         GLES30.glUniform2f(uTilt,mx*tilt,my*tilt);
 
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER,vbo);
