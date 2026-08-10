@@ -84,9 +84,12 @@ public final class MotionController implements SensorEventListener {
             return;
         }
 
-        // sin(12deg) ~= 0.208. A ~12 degree tilt therefore reaches full travel.
-        final float full=(float)Math.sin(Math.toRadians(12.0));
-        float targetX=clamp((nx-baseX)/full,-1f,1f);
+        // Roughly 45 degrees of physical tilt from the starting pose reaches full travel.
+        final float full=(float)Math.sin(Math.toRadians(45.0));
+
+        // Horizontal direction intentionally opposes the raw gravity-axis change so the
+        // virtual viewpoint follows the side the phone is tilted toward.
+        float targetX=clamp(-(nx-baseX)/full,-1f,1f);
         float targetY=clamp(-(nz-baseZ)/full,-1f,1f);
 
         // Fast enough to feel attached to the phone, still filtered against tiny hand shake.
