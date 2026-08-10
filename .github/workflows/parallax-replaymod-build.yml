@@ -24,7 +24,18 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p .reconstructed/src
-          base64 -d parallax_capture_v051_project.tgz.b64 > .reconstructed/source.tgz
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, re
+          s=Path('parallax_capture_v051_project.tgz.b64').read_text(encoding='utf-8')
+          s=re.sub(r'[^A-Za-z0-9+/=]', '', s)
+          s += '='*((-len(s))%4)
+          raw=base64.b64decode(s, validate=False)
+          Path('.reconstructed/source.tgz').write_bytes(raw)
+          print('chars',len(s),'bytes',len(raw),'magic',raw[:16])
+          PY
+          file .reconstructed/source.tgz
+          tar -tzf .reconstructed/source.tgz | head -100
           tar -xzf .reconstructed/source.tgz -C .reconstructed/src
           test -f .reconstructed/src/build.gradle
           echo '--- reconstructed tree ---'
