@@ -16,7 +16,7 @@ public final class SceneRenderer {
     private final MotionController motion;
     private int program, bgProgram, vbo;
     private int aPos, aUv, uProj, uCamera, uTilt, uTex;
-    private int bgScreenAspect, bgTexAspect, bgTex, bgShift;
+    private int bgScreenAspect, bgTexAspect, bgTex, bgShift, bgZoom;
     private int[] textures = new int[0];
     private int[] triangleCounts = new int[0];
     private int[] drawLayerOrder = new int[0];
@@ -43,6 +43,7 @@ public final class SceneRenderer {
         bgTexAspect=GLES30.glGetUniformLocation(bgProgram,"uTexAspect");
         bgTex=GLES30.glGetUniformLocation(bgProgram,"uTex");
         bgShift=GLES30.glGetUniformLocation(bgProgram,"uShift");
+        bgZoom=GLES30.glGetUniformLocation(bgProgram,"uZoom");
         try {
             loadCurrent();
             context.getSharedPreferences(PackStore.PREFS,0).edit()
@@ -57,15 +58,20 @@ public final class SceneRenderer {
         }
     }
 
-    public void surfaceChanged(int w,int h){width=Math.max(1,w);height=Math.max(1,h);GLES30.glViewport(0,0,width,height);}
+    public void surfaceChanged(int w,int h){
+        width=Math.max(1,w);
+        height=Math.max(1,h);
+        GLES30.glViewport(0,0,width,height);
+    }
 
     public void drawFrame() {
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT|GLES30.GL_DEPTH_BUFFER_BIT);
 
         float mx=motion.x(), my=motion.y();
+        boolean landscape=width>height;
 
-        // Center capture is both a hole-filler and a diagnostic fallback. Give it a very small
-        // sensor shift too, so it is immediately obvious whether phone motion is being received.
+        // The center capture fills tiny disocclusion gaps. In landscape we crop/zoom it a
+        // little so wide tablet screens don't feel like the camera suddenly pulled backward.
         if(fallbackTexture!=0){
             GLES30.glDisable(GLES30.GL_DEPTH_TEST);
             GLES30.glUseProgram(bgProgram);
@@ -74,24 +80,32 @@ public final class SceneRenderer {
             GLES30.glUniform1i(bgTex,0);
             GLES30.glUniform1f(bgScreenAspect,(float)width/height);
             GLES30.glUniform1f(bgTexAspect,textureAspect);
-            GLES30.glUniform2f(bgShift,-mx*0.018f,my*0.018f);
+            GLES30.glUniform1f(bgZoom,landscape?1.10f:1.0f);
+            float bgMotion=landscape?0.030f:0.025f;
+            GLES30.glUniform2f(bgShift,-mx*bgMotion,my*bgMotion);
             GLES30.glDrawArrays(GLES30.GL_TRIANGLES,0,3);
         }
         if(!ready) return;
 
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
-        float[] proj=new float[16]; Matrix.perspectiveM(proj,0,fovY,(float)width/height,.03f,2048f);
+
+        // Slight landscape zoom: narrower FOV gives tablets a more intentional crop and also
+        // makes the authored depth separation read more clearly on large/wide displays.
+        float renderFov=landscape?Math.max(42f,fovY*0.88f):fovY;
+        float[] proj=new float[16];
+        Matrix.perspectiveM(proj,0,renderFov,(float)width/height,.03f,2048f);
         GLES30.glUseProgram(program);
         GLES30.glUniformMatrix4fv(uProj,1,false,proj,0);
 
-        // The source scene was captured about +/-0.5 world units from center. The original
-        // .32 travel was needlessly conservative, so use almost the full authored baseline.
-        float travel=Math.max(0.45f,maxParallax*1.4f);
+        // Stay close to the +/-0.5 world-unit capture baseline but use more of it than before.
+        // Landscape gets a touch more travel because the extra screen width makes it useful.
+        float requested=Math.max(landscape?0.52f:0.50f,maxParallax*1.55f);
+        float travel=Math.min(requested,0.55f);
         GLES30.glUniform3f(uCamera,mx*travel,my*travel,0f);
 
-        // A tiny camera rotation makes phone tilt read naturally while translation provides
-        // the real depth-dependent parallax. This remains intentionally subtle.
-        float tilt=(float)Math.toRadians(3.25);
+        // Camera rotation is a lightweight visual amplifier: the mesh translation remains the
+        // actual depth parallax, while this makes the effect easier to perceive at normal tilts.
+        float tilt=(float)Math.toRadians(landscape?6.0:5.25);
         GLES30.glUniform2f(uTilt,mx*tilt,my*tilt);
 
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER,vbo);
@@ -206,6 +220,6 @@ public final class SceneRenderer {
     private static final String BG_VS=
             "#version 300 es\nout vec2 ndc; void main(){ vec2 p=gl_VertexID==0?vec2(-1.0,-1.0):(gl_VertexID==1?vec2(3.0,-1.0):vec2(-1.0,3.0)); ndc=p; gl_Position=vec4(p,0.999,1.0); }";
     private static final String BG_FS=
-            "#version 300 es\nprecision mediump float; in vec2 ndc; uniform sampler2D uTex; uniform float uScreenAspect,uTexAspect; uniform vec2 uShift; out vec4 frag; " +
-            "void main(){ vec2 uv=vec2(0.5+0.5*ndc.x*(uScreenAspect/uTexAspect),0.5-0.5*ndc.y)+uShift; frag=texture(uTex,clamp(uv,0.0,1.0)); }";
+            "#version 300 es\nprecision mediump float; in vec2 ndc; uniform sampler2D uTex; uniform float uScreenAspect,uTexAspect,uZoom; uniform vec2 uShift; out vec4 frag; " +
+            "void main(){ vec2 d=vec2(0.5*ndc.x*(uScreenAspect/uTexAspect),-0.5*ndc.y)/max(uZoom,0.001); vec2 uv=vec2(0.5)+d+uShift; frag=texture(uTex,clamp(uv,0.0,1.0)); }";
 }
