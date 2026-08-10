@@ -132,7 +132,11 @@ public final class PackStore {
     }
 
     public static JSONObject readPack(File dir) throws Exception {
-        return new JSONObject(java.nio.file.Files.readString(new File(dir, "pack.json").toPath()));
+        try (InputStream in = new BufferedInputStream(new FileInputStream(new File(dir, "pack.json")));
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            copy(in, out);
+            return new JSONObject(out.toString(StandardCharsets.UTF_8.name()));
+        }
     }
 
     private static JSONArray defaultLayerOrder(int n) { JSONArray a = new JSONArray(); for (int i=0;i<n;i++) a.put(i); return a; }
