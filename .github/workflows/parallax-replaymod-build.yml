@@ -55,6 +55,12 @@ jobs:
           find .reconstructed/src -maxdepth 8 -type f | sort | head -300
           echo '--- likely capture sources ---'
           grep -RIlE 'capture|Camera|GameRenderer|screenshot|pose_' .reconstructed/src --include='*.java' | sort | head -100 || true
+      - name: Upload reconstructed source
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-capture-source
+          path: .reconstructed/src
+          if-no-files-found: error
       - name: Build reconstructed mod
         shell: bash
         run: |
