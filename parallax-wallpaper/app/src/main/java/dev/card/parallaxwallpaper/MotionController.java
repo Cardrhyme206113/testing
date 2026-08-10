@@ -1,84 +1,112 @@
 package dev.card.parallaxwallpaper;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.hardware.*;
 
 /**
- * Produces normalized -1..+1 parallax motion from the phone's orientation
- * relative to the orientation at which the wallpaper became visible.
- *
- * We deliberately do NOT use SensorManager.getOrientation() pitch/roll here.
- * Those Euler components depend heavily on how the device is oriented relative
- * to the world and can map an upright portrait left/right tilt into azimuth.
- * Relative quaternions keep the motion in the phone's starting coordinate frame.
+ * Produces normalized -1..+1 wallpaper parallax from the gravity direction in
+ * device coordinates. For a live wallpaper we only need tilt, not absolute 3D
+ * heading, so TYPE_GRAVITY is simpler and more reliable than rotation vectors.
+ * Falls back to a low-pass filtered accelerometer on devices without GRAVITY.
  */
 public final class MotionController implements SensorEventListener {
     private final SensorManager sm;
     private final Sensor sensor;
-    private final float[] baseQ = new float[4]; // [w,x,y,z]
+    private final Context context;
+    private final boolean accelerometerFallback;
+
     private boolean baselineSet = false;
+    private boolean filterSet = false;
+    private final float[] filtered = new float[3];
+    private float baseX, baseZ;
     private volatile float x, y;
+    private long eventCount = 0;
+    private float maxExcursion = 0f;
+    private boolean registered = false;
 
     public MotionController(Context c) {
+        context = c.getApplicationContext();
         sm = (SensorManager)c.getSystemService(Context.SENSOR_SERVICE);
-        Sensor s = sm.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
-        sensor = s != null ? s : sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+        Sensor s = sm.getDefaultSensor(Sensor.TYPE_GRAVITY);
+        boolean accel = false;
+        if (s == null) {
+            s = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+            accel = true;
+        }
+        sensor = s;
+        accelerometerFallback = accel;
     }
 
     public void start() {
         baselineSet = false;
+        filterSet = false;
         x = y = 0f;
-        if (sensor != null) sm.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME);
+        eventCount = 0;
+        maxExcursion = 0f;
+        registered = sensor != null && sm.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME);
+        persistDiagnostics();
     }
-    public void stop() { sm.unregisterListener(this); }
+
+    public void stop() {
+        sm.unregisterListener(this);
+        persistDiagnostics();
+    }
+
     public float x() { return x; }
     public float y() { return y; }
     public String sensorName() { return sensor == null ? "none" : sensor.getName(); }
+    public boolean registered() { return registered; }
 
     @Override public void onSensorChanged(SensorEvent e) {
-        float[] q = new float[4];
-        SensorManager.getQuaternionFromVector(q, e.values); // Android returns [w,x,y,z]
+        eventCount++;
 
-        if (!baselineSet) {
-            System.arraycopy(q, 0, baseQ, 0, 4);
-            baselineSet = true;
+        float gx=e.values[0], gy=e.values[1], gz=e.values[2];
+        if(accelerometerFallback){
+            // Remove hand motion / taps and keep the slowly varying gravity component.
+            final float a=0.86f;
+            if(!filterSet){
+                filtered[0]=gx; filtered[1]=gy; filtered[2]=gz; filterSet=true;
+            } else {
+                filtered[0]=a*filtered[0]+(1f-a)*gx;
+                filtered[1]=a*filtered[1]+(1f-a)*gy;
+                filtered[2]=a*filtered[2]+(1f-a)*gz;
+            }
+            gx=filtered[0]; gy=filtered[1]; gz=filtered[2];
+        }
+
+        float g=(float)Math.sqrt(gx*gx+gy*gy+gz*gz);
+        if(g<1e-3f) return;
+        float nx=gx/g, nz=gz/g;
+
+        if(!baselineSet){
+            baseX=nx; baseZ=nz; baselineSet=true;
             return;
         }
 
-        // Relative orientation qRel = inverse(base) * current.
-        float bw=baseQ[0], bx=-baseQ[1], by=-baseQ[2], bz=-baseQ[3];
-        float cw=q[0], cx=q[1], cy=q[2], cz=q[3];
-        float rw = bw*cw - bx*cx - by*cy - bz*cz;
-        float rx = bw*cx + bx*cw + by*cz - bz*cy;
-        float ry = bw*cy - bx*cz + by*cw + bz*cx;
-        float rz = bw*cz + bx*cy - by*cx + bz*cw;
+        // sin(12deg) ~= 0.208. A ~12 degree tilt therefore reaches full travel.
+        final float full=(float)Math.sin(Math.toRadians(12.0));
+        float targetX=clamp((nx-baseX)/full,-1f,1f);
+        float targetY=clamp(-(nz-baseZ)/full,-1f,1f);
 
-        float n=(float)Math.sqrt(rw*rw+rx*rx+ry*ry+rz*rz);
-        if(n>1e-6f){rw/=n;rx/=n;ry/=n;rz/=n;}
-        // q and -q are the same orientation. Pick the short-arc representation.
-        if(rw<0f){rw=-rw;rx=-rx;ry=-ry;rz=-rz;}
-        rw=clamp(rw,-1f,1f);
+        // Fast enough to feel attached to the phone, still filtered against tiny hand shake.
+        x += (targetX-x)*0.28f;
+        y += (targetY-y)*0.28f;
+        maxExcursion=Math.max(maxExcursion,Math.max(Math.abs(x),Math.abs(y)));
 
-        float angle=2f*(float)Math.acos(rw);
-        float s=(float)Math.sqrt(Math.max(0f,1f-rw*rw));
-        float rotX,rotY;
-        if(s<1e-4f){
-            // Small-angle quaternion: rotation vector ~= 2*q.xyz.
-            rotX=2f*rx;
-            rotY=2f*ry;
-        } else {
-            rotX=rx/s*angle;
-            rotY=ry/s*angle;
-        }
+        // Roughly once per second at GAME rate. Lets the activity prove that sensor data moved.
+        if((eventCount%60)==0) persistDiagnostics();
+    }
 
-        // About 10 degrees of physical tilt reaches full parallax travel.
-        float range=(float)Math.toRadians(10.0);
-        float targetX=clamp(rotY/range,-1f,1f);   // turn/tilt left-right
-        float targetY=clamp(-rotX/range,-1f,1f); // tilt top/bottom
-
-        // Responsive but not shaky.
-        x += (targetX-x)*0.24f;
-        y += (targetY-y)*0.24f;
+    private void persistDiagnostics(){
+        SharedPreferences.Editor ed=context.getSharedPreferences(PackStore.PREFS,0).edit();
+        ed.putString("motion_sensor",sensorName());
+        ed.putBoolean("motion_registered",registered);
+        ed.putLong("motion_events",eventCount);
+        ed.putFloat("motion_x",x);
+        ed.putFloat("motion_y",y);
+        ed.putFloat("motion_max",maxExcursion);
+        ed.apply();
     }
 
     @Override public void onAccuracyChanged(Sensor sensor, int accuracy) {}
