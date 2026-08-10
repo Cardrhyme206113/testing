@@ -6,6 +6,10 @@ on:
     paths:
       - 'parallax-wallpaper/**'
       - '.github/workflows/parallax-wallpaper-build.yml'
+  pull_request:
+    paths:
+      - 'parallax-wallpaper/**'
+      - '.github/workflows/parallax-wallpaper-build.yml'
   workflow_dispatch:
 
 jobs:
