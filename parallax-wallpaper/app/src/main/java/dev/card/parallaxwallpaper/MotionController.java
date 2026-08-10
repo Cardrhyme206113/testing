@@ -108,16 +108,16 @@ public final class MotionController implements SensorEventListener {
             return;
         }
 
-        // Roughly 45 degrees of physical tilt from the current orientation reaches full travel.
-        final float full=(float)Math.sin(Math.toRadians(45.0));
+        // Roughly 30 degrees of physical tilt from the current orientation reaches full travel.
+        final float full=(float)Math.sin(Math.toRadians(30.0));
 
         // Horizontal sign is intentionally inverted so the virtual viewpoint follows the
         // side the screen is tilted toward. Z handles forward/back tilt in every rotation.
         float targetX=clamp(-(screenX-baseScreenX)/full,-1f,1f);
         float targetY=clamp(-(nz-baseZ)/full,-1f,1f);
 
-        x += (targetX-x)*0.28f;
-        y += (targetY-y)*0.28f;
+        x += (targetX-x)*0.30f;
+        y += (targetY-y)*0.30f;
         maxExcursion=Math.max(maxExcursion,Math.max(Math.abs(x),Math.abs(y)));
 
         if((eventCount%60)==0) persistDiagnostics();
