@@ -27,7 +27,7 @@ public class MainActivity extends Activity {
         Button choose = button("Choose scene ZIP"); root.addView(choose);
         setButton = button("Set current scene as wallpaper"); setButton.setEnabled(PackStore.currentScene(this) != null); root.addView(setButton);
         status = text(currentStatus(), 14, Color.rgb(190,190,200)); status.setPadding(0,30,0,0); root.addView(status);
-        TextView note = text("Format: ParallaxPack v1 • static fused triangle mesh • 9 beauty textures • relative gyro/quaternion camera motion • OpenGL ES 3", 12, Color.rgb(125,128,140));
+        TextView note = text("Format: ParallaxPack v1 • static fused triangle mesh • 9 beauty textures • gravity/accelerometer tilt • OpenGL ES 3", 12, Color.rgb(125,128,140));
         note.setPadding(0,30,0,0); root.addView(note);
         setContentView(root);
 
@@ -47,8 +47,16 @@ public class MainActivity extends Activity {
     private String currentStatus() {
         File f = PackStore.currentScene(this);
         if(f==null) return "No scene imported yet.";
-        String render = getSharedPreferences(PackStore.PREFS,0).getString("renderer_status", "Renderer has not started yet.");
-        return "Current scene: " + f.getName() + "\nRenderer: " + render;
+        android.content.SharedPreferences p=getSharedPreferences(PackStore.PREFS,0);
+        String render=p.getString("renderer_status", "Renderer has not started yet.");
+        String sensor=p.getString("motion_sensor", "unknown");
+        boolean registered=p.getBoolean("motion_registered",false);
+        long events=p.getLong("motion_events",0);
+        float mx=p.getFloat("motion_x",0f), my=p.getFloat("motion_y",0f), max=p.getFloat("motion_max",0f);
+        return "Current scene: " + f.getName() +
+                "\nRenderer: " + render +
+                "\nTilt sensor: " + sensor + " • registered=" + registered +
+                "\nEvents=" + events + " • last=(" + String.format("%.2f",mx) + ", " + String.format("%.2f",my) + ") • max=" + String.format("%.2f",max);
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
