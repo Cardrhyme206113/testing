@@ -27,7 +27,7 @@ public class MainActivity extends Activity {
         Button choose = button("Choose scene ZIP"); root.addView(choose);
         setButton = button("Set current scene as wallpaper"); setButton.setEnabled(PackStore.currentScene(this) != null); root.addView(setButton);
         status = text(currentStatus(), 14, Color.rgb(190,190,200)); status.setPadding(0,30,0,0); root.addView(status);
-        TextView note = text("Format: ParallaxPack v1 • static fused triangle mesh • 9 beauty textures • gyro camera translation • OpenGL ES 3", 12, Color.rgb(125,128,140));
+        TextView note = text("Format: ParallaxPack v1 • static fused triangle mesh • 9 beauty textures • relative gyro/quaternion camera motion • OpenGL ES 3", 12, Color.rgb(125,128,140));
         note.setPadding(0,30,0,0); root.addView(note);
         setContentView(root);
 
@@ -38,8 +38,17 @@ public class MainActivity extends Activity {
         setButton.setOnClickListener(v -> launchWallpaperPicker());
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        if(status!=null) status.setText(currentStatus());
+        if(setButton!=null) setButton.setEnabled(PackStore.currentScene(this)!=null);
+    }
+
     private String currentStatus() {
-        File f = PackStore.currentScene(this); return f == null ? "No scene imported yet." : "Current scene: " + f.getName();
+        File f = PackStore.currentScene(this);
+        if(f==null) return "No scene imported yet.";
+        String render = getSharedPreferences(PackStore.PREFS,0).getString("renderer_status", "Renderer has not started yet.");
+        return "Current scene: " + f.getName() + "\nRenderer: " + render;
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -50,6 +59,7 @@ public class MainActivity extends Activity {
         io.execute(() -> {
             try {
                 PackStore.ImportResult r = PackStore.importScene(this, uri);
+                getSharedPreferences(PackStore.PREFS,0).edit().remove("renderer_status").apply();
                 runOnUiThread(() -> {
                     status.setText("Imported ✓  " + String.format("%,d", r.triangles) + " triangles\n" + r.dir.getName());
                     setButton.setEnabled(true);
