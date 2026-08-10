@@ -16,41 +16,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Reconstruct latest Parallax Capture source
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Restore latest intact Parallax Capture source
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p .reconstructed
-          python3 - <<'PY'
-          from pathlib import Path
-          import base64, gzip, re
-          chunks=[]
-          for p in sorted(Path('pc051_chunks').glob('chunk_*')):
-              s=p.read_text(encoding='utf-8')
-              s=re.sub(r'\s+', '', s)
-              chunks.append(s)
-              print(p, len(s))
-          text=''.join(chunks)
-          text=re.sub(r'[^A-Za-z0-9+/=]', '', text)
-          text += '=' * ((-len(text)) % 4)
-          raw=base64.b64decode(text, validate=False)
-          Path('.reconstructed/source.gz').write_bytes(raw)
-          out=gzip.decompress(raw)
-          Path('.reconstructed/source.bundle').write_bytes(out)
-          print('base64 chars',len(text),'gzip bytes',len(raw),'bundle bytes',len(out),'magic',out[:16])
-          PY
-          file .reconstructed/source.bundle
-          if unzip -t .reconstructed/source.bundle >/dev/null 2>&1; then
-            mkdir -p .reconstructed/src
-            unzip -q .reconstructed/source.bundle -d .reconstructed/src
-          elif tar -tf .reconstructed/source.bundle >/dev/null 2>&1; then
-            mkdir -p .reconstructed/src
-            tar -xf .reconstructed/source.bundle -C .reconstructed/src
-          else
-            echo 'Unknown reconstructed source bundle format' >&2
-            xxd -l 64 .reconstructed/source.bundle
-            exit 2
-          fi
+          mkdir -p .reconstructed/src
+          base64 -d parallax_capture_v051_project.tgz.b64 > .reconstructed/source.tgz
+          tar -xzf .reconstructed/source.tgz -C .reconstructed/src
+          test -f .reconstructed/src/build.gradle
           echo '--- reconstructed tree ---'
           find .reconstructed/src -maxdepth 8 -type f | sort | head -300
           echo '--- likely capture sources ---'
@@ -62,18 +38,15 @@ jobs:
           path: .reconstructed/src
           if-no-files-found: error
       - name: Build reconstructed mod
+        working-directory: .reconstructed/src
         shell: bash
         run: |
           set -euxo pipefail
-          ROOT=$(find .reconstructed/src -type f -name gradlew -printf '%h\n' | head -1)
-          test -n "$ROOT"
-          chmod +x "$ROOT/gradlew"
-          cd "$ROOT"
-          ./gradlew build --stacktrace
+          gradle --no-daemon clean build --stacktrace
           find build/libs -maxdepth 1 -type f -name '*.jar' -print
       - name: Upload built mod
         uses: actions/upload-artifact@v4
         with:
           name: parallax-capture-replaymod
-          path: .reconstructed/src/**/build/libs/*.jar
+          path: .reconstructed/src/build/libs/*.jar
           if-no-files-found: error
