@@ -1,0 +1,107 @@
+diff -ruN a/README.md b/README.md
+--- a/README.md	2026-08-10 18:41:48.000000000 +0000
++++ b/README.md	2026-08-10 19:00:46.740676036 +0000
+@@ -1,9 +1,12 @@
+-# Parallax Capture 0.5.3 — Render-camera / ReplayMod capture
++# Parallax Capture 0.5.4 — ReplayMod hotkey fix
+ 
+ Fabric 1.20.1 client mod for spatial screenshots (beauty + depth + surface-depth24).
+ 
+ ## What changed
+ 
++**0.5.4:** F8 now has a direct GLFW edge-detection fallback in the render loop, so ReplayMod contextual keybinding filtering cannot swallow the capture trigger. The normal Fabric keybinding remains registered and both paths are deduplicated.
++
++
+ F8 capture no longer teleports or rotates the networked player. The 3x3/5x5 capture grid is applied only to Minecraft's **render Camera**. This means:
+ 
+ - no OP permission or `/tp` command is required;
+diff -ruN a/gradle.properties b/gradle.properties
+--- a/gradle.properties	2026-08-10 18:41:48.000000000 +0000
++++ b/gradle.properties	2026-08-10 19:00:46.740628927 +0000
+@@ -4,7 +4,7 @@
+ yarn_mappings=1.20.1+build.10
+ loader_version=0.15.11
+ fabric_version=0.92.2+1.20.1
+-mod_version=0.5.3-replay-camera
++mod_version=0.5.4-replay-hotkey
+ maven_group=dev.card
+ archives_base_name=parallax-capture
+ 
+diff -ruN a/src/main/java/dev/card/parallaxcapture/ParallaxCaptureClient.java b/src/main/java/dev/card/parallaxcapture/ParallaxCaptureClient.java
+--- a/src/main/java/dev/card/parallaxcapture/ParallaxCaptureClient.java	2026-08-10 18:41:48.000000000 +0000
++++ b/src/main/java/dev/card/parallaxcapture/ParallaxCaptureClient.java	2026-08-10 19:00:46.740511483 +0000
+@@ -1,7 +1,6 @@
+ package dev.card.parallaxcapture;
+ 
+ import net.fabricmc.api.ClientModInitializer;
+-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+ import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+ import net.minecraft.client.MinecraftClient;
+ import net.minecraft.client.option.KeyBinding;
+@@ -23,6 +22,7 @@
+ 
+     private static CaptureSession session;
+     private static CaptureConfig config;
++    private static boolean rawF8WasDown;
+ 
+     @Override
+     public void onInitializeClient() {
+@@ -34,15 +34,6 @@
+             LOGGER.warn("Could not install bundled surface exporter", t);
+         }
+ 
+-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+-            while (CAPTURE_KEY.wasPressed()) {
+-                if (session != null && !session.isDone()) {
+-                    session.cancel();
+-                } else {
+-                    start(client);
+-                }
+-            }
+-        });
+     }
+ 
+     public static CaptureConfig getConfig() {
+@@ -75,12 +66,42 @@
+     }
+ 
+     public static void onPreRender() {
++        pollCaptureHotkey();
+         if (session != null) {
+             session.onPreRender();
+             if (session.isDone()) session = null;
+         }
+     }
+ 
++
++    private static void pollCaptureHotkey() {
++        MinecraftClient client = MinecraftClient.getInstance();
++        if (client == null || client.getWindow() == null) return;
++
++        // ReplayMod rebuilds Minecraft's contextual keybinding tables while a replay
++        // is open, which can prevent Fabric KeyBinding#wasPressed from ever seeing
++        // our F8 event. Poll the physical GLFW key as a fallback from the render
++        // loop, which ReplayMod cannot remove from a keybinding registry.
++        boolean bindingPressed = false;
++        while (CAPTURE_KEY.wasPressed()) bindingPressed = true;
++
++        boolean rawDown = InputUtil.isKeyPressed(client.getWindow().getHandle(), GLFW.GLFW_KEY_F8);
++        boolean rawPressed = rawDown && !rawF8WasDown;
++        rawF8WasDown = rawDown;
++
++        if (bindingPressed || rawPressed) {
++            toggleCapture(client);
++        }
++    }
++
++    private static void toggleCapture(MinecraftClient client) {
++        if (session != null && !session.isDone()) {
++            session.cancel();
++        } else {
++            start(client);
++        }
++    }
++
+     public static void onPostRender() {
+         if (session != null) {
+             session.onPostRender();

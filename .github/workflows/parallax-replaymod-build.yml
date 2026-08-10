@@ -1,0 +1,99 @@
+name: Parallax ReplayMod Build
+
+on:
+  push:
+    branches: [parallax-replaymod-v053]
+  pull_request:
+    branches: [parallax-surface-fusion-v051]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Restore consistent Parallax Capture v0.5.1 source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p .reconstructed/src
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, re
+          prefix=Path('parallax_capture_v051_project.tgz.b64').read_text(encoding='utf-8')
+          prefix=re.sub(r'\s+', '', prefix)
+          parts=[prefix[:3500]]
+          for i in range(1,8):
+              s=Path(f'pc051_chunks/chunk_{i:02d}').read_text(encoding='utf-8')
+              parts.append(re.sub(r'\s+', '', s))
+          text=''.join(parts)
+          assert len(text)==24992, len(text)
+          Path('.reconstructed/source.tgz').write_bytes(base64.b64decode(text, validate=True))
+          PY
+          gzip -t .reconstructed/source.tgz
+          tar -xzf .reconstructed/source.tgz -C .reconstructed/src
+          test -f .reconstructed/src/build.gradle
+      - name: Apply ReplayMod, hotkey, and v0.5.5 static-geometry overlays
+        shell: bash
+        run: |
+          set -euxo pipefail
+          base64 -d parallax_replaymod_overlay_v053.tgz.b64 > .reconstructed/overlay.tgz
+          gzip -t .reconstructed/overlay.tgz
+          tar -xzf .reconstructed/overlay.tgz -C .reconstructed/src
+
+          cd .reconstructed/src
+          patch -p1 < ../../parallax_hotkey_v054.patch
+          cd ../..
+
+          cat pc055_chunks/chunk_* | tr -d '\r\n' | base64 -d > .reconstructed/v055-overlay.tgz
+          gzip -t .reconstructed/v055-overlay.tgz
+          tar -xzf .reconstructed/v055-overlay.tgz -C .reconstructed/src
+
+          cd .reconstructed/src
+          grep -R "render_camera_only" src/main/java/dev/card/parallaxcapture/CaptureSession.java
+          grep -R "InputUtil.isKeyPressed" src/main/java/dev/card/parallaxcapture/ParallaxCaptureClient.java
+          grep -R "renderLabelIfPresent" src/main/java/dev/card/parallaxcapture/mixin
+          grep -R "renderParticles" src/main/java/dev/card/parallaxcapture/mixin
+          grep -R "renderWeather" src/main/java/dev/card/parallaxcapture/mixin
+          grep -R "DisplayEntity" src/main/java/dev/card/parallaxcapture/mixin/EntityRenderDispatcherMixin.java
+          grep -R "installAll" src/main/java/dev/card/parallaxcapture/BundledSurfaceExporter.java
+
+          if grep -R "sendChatCommand" src/main/java/dev/card/parallaxcapture/CaptureSession.java; then
+            echo 'ERROR: network teleport command survived overlay' >&2
+            exit 3
+          fi
+
+          grep '^mod_version=0.5.5-static-geometry$' gradle.properties
+
+          SURF=src/main/resources/assets/parallaxcapture/exporters/Parallax-Surface-ViewZ24-v2.zip
+          DEPTH=src/main/resources/assets/parallaxcapture/exporters/Iris-LinearDepth-Exporter-DH-Normal-Blocks.zip
+          test -s "$SURF"
+          test -s "$DEPTH"
+          unzip -t "$SURF"
+          unzip -t "$DEPTH"
+      - name: Upload reconstructed v0.5.5 source
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-capture-v055-source
+          path: .reconstructed/src
+          if-no-files-found: error
+      - name: Build reconstructed mod
+        working-directory: .reconstructed/src
+        shell: bash
+        run: |
+          set -euxo pipefail
+          gradle --no-daemon clean build --stacktrace
+          find build/libs -maxdepth 1 -type f -name '*.jar' -print
+      - name: Upload built mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-capture-v0.5.5-static-geometry
+          path: .reconstructed/src/build/libs/*.jar
+          if-no-files-found: error
