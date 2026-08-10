@@ -40,26 +40,50 @@ jobs:
           gzip -t .reconstructed/source.tgz
           tar -xzf .reconstructed/source.tgz -C .reconstructed/src
           test -f .reconstructed/src/build.gradle
-      - name: Apply render-camera ReplayMod overlay and v0.5.4 F8 fix
+      - name: Apply ReplayMod, hotkey, and v0.5.5 static-geometry overlays
         shell: bash
         run: |
           set -euxo pipefail
           base64 -d parallax_replaymod_overlay_v053.tgz.b64 > .reconstructed/overlay.tgz
           gzip -t .reconstructed/overlay.tgz
           tar -xzf .reconstructed/overlay.tgz -C .reconstructed/src
+
           cd .reconstructed/src
           patch -p1 < ../../parallax_hotkey_v054.patch
+          cd ../..
+
+          cat pc055_chunks/chunk_* | tr -d '\r\n' | base64 -d > .reconstructed/v055-overlay.tgz
+          gzip -t .reconstructed/v055-overlay.tgz
+          tar -xzf .reconstructed/v055-overlay.tgz -C .reconstructed/src
+
+          cd .reconstructed/src
           grep -R "render_camera_only" src/main/java/dev/card/parallaxcapture/CaptureSession.java
           grep -R "InputUtil.isKeyPressed" src/main/java/dev/card/parallaxcapture/ParallaxCaptureClient.java
+          grep -R "renderLabelIfPresent" src/main/java/dev/card/parallaxcapture/mixin
+          grep -R "renderParticles" src/main/java/dev/card/parallaxcapture/mixin
+          grep -R "renderWeather" src/main/java/dev/card/parallaxcapture/mixin
+          grep -R "DisplayEntity" src/main/java/dev/card/parallaxcapture/mixin/EntityRenderDispatcherMixin.java
+          grep -R "installAll" src/main/java/dev/card/parallaxcapture/BundledSurfaceExporter.java
+          grep -R '"staticGeometryFilter"' src/main/java/dev/card/parallaxcapture/CaptureSession.java
+          grep -R '"cameraFacingContentSuppressed"' src/main/java/dev/card/parallaxcapture/CaptureSession.java
+
           if grep -R "sendChatCommand" src/main/java/dev/card/parallaxcapture/CaptureSession.java; then
             echo 'ERROR: network teleport command survived overlay' >&2
             exit 3
           fi
-          grep '^mod_version=0.5.4-replay-hotkey$' gradle.properties
-      - name: Upload reconstructed v0.5.4 source
+
+          grep '^mod_version=0.5.5-static-geometry$' gradle.properties
+
+          SURF=src/main/resources/assets/parallaxcapture/exporters/Parallax-Surface-ViewZ24-v2.zip
+          DEPTH=src/main/resources/assets/parallaxcapture/exporters/Iris-LinearDepth-Exporter-DH-Normal-Blocks.zip
+          test -s "$SURF"
+          test -s "$DEPTH"
+          unzip -t "$SURF"
+          unzip -t "$DEPTH"
+      - name: Upload reconstructed v0.5.5 source
         uses: actions/upload-artifact@v4
         with:
-          name: parallax-capture-v054-source
+          name: parallax-capture-v055-source
           path: .reconstructed/src
           if-no-files-found: error
       - name: Build reconstructed mod
@@ -72,6 +96,6 @@ jobs:
       - name: Upload built mod
         uses: actions/upload-artifact@v4
         with:
-          name: parallax-capture-v0.5.4-replay-hotkey
+          name: parallax-capture-v0.5.5-static-geometry
           path: .reconstructed/src/build/libs/*.jar
           if-no-files-found: error
