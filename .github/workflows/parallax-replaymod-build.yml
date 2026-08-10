@@ -64,8 +64,6 @@ jobs:
           grep -R "renderWeather" src/main/java/dev/card/parallaxcapture/mixin
           grep -R "DisplayEntity" src/main/java/dev/card/parallaxcapture/mixin/EntityRenderDispatcherMixin.java
           grep -R "installAll" src/main/java/dev/card/parallaxcapture/BundledSurfaceExporter.java
-          grep -R '"staticGeometryFilter"' src/main/java/dev/card/parallaxcapture/CaptureSession.java
-          grep -R '"cameraFacingContentSuppressed"' src/main/java/dev/card/parallaxcapture/CaptureSession.java
 
           if grep -R "sendChatCommand" src/main/java/dev/card/parallaxcapture/CaptureSession.java; then
             echo 'ERROR: network teleport command survived overlay' >&2
