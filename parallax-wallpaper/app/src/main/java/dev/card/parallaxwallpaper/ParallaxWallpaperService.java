@@ -20,9 +20,20 @@ public class ParallaxWallpaperService extends WallpaperService {
             visible=v;
             if(v){ motion.start(); startThread(); } else { motion.stop(); stopThread(); }
         }
+        @Override public void onSurfaceCreated(SurfaceHolder holder) {
+            super.onSurfaceCreated(holder);
+            // Android may report the wallpaper visible before its Surface exists.
+            // Retry startup here so that lifecycle ordering cannot leave us permanently black.
+            startThread();
+        }
         @Override public void onSurfaceChanged(SurfaceHolder holder,int format,int width,int height) {
             super.onSurfaceChanged(holder,format,width,height);
             if(thread!=null) thread.setSize(width,height);
+            else startThread();
+        }
+        @Override public void onSurfaceRedrawNeeded(SurfaceHolder holder) {
+            super.onSurfaceRedrawNeeded(holder);
+            startThread();
         }
         @Override public void onSurfaceDestroyed(SurfaceHolder holder) {
             super.onSurfaceDestroyed(holder); stopThread();
