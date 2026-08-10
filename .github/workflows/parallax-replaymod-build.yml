@@ -27,9 +27,6 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import base64, re
-          # Branch head contains only chunk_00 from an unfinished v0.5.2 repack.
-          # Recover the original 3500-char v0.5.1 chunk_00 from the prefix copy,
-          # then append the intact chunks 01..07.
           prefix=Path('parallax_capture_v051_project.tgz.b64').read_text(encoding='utf-8')
           prefix=re.sub(r'\s+', '', prefix)
           parts=[prefix[:3500]]
@@ -38,30 +35,31 @@ jobs:
               parts.append(re.sub(r'\s+', '', s))
           text=''.join(parts)
           assert len(text)==24992, len(text)
-          raw=base64.b64decode(text, validate=True)
-          Path('.reconstructed/source.tgz').write_bytes(raw)
+          Path('.reconstructed/source.tgz').write_bytes(base64.b64decode(text, validate=True))
           PY
           gzip -t .reconstructed/source.tgz
           tar -xzf .reconstructed/source.tgz -C .reconstructed/src
           test -f .reconstructed/src/build.gradle
-      - name: Apply v0.5.3 render-camera and ReplayMod overlay
+      - name: Apply render-camera ReplayMod overlay and v0.5.4 F8 fix
         shell: bash
         run: |
           set -euxo pipefail
           base64 -d parallax_replaymod_overlay_v053.tgz.b64 > .reconstructed/overlay.tgz
           gzip -t .reconstructed/overlay.tgz
           tar -xzf .reconstructed/overlay.tgz -C .reconstructed/src
-          grep -R "render_camera_only" .reconstructed/src/src/main/java/dev/card/parallaxcapture/CaptureSession.java
-          if grep -R "sendChatCommand" .reconstructed/src/src/main/java/dev/card/parallaxcapture/CaptureSession.java; then
+          cd .reconstructed/src
+          patch -p1 < ../../parallax_hotkey_v054.patch
+          grep -R "render_camera_only" src/main/java/dev/card/parallaxcapture/CaptureSession.java
+          grep -R "InputUtil.isKeyPressed" src/main/java/dev/card/parallaxcapture/ParallaxCaptureClient.java
+          if grep -R "sendChatCommand" src/main/java/dev/card/parallaxcapture/CaptureSession.java; then
             echo 'ERROR: network teleport command survived overlay' >&2
             exit 3
           fi
-          echo '--- ReplayMod v0.5.3 source ---'
-          grep -RIlE 'CaptureCameraOverride|ReplayModBridge|render_camera_only' .reconstructed/src/src/main --include='*.java' --include='*.json' | sort
-      - name: Upload reconstructed v0.5.3 source
+          grep '^mod_version=0.5.4-replay-hotkey$' gradle.properties
+      - name: Upload reconstructed v0.5.4 source
         uses: actions/upload-artifact@v4
         with:
-          name: parallax-capture-v053-source
+          name: parallax-capture-v054-source
           path: .reconstructed/src
           if-no-files-found: error
       - name: Build reconstructed mod
@@ -74,6 +72,6 @@ jobs:
       - name: Upload built mod
         uses: actions/upload-artifact@v4
         with:
-          name: parallax-capture-v0.5.3-replay-camera
+          name: parallax-capture-v0.5.4-replay-hotkey
           path: .reconstructed/src/build/libs/*.jar
           if-no-files-found: error
