@@ -3,6 +3,8 @@ name: Parallax ReplayMod Build
 on:
   push:
     branches: [parallax-replaymod-v053]
+  pull_request:
+    branches: [parallax-surface-fusion-v051]
   workflow_dispatch:
 
 jobs:
