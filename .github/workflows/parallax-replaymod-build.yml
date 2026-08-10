@@ -1,0 +1,55 @@
+name: Parallax ReplayMod Build
+
+on:
+  push:
+    branches: [parallax-replaymod-v053]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Reconstruct latest Parallax Capture source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p .reconstructed
+          cat pc051_chunks/chunk_* | tr -d '\r\n' | base64 -d > .reconstructed/source.gz
+          gzip -dc .reconstructed/source.gz > .reconstructed/source.bundle
+          file .reconstructed/source.bundle
+          if unzip -t .reconstructed/source.bundle >/dev/null 2>&1; then
+            mkdir -p .reconstructed/src
+            unzip -q .reconstructed/source.bundle -d .reconstructed/src
+          elif tar -tf .reconstructed/source.bundle >/dev/null 2>&1; then
+            mkdir -p .reconstructed/src
+            tar -xf .reconstructed/source.bundle -C .reconstructed/src
+          else
+            echo 'Unknown reconstructed source bundle format' >&2
+            xxd -l 64 .reconstructed/source.bundle
+            exit 2
+          fi
+          echo '--- reconstructed tree ---'
+          find .reconstructed/src -maxdepth 6 -type f | sort | head -250
+          echo '--- likely capture sources ---'
+          grep -RIlE 'capture|Camera|GameRenderer|screenshot|pose_' .reconstructed/src --include='*.java' | sort | head -100 || true
+      - name: Build reconstructed mod
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=$(find .reconstructed/src -type f -name gradlew -printf '%h\n' | head -1)
+          test -n "$ROOT"
+          chmod +x "$ROOT/gradlew"
+          cd "$ROOT"
+          ./gradlew build --stacktrace
+          find build/libs -maxdepth 1 -type f -name '*.jar' -print
+      - name: Upload built mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-capture-replaymod
+          path: .reconstructed/src/**/build/libs/*.jar
+          if-no-files-found: error
