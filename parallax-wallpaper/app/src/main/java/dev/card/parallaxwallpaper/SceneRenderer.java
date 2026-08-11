@@ -22,7 +22,6 @@ public final class SceneRenderer {
     private final Context context;
     private final MotionController motion;
     private final SharedPreferences prefs;
-    private SharedPreferences.OnSharedPreferenceChangeListener prefListener;
 
     private int program, bgProgram, vbo;
     private int aPos, aUv, uProj, uCamera, uTilt, uTex, uSourceScale;
@@ -36,6 +35,8 @@ public final class SceneRenderer {
     private int fallbackTexture = 0;
     private int width=1,height=1;
     private boolean ready=false;
+    private int settingsPollCounter=0;
+    private float lastPublishedRenderFov=-1f;
 
     public SceneRenderer(Context c, MotionController motion) {
         this.context=c.getApplicationContext();
@@ -63,14 +64,7 @@ public final class SceneRenderer {
         bgZoom=GLES30.glGetUniformLocation(bgProgram,"uZoom");
         try {
             loadCurrent();
-            refreshViewSettings();
-            prefListener=(p,key)->{
-                if(SOURCE_FOV_KEY.equals(key)||SCREEN_FOV_KEY.equals(key)||ZOOM_KEY.equals(key)) {
-                    refreshViewSettings();
-                }
-            };
-            prefs.registerOnSharedPreferenceChangeListener(prefListener);
-            publishStatus();
+            refreshViewSettings(true);
         } catch(Throwable t) {
             t.printStackTrace();
             ready=false;
@@ -78,48 +72,63 @@ public final class SceneRenderer {
         }
     }
 
-    private void refreshViewSettings(){
+    private boolean refreshViewSettings(boolean forcePublish){
+        // Source and screen FOV are deliberately independent. Screen FOV falls back to the
+        // scene's detected FOV, NOT the mutable source override.
         float src=clamp(prefs.getFloat(SOURCE_FOV_KEY,sceneFov),MIN_FOV,MAX_FOV);
-        float scr=clamp(prefs.getFloat(SCREEN_FOV_KEY,src),MIN_FOV,MAX_FOV);
+        float scr=clamp(prefs.getFloat(SCREEN_FOV_KEY,sceneFov),MIN_FOV,MAX_FOV);
         float z=clamp(prefs.getFloat(ZOOM_KEY,1f),MIN_ZOOM,MAX_ZOOM);
+
+        boolean changed=Math.abs(src-sourceFov)>0.001f || Math.abs(scr-screenFov)>0.001f || Math.abs(z-extraZoom)>0.001f;
         sourceFov=src;
         screenFov=scr;
         extraZoom=z;
 
-        // The baked mesh XY positions were reconstructed using sceneFov. If the real capture
-        // FOV was different, reinterpret those XY coordinates using the ratio of focal slopes.
-        // Example: 70 -> 110 degrees scales XY by tan(55)/tan(35) ~= 2.04.
+        // If the stored capture FOV was wrong, reinterpret baked XY using focal-slope ratio.
         sourceScale=(float)(Math.tan(Math.toRadians(sourceFov)*0.5) /
                 Math.max(1e-6,Math.tan(Math.toRadians(sceneFov)*0.5)));
         sourceScale=clamp(sourceScale,0.25f,4.0f);
-        publishStatus();
+
+        if(forcePublish || changed) publishStatus(currentRenderFov());
+        return changed;
     }
 
-    private void publishStatus(){
+    private float currentRenderFov(){
+        boolean landscape=width>height;
+        float orientationZoom=landscape?1.06f:1f;
+        return effectiveFov(screenFov,extraZoom*orientationZoom);
+    }
+
+    private void publishStatus(float renderFov){
         if(!ready) return;
+        lastPublishedRenderFov=renderFov;
         prefs.edit().putString("renderer_status",
                 String.format(java.util.Locale.US,
-                        "3D mesh active • src %.0f° • screen %.0f° • zoom %.2fx • meshXY %.2fx • sensor: %s",
-                        sourceFov,screenFov,extraZoom,sourceScale,motion.sensorName())).apply();
+                        "3D mesh active • src %.0f° • screen %.0f° • zoom %.2fx • EFFECTIVE %.1f° • meshXY %.2fx • sensor: %s",
+                        sourceFov,screenFov,extraZoom,renderFov,sourceScale,motion.sensorName())).apply();
     }
 
     public void surfaceChanged(int w,int h){
         width=Math.max(1,w);
         height=Math.max(1,h);
         GLES30.glViewport(0,0,width,height);
+        if(ready) publishStatus(currentRenderFov());
     }
 
     public void drawFrame() {
+        // Do not depend on SharedPreferences listener delivery. Re-read values ~10 times/sec.
+        // This also makes OEM wallpaper lifecycle weirdness irrelevant.
+        if((settingsPollCounter++ % 6)==0) refreshViewSettings(false);
+
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT|GLES30.GL_DEPTH_BUFFER_BIT);
 
         float mx=motion.x(), my=motion.y();
         boolean landscape=width>height;
 
-        // Screen FOV controls the actual output camera. Zoom is a separate optical multiplier.
-        // A tiny landscape safety crop is retained from the previous tablet tuning.
         float orientationZoom=landscape?1.06f:1f;
         float totalZoom=extraZoom*orientationZoom;
         float renderFov=effectiveFov(screenFov,totalZoom);
+        if(Math.abs(renderFov-lastPublishedRenderFov)>0.05f) publishStatus(renderFov);
 
         if(fallbackTexture!=0){
             GLES30.glDisable(GLES30.GL_DEPTH_TEST);
@@ -130,10 +139,11 @@ public final class SceneRenderer {
             GLES30.glUniform1f(bgScreenAspect,(float)width/height);
             GLES30.glUniform1f(bgTexAspect,textureAspect);
 
-            // Match the 2D hole-filler to source capture FOV versus the requested output FOV.
             float sourceToView=(float)(Math.tan(Math.toRadians(sourceFov)*0.5) /
                     Math.max(1e-6,Math.tan(Math.toRadians(renderFov)*0.5)));
-            float fallbackCrop=Math.max(1.0f,sourceToView)*1.015f;
+            // Allow zooming OUT as well as in. Values below 1 widen the sampled source region;
+            // clamp-to-edge safely fills anything beyond the captured image.
+            float fallbackCrop=clamp(sourceToView*1.015f,0.55f,3.0f);
             GLES30.glUniform1f(bgZoom,fallbackCrop);
             float bgMotion=(landscape?0.045f:0.035f)*totalZoom;
             GLES30.glUniform2f(bgShift,-mx*bgMotion,my*bgMotion);
@@ -148,8 +158,6 @@ public final class SceneRenderer {
         GLES30.glUniformMatrix4fv(uProj,1,false,proj,0);
         GLES30.glUniform1f(uSourceScale,sourceScale);
 
-        // World-space camera travel stays independent from output zoom/FOV. Projection naturally
-        // makes the same translation look faster when the screen FOV is narrower or zoom is higher.
         float requested=Math.max(landscape?0.64f:0.60f,maxParallax*1.90f);
         float travel=Math.min(requested,0.68f);
         GLES30.glUniform3f(uCamera,mx*travel,my*travel,0f);
@@ -179,7 +187,6 @@ public final class SceneRenderer {
     }
 
     public void destroy(){
-        if(prefListener!=null) prefs.unregisterOnSharedPreferenceChangeListener(prefListener);
         if(vbo!=0)GLES30.glDeleteBuffers(1,new int[]{vbo},0);
         if(textures.length>0)GLES30.glDeleteTextures(textures.length,textures,0);
         if(program!=0)GLES30.glDeleteProgram(program);
