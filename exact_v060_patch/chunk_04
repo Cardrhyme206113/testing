@@ -1,0 +1,78 @@
+ath||metadataFile.name); const prefix=metadataPath.slice(0,-'metadata.json'.length);
++  for(const f of files){let p=normPath(f.webkitRelativePath||f.name); if(prefix&&p.startsWith(prefix)) p=p.slice(prefix.length); fileMap.set(p,f); fileMap.set(f.name,f)}
++  meta=JSON.parse(await metadataFile.text());
++  if(!meta.exactGeometryEnabled || !meta.geometry) throw new Error('This is not a completed Exact Geometry + Beauty capture (metadata.geometry is missing).');
++  const gf=findFile(meta.geometry.file); if(!gf) throw new Error('Geometry file missing: '+meta.geometry.file);
++  statusEl.textContent='Decompressing geometry…'; geom=parsePgeo(await gunzipIfNeeded(gf)); origin=geom.origin;
++  captures=(meta.captures||[]).filter(c=>c.pass==='beauty' && findFile(c.file));
++  if(!captures.length) throw new Error('No beauty captures referenced by metadata.json were found.');
++  basePose=meta.baseCameraPose||meta.basePose; setupBasis(); uploadGeometry(); initPrograms(); initDepthSlots();
++  pointer.x=pointer.y=0; updateLiveCamera();
++  statusEl.textContent=`Ready — ${captures.length} beauty views + canonical geometry`;
++  statsEl.textContent=`${geom.vertexCount.toLocaleString()} verts · ${(geom.indexCount/3).toLocaleString()} tris`;
++  await chooseSources(true); resize(); needsRender=true; requestAnimationFrame(loop);
++}
++function findFile(path){path=normPath(path);return fileMap.get(path)||fileMap.get(path.split('/').pop())}
++async function gunzipIfNeeded(file){const ab=await file.arrayBuffer(); const u=new Uint8Array(ab); if(u[0]===0x1f&&u[1]===0x8b){if(!('DecompressionStream'in window)) throw new Error('This browser lacks DecompressionStream(gzip). Use a current Chromium browser.'); return await new Response(new Blob([ab]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer()} return ab}
++function parsePgeo(ab){const d=new DataView(ab), u=new Uint8Array(ab,0,8); const magic=String.fromCharCode(...u); if(magic!=='PGEO0001')throw new Error('Unsupported geometry magic: '+magic); let o=8; const u32=()=>{const v=d.getUint32(o,true);o+=4;return v}, f32=()=>{const v=d.getFloat32(o,true);o+=4;return v}, f64=()=>{const v=d.getFloat64(o,true);o+=8;return v}; const version=u32(), vc=u32(), ic=u32(); const org=[f64(),f64(),f64()]; const bmin=[f32(),f32(),f32()], bmax=[f32(),f32(),f32()]; u32(); if(version!==1)throw new Error('Unsupported geometry version '+version); const posBytes=vc*12, idxBytes=ic*4; if(o+posBytes+idxBytes>ab.byteLength)throw new Error('Truncated geometry file'); const positions=new Float32Array(ab,o,vc*3);o+=posBytes; const indices=new Uint32Array(ab,o,ic); return {version,vertexCount:vc,indexCount:ic,origin:org,bmin,bmax,positions,indices}}
++
++function setupBasis(){const y=rad(basePose.yaw||0), p=rad(basePose.pitch||0), sy=Math.sin(y),cy=Math.cos(y),sp=Math.sin(p),cp=Math.cos(p); basis={right:[-cy,0,-sy],up:[-sy*sp,cp,cy*sp],forward:[-sy*cp,-sp,cy*cp]}; const bx=basePose.cameraX??basePose.x, by=basePose.cameraY??basePose.y, bz=basePose.cameraZ??basePose.z; extentR=extentU=0; for(const c of captures){const dx=(c.cameraX??c.x)-bx,dy=(c.cameraY??c.y)-by,dz=(c.cameraZ??c.z)-bz; extentR=Math.max(extentR,Math.abs(dot3([dx,dy,dz],basis.right))); extentU=Math.max(extentU,Math.abs(dot3([dx,dy,dz],basis.up)))} if(extentR<1e-4)extentR=(meta.gridRadius||1)*(meta.offsetStepBlocks||0); if(extentU<1e-4)extentU=extentR}
++function updateLiveCamera(){const b=[(basePose.cameraX??basePose.x)-origin[0],(basePose.cameraY??basePose.y)-origin[1],(basePose.cameraZ??basePose.z)-origin[2]]; livePos=[b[0]+basis.right[0]*pointer.x*extentR+basis.up[0]*pointer.y*extentU,b[1]+basis.right[1]*pointer.x*extentR+basis.up[1]*pointer.y*extentU,b[2]+basis.right[2]*pointer.x*extentR+basis.up[2]*pointer.y*extentU]}
++
++function uploadGeometry(){if(vao)gl.deleteVertexArray(vao); vao=gl.createVertexArray();vbo=gl.createBuffer();ebo=gl.createBuffer();gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,geom.positions,gl.STATIC_DRAW);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ebo);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,geom.indices,gl.STATIC_DRAW);indexCount=geom.indexCount;gl.bindVertexArray(null)}
++function shader(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s}
++function program(vs,fs){const p=gl.createProgram();gl.attachShader(p,shader(gl.VERTEX_SHADER,vs));gl.attachShader(p,shader(gl.FRAGMENT_SHADER,fs));gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));return p}
++function initPrograms(){
++ const geomVS=`#version 300 es\nprecision highp float;layout(location=0)in vec3 aPos;uniform mat4 uLiveVP;out vec3 vPos;void main(){vPos=aPos;gl_Position=uLiveVP*vec4(aPos,1.0);}`;
++ const geomFS=`#version 300 es\nprecision highp float;in vec3 vPos;out vec4 outColor;uniform mat4 uS0,uS1,uS2,uS3;uniform sampler2D uB0,uB1,uB2,uB3,uD0,uD1,uD2,uD3;uniform vec4 uWeights;uniform int uCount;
++ bool coord(mat4 m,out vec2 uv,out float z){vec4 q=m*vec4(vPos,1.0);if(q.w<=0.0)return false;vec3 n=q.xyz/q.w;uv=n.xy*.5+.5;z=n.z*.5+.5;return uv.x>=0.0&&uv.x<=1.0&&uv.y>=0.0&&uv.y<=1.0&&z>=0.0&&z<=1.0;}
++ void addSample(mat4 m,sampler2D b,sampler2D d,float w,inout vec3 acc,inout float tw){if(w<=0.0)return;vec2 uv;float z;if(!coord(m,uv,z))return;float sd=texture(d,uv).r;if(z<=sd+0.0025){vec4 c=texture(b,uv);acc+=c.rgb*w;tw+=w;}}
++ void main(){vec3 a=vec3(0);float w=0.;addSample(uS0,uB0,uD0,uWeights.x,a,w);if(uCount>1)addSample(uS1,uB1,uD1,uWeights.y,a,w);if(uCount>2)addSample(uS2,uB2,uD2,uWeights.z,a,w);if(uCount>3)addSample(uS3,uB3,uD3,uWeights.w,a,w);if(w<.00001){vec2 uv;float z;if(coord(uS0,uv,z)){outColor=texture(uB0,uv);return;}discard;}outColor=vec4(a/w,1.0);}`;
++ const depthVS=`#version 300 es\nprecision highp float;layout(location=0)in vec3 aPos;uniform mat4 uVP;void main(){gl_Position=uVP*vec4(aPos,1.0);}`;
++ const depthFS=`#version 300 es\nprecision highp float;void main(){}`;
++ const bgVS=`#version 300 es\nprecision highp float;out vec2 uv;void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=p;gl_Position=vec4(p*2.0-1.0,0,1);}`;
++ const bgFS=`#version 300 es\nprecision highp float;in vec2 uv;out vec4 o;uniform sampler2D tex;void main(){o=texture(tex,uv);}`;
++ programs.geom=program(geomVS,geomFS);programs.depth=program(depthVS,depthFS);programs.bg=program(bgVS,bgFS);
++ gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,vbo);for(const p of [programs.geom,programs.depth]){const l=0;gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,3,gl.FLOAT,false,12,0)}gl.bindVertexArray(null);
++}
++function initDepthSlots(){for(const s of depthSlots){gl.deleteFramebuffer(s.fbo);gl.deleteTexture(s.tex)}depthSlots=[];for(let i=0;i<4;i++){const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.DEPTH_COMPONENT24,1024,1024,0,gl.DEPTH_COMPONENT,gl.UNSIGNED_INT,null);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);const fbo=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,tex,0);gl.drawBuffers([gl.NONE]);gl.readBuffer(gl.NONE);depthSlots.push({tex,fbo,capIndex:-1,vp:null})}gl.bindFramebuffer(gl.FRAMEBUFFER,null)}
++
++async function getBeautyTexture(index){if(textureCache.has(index)){const e=textureCache.get(index);e.used=performance.now();return e.tex}const f=findFile(captures[index].file);if(!f)throw new Error('Missing '+captures[index].file);const bmp=await createImageBitmap(f,{imageOrientation:'flipY'});const tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,bmp);bmp.close();textureCache.set(index,{tex,used:performance.now()});evictTextures();return tex}
++function evictTextures(){if(textureCache.size<=MAX_BEAUTY_TEXTURES)return;const keep=new Set(selected);const old=[...textureCache.entries()].filter(([i])=>!keep.has(i)).sort((a,b)=>a[1].used-b[1].used);while(textureCache.size>MAX_BEAUTY_TEXTURES&&old.length){const [i,e]=old.shift();gl.deleteTexture(e.tex);textureCache.delete(i)}}
++function captureLocal(c){return [(c.cameraX??c.x)-origin[0],(c.cameraY??c.y)-origin[1],(c.cameraZ??c.z)-origin[2]]}
++function nearest4(){return captures.map((c,i)=>{const p=captureLocal(c),dx=p[0]-livePos[0],dy=p[1]-livePos[1],dz=p[2]-livePos[2];return [i,dx*dx+dy*dy+dz*dz]}).sort((a,b)=>a[1]-b[1]).slice(0,4)}
++async function chooseSources(force=false){if(!meta)return;const n=nearest4();selected=n.map(x=>x[0]);const key=selected.join(',');if(!force&&key===sourceSetKey)return;sourceSetKey=key;statusEl.textContent='Loading nearby beauty views…';const textures=await Promise.all(selected.map(getBeautyTexture));loadedSelection=selected.map((idx,k)=>({idx,tex:textures[k],vp:cameraVP(captures[idx])}));for(let i=0;i<loadedSelection.length;i++){depthSlots[i].capIndex=loadedSelection[i].idx;depthSlots[i].vp=loadedSelection[i].vp;renderDepth(depthSlots[i])}statusEl.textContent=`Ready — nearest beauty pose ${captures[selected[0]].poseIndex}`;needsRender=true}
++function renderDepth(slot){gl.bindFramebuffer(gl.FRAMEBUFFER,slot.fbo);gl.viewport(0,0,1024,1024);gl.clearDepth(1);gl.clear(gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LESS);gl.disable(gl.CULL_FACE);gl.colorMask(false,false,false,false);gl.useProgram(programs.depth);gl.uniformMatrix4fv(gl.getUniformLocation(programs.depth,'uVP'),false,slot.vp);gl.bindVertexArray(vao);gl.drawElements(gl.TRIANGLES,indexCount,gl.UNSIGNED_INT,0);gl.bindVertexArray(null);gl.colorMask(true,true,true,true);gl.bindFramebuffer(gl.FRAMEBUFFER,null)}
++
++function render(){if(!meta||!loadedSelection.length)return;resize();const liveVP=makeVP(livePos,basePose.yaw,basePose.pitch,meta.renderedFov||meta.fov||70);gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,canvas.width,canvas.height);gl.disable(gl.DEPTH_TEST);gl.disable(gl.CULL_FACE);gl.clearColor(0,0,0,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
++ // Sky/anything with no captured surface geometry stays as the nearest beauty image.
++ gl.useProgram(programs.bg);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,loadedSelection[0].tex);gl.uniform1i(gl.getUniformLocation(programs.bg,'tex'),0);gl.drawArrays(gl.TRIANGLES,0,3);
++ gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LESS);gl.clear(gl.DEPTH_BUFFER_BIT);gl.useProgram(programs.geom);gl.uniformMatrix4fv(gl.getUniformLocation(programs.geom,'uLiveVP'),false,liveVP);
++ const n=nearest4();let ws=n.map(x=>1/Math.max(1e-6,x[1]));if(n[0][1]<1e-8)ws=[1,0,0,0];const sw=ws.reduce((a,b)=>a+b,0);ws=ws.map(x=>x/sw);gl.uniform4f(gl.getUniformLocation(programs.geom,'uWeights'),ws[0]||0,ws[1]||0,ws[2]||0,ws[3]||0);gl.uniform1i(gl.getUniformLocation(programs.geom,'uCount'),loadedSelection.length);
++ for(let i=0;i<4;i++){const e=loadedSelection[Math.min(i,loadedSelection.length-1)], ds=depthSlots[Math.min(i,loadedSelection.length-1)];gl.uniformMatrix4fv(gl.getUniformLocation(programs.geom,'uS'+i),false,e.vp);gl.activeTexture(gl.TEXTURE0+i);gl.bindTexture(gl.TEXTURE_2D,e.tex);gl.uniform1i(gl.getUniformLocation(programs.geom,'uB'+i),i);gl.activeTexture(gl.TEXTURE4+i);gl.bindTexture(gl.TEXTURE_2D,ds.tex);gl.uniform1i(gl.getUniformLocation(programs.geom,'uD'+i),4+i)}
++ gl.bindVertexArray(vao);gl.drawElements(gl.TRIANGLES,indexCount,gl.UNSIGNED_INT,0);gl.bindVertexArray(null);needsRender=false}
++
++function cameraVP(c){return makeVP(captureLocal(c),c.cameraYaw??c.yaw,c.cameraPitch??c.pitch,c.renderedFov||meta.renderedFov||meta.fov||70)}
++function makeVP(eye,yaw,pitch,fov){const y=rad(yaw||0),p=rad(pitch||0),sy=Math.sin(y),cy=Math.cos(y),sp=Math.sin(p),cp=Math.cos(p),r=[-cy,0,-sy],u=[-sy*sp,cp,cy*sp],f=[-sy*cp,-sp,cy*cp];const view=new Float32Array([r[0],u[0],-f[0],0,r[1],u[1],-f[1],0,r[2],u[2],-f[2],0,-dot3(r,eye),-dot3(u,eye),dot3(f,eye),1]);const aspect=meta.resolution?meta.resolution[0]/meta.resolution[1]:canvas.width/canvas.height, near=.03, far=Math.max(1024,meta.geometry.rangeBlocks*2+128),q=1/Math.tan(rad(fov)*.5);const pr=new Float32Array([q/aspect,0,0,0,0,q,0,0,0,0,(far+near)/(near-far),-1,0,0,(2*far*near)/(near-far),0]);return mul4(pr,view)}
++function mul4(a,b){const o=new Float32Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++)o[c*4+r]=a[r]*b[c*4]+a[4+r]*b[c*4+1]+a[8+r]*b[c*4+2]+a[12+r]*b[c*4+3];return o}
++function dot3(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]}function rad(x){return x*Math.PI/180}
++function resize(){const d=Math.min(devicePixelRatio||1,2),w=Math.max(1,Math.round(innerWidth*d)),h=Math.max(1,Math.round(innerHeight*d));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;needsRender=true}}
++window.addEventListener('resize',()=>{needsRender=true});
++let sourceTimer=0;function setPointer(clientX,clientY){const r=canvas.getBoundingClientRect();pointer.x=Math.max(-1,Math.min(1,(clientX-r.left)/r.width*2-1));pointer.y=Math.max(-1,Math.min(1,1-(clientY-r.top)/r.height*2));updateLiveCamera();needsRender=true;clearTimeout(sourceTimer);sourceTimer=setTimeout(()=>chooseSources(false).catch(e=>showError(e.message)),20);hint.style.opacity='0'}
++canvas.addEventListener('pointermove',e=>setPointer(e.clientX,e.clientY));canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);setPointer(e.clientX,e.clientY)});
++function loop(){if(needsRender)render();requestAnimationFrame(loop)}
++</script>
++</body>
++</html>
+diff -ruN --exclude build /mnt/data/parallax-base/src/main/resources/fabric.mod.json /mnt/data/parallax-src/src/main/resources/fabric.mod.json
+--- /mnt/data/parallax-base/src/main/resources/fabric.mod.json	2026-08-10 18:41:48.000000000 +0000
++++ /mnt/data/parallax-src/src/main/resources/fabric.mod.json	2026-08-11 11:55:24.090645218 +0000
+@@ -3,7 +3,7 @@
+   "id": "parallaxcapture",
+   "version": "${version}",
+   "name": "Parallax Capture",
+-  "description": "Client-only spatial screenshots from the active render camera, with beauty + depth + surface capture and ReplayMod support.",
++  "description": "Client-only spatial screenshots from the active render camera, with beauty screenshots plus canonical exact geometry, legacy depth/surface capture, and ReplayMod support.",
+   "authors": [
+     "Card + OpenAI"
+   ],
