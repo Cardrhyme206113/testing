@@ -1,0 +1,298 @@
+         "\"rawBytes\":" + rawBytes + ',' +
++                    "\"compressedBytes\":" + compressedBytes + ',' +
++                    "\"chunksVisited\":" + chunksVisited + ',' +
++                    "\"blocksVisited\":" + blocksVisited + ',' +
++                    "\"blocksRendered\":" + blocksRendered + ',' +
++                    "\"blockEntitiesRendered\":" + blockEntitiesRendered + ',' +
++                    "\"entitiesRendered\":" + entitiesRendered + ',' +
++                    "\"rangeBlocks\":" + fmt(rangeBlocks) + ',' +
++                    "\"horizontalDegrees\":" + fmt(horizontalDegrees) + ',' +
++                    "\"origin\":[" + fmt(originX) + ',' + fmt(originY) + ',' + fmt(originZ) + "]," +
++                    "\"boundsMin\":[" + fmt(minX) + ',' + fmt(minY) + ',' + fmt(minZ) + "]," +
++                    "\"boundsMax\":[" + fmt(maxX) + ',' + fmt(maxY) + ',' + fmt(maxZ) + "]" +
++                    "}";
++        }
++    }
++
++    private final MinecraftClient client;
++    private final CaptureConfig cfg;
++    private final double originX, originY, originZ;
++    private final float baseYaw;
++    private final double forwardX, forwardZ;
++    private final double rangeBlocks;
++    private final double rangeSq;
++    private final double guardBlocks;
++    private final MeshBuilder mesh = new MeshBuilder();
++
++    private int chunksVisited;
++    private int blocksVisited;
++    private int blocksRendered;
++    private int blockEntitiesRendered;
++    private int entitiesRendered;
++
++    private ExactGeometryExporter(MinecraftClient client, CaptureConfig cfg,
++                                  double originX, double originY, double originZ,
++                                  float yaw) {
++        this.client = client;
++        this.cfg = cfg;
++        this.originX = originX;
++        this.originY = originY;
++        this.originZ = originZ;
++        this.baseYaw = yaw;
++
++        double yr = Math.toRadians(yaw);
++        this.forwardX = -Math.sin(yr);
++        this.forwardZ = Math.cos(yr);
++        double autoRange = client.options.getViewDistance().getValue() * 16.0 + 32.0;
++        this.rangeBlocks = cfg.exactGeometryRangeBlocks > 0.0 ? cfg.exactGeometryRangeBlocks : autoRange;
++        this.rangeSq = rangeBlocks * rangeBlocks;
++        this.guardBlocks = Math.max(4.0, cfg.gridRadius * cfg.offsetStepBlocks + cfg.exactGeometryGuardBlocks);
++    }
++
++    public static Result export(MinecraftClient client, CaptureConfig cfg, Path sessionDir,
++                                double originX, double originY, double originZ,
++                                float yaw) throws IOException {
++        if (client.world == null) throw new IllegalStateException("World disappeared during geometry export");
++        ExactGeometryExporter exporter = new ExactGeometryExporter(client, cfg, originX, originY, originZ, yaw);
++        exporter.captureBlocksAndBlockEntities();
++        exporter.captureEntities();
++        return exporter.write(sessionDir);
++    }
++
++    private void captureBlocksAndBlockEntities() {
++        BlockRenderManager blocks = client.getBlockRenderManager();
++        int centerChunkX = MathHelper.floor(originX) >> 4;
++        int centerChunkZ = MathHelper.floor(originZ) >> 4;
++        int radiusChunks = MathHelper.ceil((rangeBlocks + 24.0) / 16.0);
++
++        for (int cz = centerChunkZ - radiusChunks; cz <= centerChunkZ + radiusChunks; cz++) {
++            for (int cx = centerChunkX - radiusChunks; cx <= centerChunkX + radiusChunks; cx++) {
++                if (!chunkCouldMatter(cx, cz)) continue;
++                Chunk chunkBase = client.world.getChunk(cx, cz, ChunkStatus.FULL, false);
++                if (!(chunkBase instanceof WorldChunk chunk) || chunk instanceof EmptyChunk) continue;
++                chunksVisited++;
++
++                ChunkSection[] sections = chunk.getSectionArray();
++                for (int si = 0; si < sections.length; si++) {
++                    ChunkSection section = sections[si];
++                    if (section == null || section.isEmpty()) continue;
++                    int sectionY = client.world.sectionIndexToCoord(si) << 4;
++                    captureSection(blocks, chunk, section, cx, cz, sectionY);
++                }
++
++                for (BlockEntity blockEntity : chunk.getBlockEntities().values()) {
++                    if (blockEntity == null || !pointCouldMatter(
++                            blockEntity.getPos().getX() + 0.5,
++                            blockEntity.getPos().getZ() + 0.5,
++                            2.0)) continue;
++                    captureBlockEntity(blockEntity);
++                }
++            }
++        }
++    }
++
++    private void captureSection(BlockRenderManager renderer, WorldChunk chunk, ChunkSection section,
++                                int chunkX, int chunkZ, int sectionY) {
++        int wx0 = chunkX << 4;
++        int wz0 = chunkZ << 4;
++        BlockPos.Mutable pos = new BlockPos.Mutable();
++
++        for (int ly = 0; ly < 16; ly++) {
++            int wy = sectionY + ly;
++            for (int lz = 0; lz < 16; lz++) {
++                int wz = wz0 + lz;
++                for (int lx = 0; lx < 16; lx++) {
++                    BlockState state = section.getBlockState(lx, ly, lz);
++                    FluidState fluid = section.getFluidState(lx, ly, lz);
++                    if (state.isAir() && fluid.isEmpty()) continue;
++                    blocksVisited++;
++
++                    int wx = wx0 + lx;
++                    if (!pointCouldMatter(wx + 0.5, wz + 0.5, 1.5)) continue;
++                    pos.set(wx, wy, wz);
++
++                    // Fully buried opaque cubes have no visible triangles in Minecraft's chunk mesh.
++                    // Skipping them avoids invoking the model renderer for the overwhelming majority
++                    // of underground/interior blocks without changing visible geometry.
++                    if (fluid.isEmpty() && state.isOpaqueFullCube(client.world, pos) && isBuriedOpaque(pos)) {
++                        continue;
++                    }
++
++                    try {
++                        if (state.getRenderType() == BlockRenderType.MODEL) {
++                            MatrixStack matrices = new MatrixStack();
++                            matrices.translate(wx - originX, wy - originY, wz - originZ);
++                            PrimitiveConsumer out = new PrimitiveConsumer(mesh, VertexFormat.DrawMode.QUADS, 0.0, 0.0, 0.0);
++                            renderer.renderBlock(
++                                    state, pos, client.world, matrices, out, true,
++                                    Random.create(state.getRenderingSeed(pos))
++                            );
++                            blocksRendered++;
++                        }
++                        if (!fluid.isEmpty()) {
++                            // FluidRenderer emits world-space coordinates, so this consumer subtracts
++                            // the capture origin directly rather than relying on a MatrixStack.
++                            PrimitiveConsumer fluidOut = new PrimitiveConsumer(
++                                    mesh, VertexFormat.DrawMode.QUADS, -originX, -originY, -originZ
++                            );
++                            renderer.renderFluid(pos, client.world, fluidOut, state, fluid);
++                        }
++                    } catch (Throwable t) {
++                        // One broken/custom model must not destroy a whole scene export.
++                        ParallaxCaptureClient.LOGGER.debug("Geometry: block renderer failed at {}", pos, t);
++                    }
++                }
++            }
++        }
++    }
++
++    private boolean isBuriedOpaque(BlockPos pos) {
++        for (Direction direction : DIRECTIONS) {
++            BlockPos n = pos.offset(direction);
++            BlockState s = client.world.getBlockState(n);
++            if (!s.isOpaqueFullCube(client.world, n)) return false;
++        }
++        return true;
++    }
++
++    private void captureBlockEntity(BlockEntity blockEntity) {
++        BlockEntityRenderDispatcher dispatcher = client.getBlockEntityRenderDispatcher();
++        if (dispatcher.get(blockEntity) == null) return;
++        try {
++            MatrixStack matrices = new MatrixStack();
++            BlockPos p = blockEntity.getPos();
++            matrices.translate(p.getX() - originX, p.getY() - originY, p.getZ() - originZ);
++            GeometryProvider provider = new GeometryProvider(mesh);
++            dispatcher.render(blockEntity, client.getTickDelta(), matrices, provider);
++            provider.finish();
++            blockEntitiesRendered++;
++        } catch (Throwable t) {
++            ParallaxCaptureClient.LOGGER.debug("Geometry: block entity renderer failed at {}", blockEntity.getPos(), t);
++        }
++    }
++
++    @SuppressWarnings({"unchecked", "rawtypes"})
++    private void captureEntities() {
++        EntityRenderDispatcher dispatcher = client.getEntityRenderDispatcher();
++        float tickDelta = client.getTickDelta();
++        for (Entity entity : client.world.getEntities()) {
++            if (CaptureContentFilter.suppressEntity(entity)) continue;
++
++            double ex = MathHelper.lerp(tickDelta, entity.lastRenderX, entity.getX());
++            double ey = MathHelper.lerp(tickDelta, entity.lastRenderY, entity.getY());
++            double ez = MathHelper.lerp(tickDelta, entity.lastRenderZ, entity.getZ());
++            if (!pointCouldMatter(ex, ez, Math.max(2.0, entity.getWidth() + 2.0))) continue;
++
++            try {
++                EntityRenderer renderer = dispatcher.getRenderer(entity);
++                if (renderer == null) continue;
++                MatrixStack matrices = new MatrixStack();
++                matrices.translate(ex - originX, ey - originY, ez - originZ);
++                GeometryProvider provider = new GeometryProvider(mesh);
++                float yaw = MathHelper.lerp(tickDelta, entity.prevYaw, entity.getYaw());
++                int light = dispatcher.getLight(entity, tickDelta);
++                renderer.render(entity, yaw, tickDelta, matrices, provider, light);
++                provider.finish();
++                entitiesRendered++;
++            } catch (Throwable t) {
++                ParallaxCaptureClient.LOGGER.debug("Geometry: entity renderer failed for {}", entity.getType(), t);
++            }
++        }
++    }
++
++    /** 180-degree frontal half-space plus a near-camera guard band and range sphere. */
++    private boolean pointCouldMatter(double x, double z, double radius) {
++        double dx = x - originX;
++        double dz = z - originZ;
++        if (dx * dx + dz * dz > (rangeBlocks + radius) * (rangeBlocks + radius)) return false;
++        double front = dx * forwardX + dz * forwardZ;
++        return front >= -(guardBlocks + radius);
++    }
++
++    private boolean chunkCouldMatter(int cx, int cz) {
++        double x = (cx << 4) + 8.0;
++        double z = (cz << 4) + 8.0;
++        return pointCouldMatter(x, z, 12.0);
++    }
++
++    private Result write(Path sessionDir) throws IOException {
++        Path geometryDir = sessionDir.resolve("geometry");
++        Files.createDirectories(geometryDir);
++        Path file = geometryDir.resolve("scene.pgeo.gz");
++
++        long rawBytes = 8L + 4L + 4L + 4L + 24L + 24L + 4L
++                + (long) mesh.vertexCount * 12L + (long) mesh.indexCount * 4L;
++        try (OutputStream raw = Files.newOutputStream(file);
++             OutputStream buffered = new BufferedOutputStream(raw, 1 << 20);
++             GZIPOutputStream gz = new GZIPOutputStream(buffered, 1 << 20)) {
++            gz.write(MAGIC);
++            writeIntLE(gz, FORMAT_VERSION);
++            writeIntLE(gz, mesh.vertexCount);
++            writeIntLE(gz, mesh.indexCount);
++            writeDoubleLE(gz, originX);
++            writeDoubleLE(gz, originY);
++            writeDoubleLE(gz, originZ);
++            writeFloatLE(gz, mesh.minX()); writeFloatLE(gz, mesh.minY()); writeFloatLE(gz, mesh.minZ());
++            writeFloatLE(gz, mesh.maxX()); writeFloatLE(gz, mesh.maxY()); writeFloatLE(gz, mesh.maxZ());
++            writeIntLE(gz, 0); // reserved flags
++            for (int i = 0; i < mesh.vertexCount * 3; i++) writeFloatLE(gz, mesh.positions[i]);
++            for (int i = 0; i < mesh.indexCount; i++) writeIntLE(gz, mesh.indices[i]);
++        }
++
++        long compressedBytes = Files.size(file);
++        Result result = new Result(
++                "geometry/scene.pgeo.gz", mesh.vertexCount, mesh.indexCount / 3,
++                rawBytes, compressedBytes, chunksVisited, blocksVisited, blocksRendered,
++                blockEntitiesRendered, entitiesRendered, rangeBlocks, 180.0,
++                originX, originY, originZ,
++                mesh.minX(), mesh.minY(), mesh.minZ(), mesh.maxX(), mesh.maxY(), mesh.maxZ()
++        );
++        Files.writeString(geometryDir.resolve("manifest.json"), result.toJson() + "\n", StandardCharsets.UTF_8);
++        return result;
++    }
++
++    /** Routes each render layer to a position-only primitive collector. */
++    private static final class GeometryProvider implements VertexConsumerProvider {
++        private final MeshBuilder mesh;
++        private final Map<RenderLayer, PrimitiveConsumer> streams = new IdentityHashMap<>();
++
++        private GeometryProvider(MeshBuilder mesh) { this.mesh = mesh; }
++
++        @Override
++        public VertexConsumer getBuffer(RenderLayer layer) {
++            return streams.computeIfAbsent(layer, l ->
++                    new PrimitiveConsumer(mesh, l.getDrawMode(), 0.0, 0.0, 0.0));
++        }
++
++        void finish() {
++            // QUADS/TRIANGLES are naturally delimited. For strips/fans, a renderer normally
++            // obtains a distinct RenderLayer stream per primitive family; discard unfinished tails.
++            for (PrimitiveConsumer stream : streams.values()) stream.finish();
++        }
++    }
++
++    /** Minimal VertexConsumer that ignores every attribute except transformed position. */
++    private static final class PrimitiveConsumer implements VertexConsumer {
++        private final MeshBuilder mesh;
++        private final VertexFormat.DrawMode mode;
++        private final double offsetX, offsetY, offsetZ;
++        private double x, y, z;
++        private int primitiveVertex;
++        private int a = -1, b = -1, c = -1;
++
++        PrimitiveConsumer(MeshBuilder mesh, VertexFormat.DrawMode mode,
++                          double offsetX, double offsetY, double offsetZ) {
++            this.mesh = mesh;
++            this.mode = mode;
++            this.offsetX = offsetX;
++            this.offsetY = offsetY;
++            this.offsetZ = offsetZ;
++        }
++
++        @Override public VertexConsumer vertex(double x, double y, double z) {
++            this.x = x + offsetX;
++            this.y = y + offsetY;
++            this.z = z + offsetZ;
++            return this;
++        }
++        @Override public VertexConsumer color(in

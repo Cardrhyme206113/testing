@@ -1,0 +1,309 @@
+ne.
++     * These are either camera-facing/transient visual effects, screen-like labels, or the
++     * local camera owner. The same predicate is used during beauty capture so appearance and
++     * exported geometry cannot disagree about these objects.
++     */
++    public static boolean suppressEntity(Entity entity) {
++        if (entity == null) return true;
++        MinecraftClient client = MinecraftClient.getInstance();
++        if (client.player != null && entity == client.player) return true;
++
++        return entity instanceof DisplayEntity
++                || entity instanceof FireworkRocketEntity
++                || entity instanceof ExperienceOrbEntity
++                || entity instanceof LightningEntity
++                || entity instanceof AreaEffectCloudEntity
++                || entity instanceof FishingBobberEntity;
++    }
++}
+diff -ruN --exclude build /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/CaptureSession.java /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/CaptureSession.java
+--- /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/CaptureSession.java	2026-08-10 20:04:52.000000000 +0000
++++ /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/CaptureSession.java	2026-08-11 11:57:51.034337978 +0000
+@@ -20,7 +20,7 @@
+     private enum State {
+         BEGIN_PASS, WAIT_SHADER, SET_CAMERA,
+         RESIZE_FOR_CAPTURE, WAIT_PRE_F2, WAIT_POST_F2, HIGH_RES_RENDER,
+-        ADVANCE, FINISHING, DONE
++        ADVANCE, EXPORT_GEOMETRY, FINISHING, DONE
+     }
+ 
+     private record Pose(int index, int rightIndex, int upIndex, double x, double y, double z, float yaw, float pitch) {}
+@@ -40,6 +40,8 @@
+     private final List<String> metadataCaptures = new ArrayList<>();
+     private final List<String> metadataF2Captures = new ArrayList<>();
+     private final List<Pass> passes = new ArrayList<>();
++    private ExactGeometryExporter.Result geometryResult;
++    private boolean geometryExportAttempted;
+ 
+     private State state = State.BEGIN_PASS;
+     private long deadlineMs;
+@@ -106,9 +108,9 @@
+             throw new IllegalStateException("No beauty shader is active. Select one in Iris first or set the beauty shader in Mod Menu.");
+         }
+         validateShaderExists(beauty, "beauty");
+-        validateShaderExists(cfg.depthShader, "depth");
+-        if (cfg.surfaceCaptureEnabled) {
+-            validateShaderExists(cfg.surfaceShader, "surface");
++        if (!cfg.exactGeometryEnabled) {
++            validateShaderExists(cfg.depthShader, "depth");
++            if (cfg.surfaceCaptureEnabled) validateShaderExists(cfg.surfaceShader, "surface");
+         }
+ 
+         passes.add(new Pass(
+@@ -117,19 +119,21 @@
+                 cfg.beautyPreF2HighResMs,
+                 cfg.beautyPostF2SettleMs
+         ));
+-        passes.add(new Pass(
+-                "depth", cfg.depthShader,
+-                cfg.depthShaderSwitchSettleMs,
+-                cfg.depthPreF2HighResMs,
+-                cfg.depthPostF2SettleMs
+-        ));
+-        if (cfg.surfaceCaptureEnabled) {
++        if (!cfg.exactGeometryEnabled) {
+             passes.add(new Pass(
+-                    "surface", cfg.surfaceShader,
+-                    cfg.surfaceShaderSwitchSettleMs,
+-                    cfg.surfacePreF2HighResMs,
+-                    cfg.surfacePostF2SettleMs
++                    "depth", cfg.depthShader,
++                    cfg.depthShaderSwitchSettleMs,
++                    cfg.depthPreF2HighResMs,
++                    cfg.depthPostF2SettleMs
+             ));
++            if (cfg.surfaceCaptureEnabled) {
++                passes.add(new Pass(
++                        "surface", cfg.surfaceShader,
++                        cfg.surfaceShaderSwitchSettleMs,
++                        cfg.surfacePreF2HighResMs,
++                        cfg.surfacePostF2SettleMs
++                ));
++            }
+         }
+ 
+         buildPoses();
+@@ -138,9 +142,14 @@
+         relativeSessionDir = "parallax_capture/" + stamp;
+         sessionDir = client.runDirectory.toPath().resolve("screenshots").resolve(relativeSessionDir);
+         Files.createDirectories(sessionDir.resolve("beauty"));
+-        Files.createDirectories(sessionDir.resolve("depth"));
+-        if (cfg.surfaceCaptureEnabled) Files.createDirectories(sessionDir.resolve("surface"));
++        if (!cfg.exactGeometryEnabled) {
++            Files.createDirectories(sessionDir.resolve("depth"));
++            if (cfg.surfaceCaptureEnabled) Files.createDirectories(sessionDir.resolve("surface"));
++        } else {
++            Files.createDirectories(sessionDir.resolve("geometry"));
++        }
+         Files.createDirectories(sessionDir.resolve("_warmup"));
++        if (cfg.exactGeometryEnabled) installViewer();
+ 
+         // Freeze ReplayMod only after all validation/filesystem setup has succeeded,
+         // so a failed session constructor cannot accidentally leave playback paused.
+@@ -152,6 +161,15 @@
+         CaptureCameraOverride.begin();
+     }
+ 
++    private void installViewer() {
++        try (var in = ParallaxCaptureClient.class.getResourceAsStream("/assets/parallaxcapture/exact_geometry_viewer.html")) {
++            if (in == null) throw new IOException("bundled exact geometry viewer is missing");
++            Files.copy(in, sessionDir.resolve("viewer.html"), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
++        } catch (IOException e) {
++            ParallaxCaptureClient.LOGGER.warn("Could not install exact geometry viewer into capture folder", e);
++        }
++    }
++
+     private void validateShaderExists(String name, String label) {
+         if (name == null || name.isBlank() || name.startsWith("PUT_")) {
+             throw new IllegalStateException("Set the " + label + " shader in Mod Menu > Parallax Capture > Configure first.");
+@@ -218,6 +236,7 @@
+                     }
+                 }
+                 case ADVANCE -> advance();
++                case EXPORT_GEOMETRY -> exportGeometry();
+                 case FINISHING -> finish();
+                 default -> {}
+             }
+@@ -263,7 +282,7 @@
+ 
+     private void beginPass(long now) throws Exception {
+         if (passIndex >= passes.size()) {
+-            state = State.FINISHING;
++            state = cfg.exactGeometryEnabled && !geometryExportAttempted ? State.EXPORT_GEOMETRY : State.FINISHING;
+             return;
+         }
+         Pass pass = passes.get(passIndex);
+@@ -334,6 +353,38 @@
+         }
+     }
+ 
++    private void exportGeometry() {
++        geometryExportAttempted = true;
++        if (cancelled) {
++            state = State.FINISHING;
++            return;
++        }
++        try {
++            restoreResolution();
++            CaptureCameraOverride.set(originalX, originalY, originalZ, originalYaw, originalPitch);
++            if (client.player != null) {
++                client.player.sendMessage(Text.literal("Parallax: exporting canonical 180° geometry…").formatted(Formatting.AQUA), true);
++            }
++            geometryResult = ExactGeometryExporter.export(
++                    client, cfg, sessionDir, originalX, originalY, originalZ, originalYaw
++            );
++            writeMetadata(false);
++            ParallaxCaptureClient.LOGGER.info(
++                    "Exact geometry: {} vertices, {} triangles, {} -> {} bytes",
++                    geometryResult.vertexCount(), geometryResult.triangleCount(),
++                    geometryResult.rawBytes(), geometryResult.compressedBytes()
++            );
++        } catch (Throwable t) {
++            ParallaxCaptureClient.LOGGER.error("Exact geometry export failed", t);
++            if (client.player != null) {
++                client.player.sendMessage(Text.literal("Geometry export failed: " + rootMessage(t)).formatted(Formatting.RED), false);
++            }
++            cancelled = true;
++        } finally {
++            state = State.FINISHING;
++        }
++    }
++
+     private void finish() {
+         restoreResolution();
+         CaptureCameraOverride.clear();
+@@ -366,6 +417,11 @@
+         sb.append("  \"captureCameraMode\": \"render_camera_only\",\n");
+         sb.append("  \"staticGeometryFilter\": true,\n");
+         sb.append("  \"cameraFacingContentSuppressed\": true,\n");
++        sb.append("  \"exactGeometryEnabled\": ").append(cfg.exactGeometryEnabled).append(",\n");
++        sb.append("  \"captureRepresentation\": ").append(json(cfg.exactGeometryEnabled ? "beauty_plus_canonical_geometry" : "legacy_beauty_depth_surface")).append(",\n");
++        sb.append("  \"geometryHorizontalDegrees\": 180.0,\n");
++        sb.append("  \"geometryRangeConfiguredBlocks\": ").append(cfg.exactGeometryRangeBlocks).append(",\n");
++        sb.append("  \"geometryGuardBlocks\": ").append(cfg.exactGeometryGuardBlocks).append(",\n");
+         sb.append("  \"replayModFrozen\": ").append(replayFreeze.active()).append(",\n");
+         sb.append("  \"resolution\": [").append(cfg.captureWidth).append(',').append(cfg.captureHeight).append("],\n");
+         sb.append("  \"fov\": ").append(originalFov).append(",\n");
+@@ -383,7 +439,7 @@
+         sb.append("  \"beautyPostF2Ms\": ").append(cfg.beautyPostF2SettleMs).append(",\n");
+         sb.append("  \"depthPreF2HighResMs\": ").append(cfg.depthPreF2HighResMs).append(",\n");
+         sb.append("  \"depthPostF2Ms\": ").append(cfg.depthPostF2SettleMs).append(",\n");
+-        sb.append("  \"surfaceCaptureEnabled\": ").append(cfg.surfaceCaptureEnabled).append(",\n");
++        sb.append("  \"surfaceCaptureEnabled\": ").append(!cfg.exactGeometryEnabled && cfg.surfaceCaptureEnabled).append(",\n");
+         sb.append("  \"surfaceShaderSwitchSettleMs\": ").append(cfg.surfaceShaderSwitchSettleMs).append(",\n");
+         sb.append("  \"surfacePreF2HighResMs\": ").append(cfg.surfacePreF2HighResMs).append(",\n");
+         sb.append("  \"surfacePostF2Ms\": ").append(cfg.surfacePostF2SettleMs).append(",\n");
+@@ -392,8 +448,9 @@
+         sb.append("  \"surfaceLogMaxBlocks\": ").append(cfg.surfaceLogMaxBlocks).append(",\n");
+         sb.append("  \"surfaceRangeBlocks\": ").append(cfg.surfaceRangeBlocks).append(",\n");
+         sb.append("  \"beautyShader\": ").append(json(passes.isEmpty() ? null : passes.get(0).shader())).append(",\n");
+-        sb.append("  \"depthShader\": ").append(json(passes.size() < 2 ? cfg.depthShader : passes.get(1).shader())).append(",\n");
+-        sb.append("  \"surfaceShader\": ").append(json(cfg.surfaceCaptureEnabled && passes.size() >= 3 ? passes.get(2).shader() : null)).append(",\n");
++        sb.append("  \"depthShader\": ").append(json(cfg.exactGeometryEnabled ? null : cfg.depthShader)).append(",\n");
++        sb.append("  \"surfaceShader\": ").append(json(!cfg.exactGeometryEnabled && cfg.surfaceCaptureEnabled ? cfg.surfaceShader : null)).append(",\n");
++        sb.append("  \"geometry\": ").append(geometryResult == null ? "null" : geometryResult.toJson()).append(",\n");
+ 
+         appendCaptureArray(sb, "f2Captures", metadataF2Captures, true);
+         appendCaptureArray(sb, "captures", metadataCaptures, false);
+diff -ruN --exclude build /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/ExactGeometryExporter.java /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/ExactGeometryExporter.java
+--- /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/ExactGeometryExporter.java	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/ExactGeometryExporter.java	2026-08-11 11:55:05.608560894 +0000
+@@ -0,0 +1,540 @@
++package dev.card.parallaxcapture;
++
++import net.minecraft.block.BlockRenderType;
++import net.minecraft.block.BlockState;
++import net.minecraft.block.entity.BlockEntity;
++import net.minecraft.client.MinecraftClient;
++import net.minecraft.client.render.OverlayTexture;
++import net.minecraft.client.render.RenderLayer;
++import net.minecraft.client.render.VertexConsumer;
++import net.minecraft.client.render.VertexConsumerProvider;
++import net.minecraft.client.render.VertexFormat;
++import net.minecraft.client.render.WorldRenderer;
++import net.minecraft.client.render.block.BlockRenderManager;
++import net.minecraft.client.render.block.entity.BlockEntityRenderDispatcher;
++import net.minecraft.client.render.entity.EntityRenderDispatcher;
++import net.minecraft.client.render.entity.EntityRenderer;
++import net.minecraft.client.util.math.MatrixStack;
++import net.minecraft.entity.Entity;
++import net.minecraft.fluid.FluidState;
++import net.minecraft.util.math.BlockPos;
++import net.minecraft.util.math.Direction;
++import net.minecraft.util.math.MathHelper;
++import net.minecraft.util.math.random.Random;
++import net.minecraft.world.chunk.Chunk;
++import net.minecraft.world.chunk.ChunkSection;
++import net.minecraft.world.chunk.ChunkStatus;
++import net.minecraft.world.chunk.EmptyChunk;
++import net.minecraft.world.chunk.WorldChunk;
++
++import java.io.BufferedOutputStream;
++import java.io.IOException;
++import java.io.OutputStream;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.Arrays;
++import java.util.HashMap;
++import java.util.IdentityHashMap;
++import java.util.Locale;
++import java.util.Map;
++import java.util.zip.GZIPOutputStream;
++
++/**
++ * Position-only renderer replay for spatial capture.
++ *
++ * This deliberately reuses Minecraft's loaded block/entity/block-entity renderers instead of
++ * reconstructing shapes from block IDs. Resource-pack and normal Fabric model geometry therefore
++ * reaches the same VertexConsumer abstraction used by Minecraft, while UV/color/light/material
++ * data are discarded. The result is one canonical world-space triangle mesh which beauty images
++ * can be projectively mapped onto later.
++ */
++public final class ExactGeometryExporter {
++    private static final byte[] MAGIC = new byte[]{'P','G','E','O','0','0','0','1'};
++    private static final int FORMAT_VERSION = 1;
++    private static final Direction[] DIRECTIONS = Direction.values();
++
++    public record Result(
++            String file,
++            int vertexCount,
++            int triangleCount,
++            long rawBytes,
++            long compressedBytes,
++            int chunksVisited,
++            int blocksVisited,
++            int blocksRendered,
++            int blockEntitiesRendered,
++            int entitiesRendered,
++            double rangeBlocks,
++            double horizontalDegrees,
++            double originX,
++            double originY,
++            double originZ,
++            float minX,
++            float minY,
++            float minZ,
++            float maxX,
++            float maxY,
++            float maxZ
++    ) {
++        public String toJson() {
++            return "{" +
++                    "\"format\":\"pgeo-v1-gzip\"," +
++                    "\"file\":" + json(file) + ',' +
++                    "\"vertexCount\":" + vertexCount + ',' +
++                    "\"triangleCount\":" + triangleCount + ',' +
++                    "\"rawBytes\":" + rawBytes + ',' +
++                    "\"compressedBytes\":" + compressedBytes + ',' +
++                    "\"chunksVisited\":" + chunksVisited + ',' +
++                    "\"blocksVisited\":" + blocksVisited + ',' +
++                    "\"blocksRendered\":" + blocksRendered + ',' +
++                    "\"blockEntitiesRendered\":" + blockEntitiesRendered + ',' +
++                    "\"entitiesRendered\":" + entitiesRendered + ',' +
++                    "\"rangeBlocks\":" + fmt(rangeBlocks) + ',' +
++                    "\"horizontalDegrees\":" + fmt(horizontalDegrees) + ',' +
++                    "\"origin\":[" + fmt(originX) + ',' + fmt(originY) + ',' + fmt(originZ) + "]," +
++                    "\"boundsMin\":[" + fmt(minX) + ',' + fmt(minY) + ',' + fmt(minZ) + "]," +
++                    "\"boundsMax\":[" + fmt(maxX) + ',' + fmt(maxY) + ',' + fmt(maxZ) + "]" +
++            

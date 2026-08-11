@@ -1,0 +1,37 @@
+--- src/main/java/dev/card/parallaxcapture/ExactGeometryExporter.java
++++ src/main/java/dev/card/parallaxcapture/ExactGeometryExporter.java
+@@ -95,18 +95,6 @@
+                     "\"origin\":[" + fmt(originX) + ',' + fmt(originY) + ',' + fmt(originZ) + "]," +
+                     "\"boundsMin\":[" + fmt(minX) + ',' + fmt(minY) + ',' + fmt(minZ) + "]," +
+                     "\"boundsMax\":[" + fmt(maxX) + ',' + fmt(maxY) + ',' + fmt(maxZ) + "]" +
+-                     "\"rawBytes\":" + rawBytes + ',' +
+-                    "\"compressedBytes\":" + compressedBytes + ',' +
+-                    "\"chunksVisited\":" + chunksVisited + ',' +
+-                    "\"blocksVisited\":" + blocksVisited + ',' +
+-                    "\"blocksRendered\":" + blocksRendered + ',' +
+-                    "\"blockEntitiesRendered\":" + blockEntitiesRendered + ',' +
+-                    "\"entitiesRendered\":" + entitiesRendered + ',' +
+-                    "\"rangeBlocks\":" + fmt(rangeBlocks) + ',' +
+-                    "\"horizontalDegrees\":" + fmt(horizontalDegrees) + ',' +
+-                    "\"origin\":[" + fmt(originX) + ',' + fmt(originY) + ',' + fmt(originZ) + "]," +
+-                    "\"boundsMin\":[" + fmt(minX) + ',' + fmt(minY) + ',' + fmt(minZ) + "]," +
+-                    "\"boundsMax\":[" + fmt(maxX) + ',' + fmt(maxY) + ',' + fmt(maxZ) + "]" +
+                     "}";
+         }
+     }
+@@ -538,3 +526,15 @@
+         float maxX(){return vertexCount==0?0:maxX;} float maxY(){return vertexCount==0?0:maxY;} float maxZ(){return vertexCount==0?0:maxZ;}
+     }
+ 
++    private static void writeIntLE(OutputStream out, int v) throws IOException {
++        out.write(v); out.write(v >>> 8); out.write(v >>> 16); out.write(v >>> 24);
++    }
++    private static void writeFloatLE(OutputStream out, float v) throws IOException { writeIntLE(out, Float.floatToIntBits(v)); }
++    private static void writeDoubleLE(OutputStream out, double v) throws IOException {
++        long x = Double.doubleToLongBits(v);
++        out.write((int)x); out.write((int)(x>>>8)); out.write((int)(x>>>16)); out.write((int)(x>>>24));
++        out.write((int)(x>>>32)); out.write((int)(x>>>40)); out.write((int)(x>>>48)); out.write((int)(x>>>56));
++    }
++    private static String json(String s) { return s == null ? "null" : "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""; }
++    private static String fmt(double v) { return String.format(Locale.ROOT, "%.9g", v); }
++}

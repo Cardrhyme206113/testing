@@ -1,0 +1,253 @@
+t r, int g, int b, int a) { return this; }
++        @Override public VertexConsumer texture(float u, float v) { return this; }
++        @Override public VertexConsumer overlay(int u, int v) { return this; }
++        @Override public VertexConsumer light(int u, int v) { return this; }
++        @Override public VertexConsumer normal(float x, float y, float z) { return this; }
++        @Override public void fixedColor(int r, int g, int b, int a) {}
++        @Override public void unfixColor() {}
++
++        @Override public void next() {
++            int v = mesh.vertex((float)x, (float)y, (float)z);
++            switch (mode) {
++                case QUADS -> {
++                    int q = primitiveVertex & 3;
++                    if (q == 0) a = v;
++                    else if (q == 1) b = v;
++                    else if (q == 2) c = v;
++                    else {
++                        mesh.triangle(a, b, c);
++                        mesh.triangle(a, c, v);
++                    }
++                }
++                case TRIANGLES -> {
++                    int q = primitiveVertex % 3;
++                    if (q == 0) a = v;
++                    else if (q == 1) b = v;
++                    else mesh.triangle(a, b, v);
++                }
++                case TRIANGLE_STRIP -> {
++                    if (primitiveVertex == 0) a = v;
++                    else if (primitiveVertex == 1) b = v;
++                    else {
++                        if ((primitiveVertex & 1) == 0) mesh.triangle(a, b, v);
++                        else mesh.triangle(b, a, v);
++                        a = b;
++                        b = v;
++                    }
++                }
++                case TRIANGLE_FAN -> {
++                    if (primitiveVertex == 0) a = v;
++                    else if (primitiveVertex == 1) b = v;
++                    else {
++                        mesh.triangle(a, b, v);
++                        b = v;
++                    }
++                }
++                default -> {
++                    // Lines/debug primitives intentionally have no surface geometry.
++                }
++            }
++            primitiveVertex++;
++        }
++
++        void finish() {}
++    }
++
++    /** Primitive arrays + exact float-position hash table; much less overhead than boxed HashMaps. */
++    private static final class MeshBuilder {
++        private float[] positions = new float[3 * 65536];
++        private int[] indices = new int[6 * 65536];
++        private int vertexCount;
++        private int indexCount;
++
++        private int[] keyX = new int[1 << 18];
++        private int[] keyY = new int[1 << 18];
++        private int[] keyZ = new int[1 << 18];
++        private int[] values = new int[1 << 18]; // index + 1, zero = empty
++        private int mask = values.length - 1;
++        private int tableSize;
++
++        private float minX = Float.POSITIVE_INFINITY, minY = Float.POSITIVE_INFINITY, minZ = Float.POSITIVE_INFINITY;
++        private float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY, maxZ = Float.NEGATIVE_INFINITY;
++
++        int vertex(float x, float y, float z) {
++            int xb = Float.floatToIntBits(x), yb = Float.floatToIntBits(y), zb = Float.floatToIntBits(z);
++            int slot = mix(xb, yb, zb) & mask;
++            while (true) {
++                int stored = values[slot];
++                if (stored == 0) break;
++                if (keyX[slot] == xb && keyY[slot] == yb && keyZ[slot] == zb) return stored - 1;
++                slot = (slot + 1) & mask;
++            }
++
++            if ((tableSize + 1) * 10 >= values.length * 7) {
++                rehash(values.length << 1);
++                slot = mix(xb, yb, zb) & mask;
++                while (values[slot] != 0) slot = (slot + 1) & mask;
++            }
++
++            ensurePositions(vertexCount + 1);
++            int index = vertexCount++;
++            int p = index * 3;
++            positions[p] = x; positions[p + 1] = y; positions[p + 2] = z;
++            minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
++            maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
++            keyX[slot] = xb; keyY[slot] = yb; keyZ[slot] = zb; values[slot] = index + 1;
++            tableSize++;
++            return index;
++        }
++
++        void triangle(int a, int b, int c) {
++            if (a < 0 || b < 0 || c < 0 || a == b || b == c || a == c) return;
++            // Reject mathematically degenerate position-only triangles. They have no raster area.
++            int pa=a*3, pb=b*3, pc=c*3;
++            double abx=positions[pb]-positions[pa], aby=positions[pb+1]-positions[pa+1], abz=positions[pb+2]-positions[pa+2];
++            double acx=positions[pc]-positions[pa], acy=positions[pc+1]-positions[pa+1], acz=positions[pc+2]-positions[pa+2];
++            double cx=aby*acz-abz*acy, cy=abz*acx-abx*acz, cz=abx*acy-aby*acx;
++            if (cx*cx + cy*cy + cz*cz < 1.0e-16) return;
++            ensureIndices(indexCount + 3);
++            indices[indexCount++] = a;
++            indices[indexCount++] = b;
++            indices[indexCount++] = c;
++        }
++
++        private void ensurePositions(int count) {
++            int need = count * 3;
++            if (need > positions.length) positions = Arrays.copyOf(positions, Math.max(need, positions.length << 1));
++        }
++        private void ensureIndices(int count) {
++            if (count > indices.length) indices = Arrays.copyOf(indices, Math.max(count, indices.length << 1));
++        }
++
++        private void rehash(int capacity) {
++            int[] ox=keyX, oy=keyY, oz=keyZ, ov=values;
++            keyX=new int[capacity]; keyY=new int[capacity]; keyZ=new int[capacity]; values=new int[capacity];
++            mask=capacity-1; tableSize=0;
++            for (int i=0;i<ov.length;i++) if (ov[i]!=0) {
++                int slot=mix(ox[i],oy[i],oz[i]) & mask;
++                while(values[slot]!=0) slot=(slot+1)&mask;
++                keyX[slot]=ox[i]; keyY[slot]=oy[i]; keyZ[slot]=oz[i]; values[slot]=ov[i]; tableSize++;
++            }
++        }
++
++        private static int mix(int x, int y, int z) {
++            int h = x * 0x9E3779B9;
++            h ^= Integer.rotateLeft(y * 0x85EBCA6B, 11);
++            h ^= Integer.rotateLeft(z * 0xC2B2AE35, 22);
++            h ^= h >>> 16;
++            h *= 0x7FEB352D;
++            h ^= h >>> 15;
++            return h;
++        }
++
++        float minX(){return vertexCount==0?0:minX;} float minY(){return vertexCount==0?0:minY;} float minZ(){return vertexCount==0?0:minZ;}
++        float maxX(){return vertexCount==0?0:maxX;} float maxY(){return vertexCount==0?0:maxY;} float maxZ(){return vertexCount==0?0:maxZ;}
++    }
++
++    private static void writeIntLE(OutputStream out, int v) throws IOException {
++        out.write(v); out.write(v >>> 8); out.write(v >>> 16); out.write(v >>> 24);
++    }
++    private static void writeFloatLE(OutputStream out, float v) throws IOException { writeIntLE(out, Float.floatToIntBits(v)); }
++    private static void writeDoubleLE(OutputStream out, double v) throws IOException {
++        long x = Double.doubleToLongBits(v);
++        out.write((int)x); out.write((int)(x>>>8)); out.write((int)(x>>>16)); out.write((int)(x>>>24));
++        out.write((int)(x>>>32)); out.write((int)(x>>>40)); out.write((int)(x>>>48)); out.write((int)(x>>>56));
++    }
++    private static String json(String s) { return s == null ? "null" : "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""; }
++    private static String fmt(double v) { return String.format(Locale.ROOT, "%.9g", v); }
++}
+diff -ruN --exclude build /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/mixin/EntityRenderDispatcherMixin.java /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/mixin/EntityRenderDispatcherMixin.java
+--- /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/mixin/EntityRenderDispatcherMixin.java	2026-08-10 20:04:52.000000000 +0000
++++ /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/mixin/EntityRenderDispatcherMixin.java	2026-08-11 11:55:05.609543427 +0000
+@@ -1,12 +1,11 @@
+ package dev.card.parallaxcapture.mixin;
+ 
+ import dev.card.parallaxcapture.CaptureCameraOverride;
+-import net.minecraft.client.MinecraftClient;
++import dev.card.parallaxcapture.CaptureContentFilter;
+ import net.minecraft.client.render.VertexConsumerProvider;
+ import net.minecraft.client.render.entity.EntityRenderDispatcher;
+ import net.minecraft.client.util.math.MatrixStack;
+ import net.minecraft.entity.Entity;
+-import net.minecraft.entity.decoration.DisplayEntity;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.injection.At;
+ import org.spongepowered.asm.mixin.injection.Inject;
+@@ -15,22 +14,11 @@
+ @Mixin(EntityRenderDispatcher.class)
+ public abstract class EntityRenderDispatcherMixin {
+     @Inject(method = "render", at = @At("HEAD"), cancellable = true)
+-    private <E extends Entity> void parallaxcapture$hideLocalPlayer(E entity, double x, double y, double z,
+-                                                                    float yaw, float tickDelta,
+-                                                                    MatrixStack matrices,
+-                                                                    VertexConsumerProvider vertexConsumers,
+-                                                                    int light, CallbackInfo ci) {
+-        if (!CaptureCameraOverride.isCapturing()) return;
+-        MinecraftClient client = MinecraftClient.getInstance();
+-        if (client.player != null && entity == client.player) {
+-            ci.cancel();
+-            return;
+-        }
+-
+-        // Text displays are the modern server-hologram primitive, and block/item
+-        // displays can also use camera-facing billboard modes. We deliberately
+-        // quarantine all vanilla display entities during a spatial capture instead
+-        // of baking several camera-dependent orientations into the fused mesh.
+-        if (entity instanceof DisplayEntity) ci.cancel();
++    private <E extends Entity> void parallaxcapture$filterSpatialEntities(E entity, double x, double y, double z,
++                                                                          float yaw, float tickDelta,
++                                                                          MatrixStack matrices,
++                                                                          VertexConsumerProvider vertexConsumers,
++                                                                          int light, CallbackInfo ci) {
++        if (CaptureCameraOverride.isCapturing() && CaptureContentFilter.suppressEntity(entity)) ci.cancel();
+     }
+ }
+diff -ruN --exclude build /mnt/data/parallax-base/src/main/resources/assets/parallaxcapture/exact_geometry_viewer.html /mnt/data/parallax-src/src/main/resources/assets/parallaxcapture/exact_geometry_viewer.html
+--- /mnt/data/parallax-base/src/main/resources/assets/parallaxcapture/exact_geometry_viewer.html	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/parallax-src/src/main/resources/assets/parallaxcapture/exact_geometry_viewer.html	2026-08-11 11:57:38.825533584 +0000
+@@ -0,0 +1,110 @@
++<!doctype html>
++<html lang="en">
++<head>
++<meta charset="utf-8" />
++<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
++<title>Parallax Exact Geometry Viewer</title>
++<style>
++html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#08090c;color:#e8e8ef;font:13px system-ui,-apple-system,Segoe UI,sans-serif}
++#gl{position:fixed;inset:0;width:100%;height:100%;display:block;background:#000}
++#bar{position:fixed;left:10px;right:10px;top:10px;z-index:4;display:flex;align-items:center;gap:8px;padding:8px 10px;background:#101116e8;border:1px solid #2a2c36;border-radius:9px;backdrop-filter:blur(10px)}
++button,.pick{background:#191b24;color:#eee;border:1px solid #393c49;border-radius:7px;padding:7px 10px;cursor:pointer}.pick:hover,button:hover{background:#222531}
++#folder{display:none}#status{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#b9bbc7}.spacer{flex:1}
++#stats{color:#8e91a0;font-variant-numeric:tabular-nums}.hint{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:3;background:#101116cc;padding:6px 10px;border-radius:7px;color:#aeb0bc;pointer-events:none;transition:opacity .3s}
++#error{position:fixed;left:10px;right:10px;bottom:10px;z-index:6;padding:9px 11px;background:#471d22eb;border:1px solid #91404a;border-radius:8px;display:none;white-space:pre-wrap}
++@media(max-width:700px){#bar{left:5px;right:5px;top:5px}.hideSmall{display:none}}
++</style>
++</head>
++<body>
++<canvas id="gl"></canvas>
++<div id="bar"><label class="pick">Open capture folder<input id="folder" type="file" webkitdirectory multiple></label><span id="status">Load an Exact Geometry + Beauty capture folder</span><span class="spacer"></span><span id="stats" class="hideSmall"></span></div>
++<div id="hint" class="hint">Move the mouse / touch-drag to look around</div><div id="error"></div>
++<script>
++'use strict';
++const canvas=document.getElementById('gl'), statusEl=document.getElementById('status'), statsEl=document.getElementById('stats'), errEl=document.getElementById('error'), hint=document.getElementById('hint');
++const gl=canvas.getContext('webgl2',{antialias:true,alpha:false,preserveDrawingBuffer:false});
++if(!gl) fail('WebGL2 is required.');
++let meta=null, geom=null, captures=[], origin=[0,0,0], basePose=null, basis=null, extentR=0, extentU=0;
++let vao=null,vbo=null,ebo=null,indexCount=0, programs={}, depthSlots=[], selected=[], loadedSelection=[];
++let pointer={x:0,y:0}, livePos=[0,0,0], needsRender=true, sourceSetKey='';
++const fileMap=new Map(), textureCache=new Map(); const MAX_BEAUTY_TEXTURES=6;
++
++function fail(s){errEl.style.display='block';errEl.textContent=s;throw new Error(s)}
++function showError(s){errEl.style.display='block';errEl.textContent=s}
++function clearError(){errEl.style.display='none'}
++function normPath(s){return (s||'').replaceAll('\\','/').replace(/^\.\//,'')}
++
++document.getElementById('folder').addEventListener('change',async e=>{try{clearError(); await loadFiles([...e.target.files])}catch(x){console.error(x);showError(x.stack||x.message||String(x))}});
++window.addEventListener('dragover',e=>e.preventDefault());
++window.addEventListener('drop',async e=>{e.preventDefault();try{clearError();await loadFiles([...e.dataTransfer.files])}catch(x){showError(x.stack||x.message||String(x))}});
++
++async function loadFiles(files){
++  statusEl.textContent='Reading capture…'; fileMap.clear();
++  let metadataFile=files.find(f=>normPath(f.webkitRelativePath||f.name).endsWith('/metadata.json')) || files.find(f=>f.name==='metadata.json');
++  if(!metadataFile) throw new Error('metadata.json not found in the selected capture folder.');
++  const metadataPath=normPath(metadataFile.webkitRelativeP

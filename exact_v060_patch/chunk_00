@@ -1,0 +1,114 @@
+diff -ruN --exclude build /mnt/data/parallax-base/gradle.properties /mnt/data/parallax-src/gradle.properties
+--- /mnt/data/parallax-base/gradle.properties	2026-08-10 20:04:52.000000000 +0000
++++ /mnt/data/parallax-src/gradle.properties	2026-08-11 11:55:23.628212707 +0000
+@@ -4,7 +4,7 @@
+ yarn_mappings=1.20.1+build.10
+ loader_version=0.15.11
+ fabric_version=0.92.2+1.20.1
+-mod_version=0.5.5-static-geometry
++mod_version=0.6.0-exact-geometry
+ maven_group=dev.card
+ archives_base_name=parallax-capture
+ 
+diff -ruN --exclude build /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/CaptureConfig.java /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/CaptureConfig.java
+--- /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/CaptureConfig.java	2026-08-10 20:04:52.000000000 +0000
++++ /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/CaptureConfig.java	2026-08-11 11:55:23.501350959 +0000
+@@ -23,6 +23,14 @@
+     public double offsetStepBlocks = 2.0;
+     public int gridRadius = 1;
+ 
++    // Exact-geometry + beauty mode. When enabled the old depth/surface passes are skipped;
++    // Minecraft's actual block/entity render geometry is exported once as a canonical mesh.
++    public boolean exactGeometryEnabled = true;
++    // 0 = current client view distance + safety margin.
++    public double exactGeometryRangeBlocks = 0.0;
++    // Extra near-camera rear guard so small parallax offsets do not expose a hard 180-degree cut.
++    public double exactGeometryGuardBlocks = 8.0;
++
+     // Pass-level shader reload settle. Depth is intentionally much faster.
+     public long beautyShaderSwitchSettleMs = 5000;
+     public long depthShaderSwitchSettleMs = 1000;
+@@ -67,6 +75,9 @@
+         c.captureHeight = captureHeight;
+         c.offsetStepBlocks = offsetStepBlocks;
+         c.gridRadius = gridRadius;
++        c.exactGeometryEnabled = exactGeometryEnabled;
++        c.exactGeometryRangeBlocks = exactGeometryRangeBlocks;
++        c.exactGeometryGuardBlocks = exactGeometryGuardBlocks;
+         c.beautyShaderSwitchSettleMs = beautyShaderSwitchSettleMs;
+         c.depthShaderSwitchSettleMs = depthShaderSwitchSettleMs;
+         c.beautyPreF2HighResMs = beautyPreF2HighResMs;
+@@ -90,6 +101,8 @@
+         captureHeight = clamp(captureHeight, 180, 16384);
+         offsetStepBlocks = clamp(offsetStepBlocks, 0.0, 32.0);
+         gridRadius = clamp(gridRadius, 0, 5);
++        exactGeometryRangeBlocks = exactGeometryRangeBlocks <= 0.0 ? 0.0 : clamp(exactGeometryRangeBlocks, 16.0, 8192.0);
++        exactGeometryGuardBlocks = clamp(exactGeometryGuardBlocks, 0.0, 64.0);
+         surfaceRangeBlocks = clamp(surfaceRangeBlocks, 1.0, 8192.0);
+         surfaceLogMaxBlocks = clamp(surfaceLogMaxBlocks, 1024.0, 1048576.0);
+         beautyShaderSwitchSettleMs = clamp(beautyShaderSwitchSettleMs, 0, 60000);
+@@ -138,6 +151,9 @@
+         c.captureHeight = parseInt(p, "capture_height", c.captureHeight, 180, 16384);
+         c.offsetStepBlocks = parseDouble(p, "offset_step_blocks", c.offsetStepBlocks, 0.0, 32.0);
+         c.gridRadius = parseInt(p, "grid_radius", c.gridRadius, 0, 5);
++        c.exactGeometryEnabled = parseBoolean(p, "exact_geometry_enabled", c.exactGeometryEnabled);
++        c.exactGeometryRangeBlocks = parseDouble(p, "exact_geometry_range_blocks", c.exactGeometryRangeBlocks, 0.0, 8192.0);
++        c.exactGeometryGuardBlocks = parseDouble(p, "exact_geometry_guard_blocks", c.exactGeometryGuardBlocks, 0.0, 64.0);
+ 
+         // v0.4 uses new, explicit timing keys. Old ambiguous v0.1-v0.3 timing
+         // keys are deliberately not inherited, so upgrading gets the corrected
+@@ -180,6 +196,9 @@
+         p.setProperty("capture_height", Integer.toString(captureHeight));
+         p.setProperty("offset_step_blocks", Double.toString(offsetStepBlocks));
+         p.setProperty("grid_radius", Integer.toString(gridRadius));
++        p.setProperty("exact_geometry_enabled", Boolean.toString(exactGeometryEnabled));
++        p.setProperty("exact_geometry_range_blocks", Double.toString(exactGeometryRangeBlocks));
++        p.setProperty("exact_geometry_guard_blocks", Double.toString(exactGeometryGuardBlocks));
+         p.setProperty("beauty_shader_switch_settle_ms", Long.toString(beautyShaderSwitchSettleMs));
+         p.setProperty("depth_shader_switch_settle_ms", Long.toString(depthShaderSwitchSettleMs));
+         p.setProperty("beauty_pre_f2_highres_ms", Long.toString(beautyPreF2HighResMs));
+@@ -199,7 +218,7 @@
+         try {
+             Files.createDirectories(PATH.getParent());
+             try (BufferedWriter w = Files.newBufferedWriter(PATH)) {
+-                p.store(w, "Parallax Capture 1.20.1 v0.5.1 surface-depth24 - normally edit this through Mod Menu > Parallax Capture > Configure");
++                p.store(w, "Parallax Capture 1.20.1 v0.6 exact geometry + beauty - normally edit this through Mod Menu > Parallax Capture > Configure");
+             }
+         } catch (IOException e) {
+             ParallaxCaptureClient.LOGGER.warn("Could not save {}", PATH, e);
+diff -ruN --exclude build /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/CaptureConfigScreen.java /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/CaptureConfigScreen.java
+--- /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/CaptureConfigScreen.java	2026-08-10 20:04:52.000000000 +0000
++++ /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/CaptureConfigScreen.java	2026-08-11 11:55:23.501510516 +0000
+@@ -73,6 +73,11 @@
+         finalFramesField = addField("Final render frames after timer", Integer.toString(draft.finalCaptureRenderFrames), right, top + row * 7, colWidth);
+ 
+         int boolY = top + row * 8 + 2;
++        addDrawableChild(ButtonWidget.builder(toggleText("Exact geometry + beauty", draft.exactGeometryEnabled), b -> {
++            draft.exactGeometryEnabled = !draft.exactGeometryEnabled;
++            b.setMessage(toggleText("Exact geometry + beauty", draft.exactGeometryEnabled));
++        }).dimensions(left, boolY, totalWidth, 20).build());
++        boolY += 23;
+         addDrawableChild(ButtonWidget.builder(toggleText("F2 capture", draft.warmupF2), b -> {
+             draft.warmupF2 = !draft.warmupF2;
+             b.setMessage(toggleText("F2 capture", draft.warmupF2));
+diff -ruN --exclude build /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/CaptureContentFilter.java /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/CaptureContentFilter.java
+--- /mnt/data/parallax-base/src/main/java/dev/card/parallaxcapture/CaptureContentFilter.java	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/parallax-src/src/main/java/dev/card/parallaxcapture/CaptureContentFilter.java	2026-08-11 11:55:05.607302591 +0000
+@@ -0,0 +1,34 @@
++package dev.card.parallaxcapture;
++
++import net.minecraft.client.MinecraftClient;
++import net.minecraft.entity.AreaEffectCloudEntity;
++import net.minecraft.entity.Entity;
++import net.minecraft.entity.ExperienceOrbEntity;
++import net.minecraft.entity.LightningEntity;
++import net.minecraft.entity.decoration.DisplayEntity;
++import net.minecraft.entity.projectile.FireworkRocketEntity;
++import net.minecraft.entity.projectile.FishingBobberEntity;
++
++/** Shared spatial-capture content policy for beauty and exact-geometry passes. */
++public final class CaptureContentFilter {
++    private CaptureContentFilter() {}
++
++    /**
++     * Returns true for renderables that should never become part of a static parallax sce
