@@ -3,6 +3,8 @@ name: Parallax Exact Geometry Build
 on:
   push:
     branches: [parallax-exact-geometry-v060]
+  pull_request:
+    branches: [parallax-replaymod-v053]
   workflow_dispatch:
 
 jobs:
