@@ -40,7 +40,7 @@ public class MainActivity extends Activity {
         setButton.setEnabled(PackStore.currentScene(this) != null);
         root.addView(setButton);
 
-        TextView viewHelp = text("Camera setup: Source FOV = how the parallax was captured. Screen FOV = the virtual camera you want. Zoom is an extra optical crop; more zoom naturally makes parallax look faster.", 13, Color.rgb(155,158,170));
+        TextView viewHelp = text("Source FOV = how the scene was captured. Screen FOV = your viewing camera. They are independent. Zoom is an extra optical crop; lower screen FOV / more zoom naturally makes motion look faster.", 13, Color.rgb(155,158,170));
         viewHelp.setPadding(0,28,0,12); root.addView(viewHelp);
 
         sourceFovLabel = text("Source / parallax FOV", 15, Color.WHITE); root.addView(sourceFovLabel);
@@ -54,7 +54,7 @@ public class MainActivity extends Activity {
         screenFovBar = new SeekBar(this);
         screenFovBar.setMax(SceneRenderer.MAX_FOV - SceneRenderer.MIN_FOV);
         root.addView(screenFovBar, new LinearLayout.LayoutParams(-1,-2));
-        Button matchSource = button("Match screen FOV to source"); root.addView(matchSource);
+        Button matchSource = button("Set screen FOV = source FOV"); root.addView(matchSource);
 
         zoomLabel = text("Extra zoom", 15, Color.WHITE);
         zoomLabel.setPadding(0,18,0,0); root.addView(zoomLabel);
@@ -63,7 +63,7 @@ public class MainActivity extends Activity {
         root.addView(zoomBar, new LinearLayout.LayoutParams(-1,-2));
         Button resetZoom = button("Reset zoom to 1.00×"); root.addView(resetZoom);
 
-        TextView rangeHelp = text("FOV range 35°–120°  •  Zoom 1.00×–1.60×  •  Landscape keeps a small automatic safety crop", 12, Color.rgb(125,128,140));
+        TextView rangeHelp = text("FOV range 35°–120°  •  Zoom 1.00×–1.60×  •  Landscape adds only a small safety crop", 12, Color.rgb(125,128,140));
         rangeHelp.setPadding(0,4,0,0); root.addView(rangeHelp);
 
         status = text(currentStatus(), 14, Color.rgb(190,190,200));
@@ -82,10 +82,8 @@ public class MainActivity extends Activity {
         sourceFovBar.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override public void changed(int progress, boolean fromUser) {
                 if(fromUser) {
-                    float value=SceneRenderer.MIN_FOV+progress;
-                    android.content.SharedPreferences p=getSharedPreferences(PackStore.PREFS,0);
-                    p.edit().putFloat(SceneRenderer.SOURCE_FOV_KEY,value).apply();
-                    if(!p.contains(SceneRenderer.SCREEN_FOV_KEY)) screenFovBar.setProgress(progress);
+                    getSharedPreferences(PackStore.PREFS,0).edit()
+                            .putFloat(SceneRenderer.SOURCE_FOV_KEY,SceneRenderer.MIN_FOV+progress).apply();
                 }
                 updateViewLabels();
             }
@@ -93,29 +91,35 @@ public class MainActivity extends Activity {
 
         screenFovBar.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override public void changed(int progress, boolean fromUser) {
-                if(fromUser) getSharedPreferences(PackStore.PREFS,0).edit()
-                        .putFloat(SceneRenderer.SCREEN_FOV_KEY,SceneRenderer.MIN_FOV+progress).apply();
+                if(fromUser) {
+                    getSharedPreferences(PackStore.PREFS,0).edit()
+                            .putFloat(SceneRenderer.SCREEN_FOV_KEY,SceneRenderer.MIN_FOV+progress).apply();
+                }
                 updateViewLabels();
             }
         });
 
         zoomBar.setOnSeekBarChangeListener(new SimpleSeekListener() {
             @Override public void changed(int progress, boolean fromUser) {
-                if(fromUser) getSharedPreferences(PackStore.PREFS,0).edit()
-                        .putFloat(SceneRenderer.ZOOM_KEY,SceneRenderer.MIN_ZOOM+progress/100f).apply();
+                if(fromUser) {
+                    getSharedPreferences(PackStore.PREFS,0).edit()
+                            .putFloat(SceneRenderer.ZOOM_KEY,SceneRenderer.MIN_ZOOM+progress/100f).apply();
+                }
                 updateViewLabels();
             }
         });
 
         resetSource.setOnClickListener(v -> {
-            android.content.SharedPreferences p=getSharedPreferences(PackStore.PREFS,0);
-            p.edit().remove(SceneRenderer.SOURCE_FOV_KEY).apply();
+            getSharedPreferences(PackStore.PREFS,0).edit().remove(SceneRenderer.SOURCE_FOV_KEY).apply();
             syncViewControls();
         });
+
         matchSource.setOnClickListener(v -> {
-            getSharedPreferences(PackStore.PREFS,0).edit().remove(SceneRenderer.SCREEN_FOV_KEY).apply();
+            float source=SceneRenderer.MIN_FOV+sourceFovBar.getProgress();
+            getSharedPreferences(PackStore.PREFS,0).edit().putFloat(SceneRenderer.SCREEN_FOV_KEY,source).apply();
             syncViewControls();
         });
+
         resetZoom.setOnClickListener(v -> {
             getSharedPreferences(PackStore.PREFS,0).edit().remove(SceneRenderer.ZOOM_KEY).apply();
             syncViewControls();
@@ -145,7 +149,9 @@ public class MainActivity extends Activity {
         android.content.SharedPreferences p=getSharedPreferences(PackStore.PREFS,0);
         float detected=detectedSceneFov();
         float source=clamp(p.getFloat(SceneRenderer.SOURCE_FOV_KEY,detected),SceneRenderer.MIN_FOV,SceneRenderer.MAX_FOV);
-        float screen=clamp(p.getFloat(SceneRenderer.SCREEN_FOV_KEY,source),SceneRenderer.MIN_FOV,SceneRenderer.MAX_FOV);
+        // Screen FOV defaults to the SCENE's detected FOV, not the mutable source override.
+        // This keeps both controls genuinely independent.
+        float screen=clamp(p.getFloat(SceneRenderer.SCREEN_FOV_KEY,detected),SceneRenderer.MIN_FOV,SceneRenderer.MAX_FOV);
         float zoom=clamp(p.getFloat(SceneRenderer.ZOOM_KEY,1f),SceneRenderer.MIN_ZOOM,SceneRenderer.MAX_ZOOM);
         sourceFovBar.setProgress(Math.round(source)-SceneRenderer.MIN_FOV);
         screenFovBar.setProgress(Math.round(screen)-SceneRenderer.MIN_FOV);
@@ -161,8 +167,8 @@ public class MainActivity extends Activity {
         float zoom=SceneRenderer.MIN_ZOOM+zoomBar.getProgress()/100f;
         float effective=effectiveFov(screen,zoom);
         sourceFovLabel.setText("Source / parallax FOV: " + source + "°" + (p.contains(SceneRenderer.SOURCE_FOV_KEY)?"  (custom)":"  (detected)"));
-        screenFovLabel.setText("Wanted screen FOV: " + screen + "°" + (p.contains(SceneRenderer.SCREEN_FOV_KEY)?"  (custom)":"  (matches source)"));
-        zoomLabel.setText(String.format("Extra zoom: %.2f×  •  effective ≈ %.1f°",zoom,effective));
+        screenFovLabel.setText("Wanted screen FOV: " + screen + "°" + (p.contains(SceneRenderer.SCREEN_FOV_KEY)?"  (custom)":"  (scene default)"));
+        zoomLabel.setText(String.format("Extra zoom: %.2f×  •  effective screen FOV ≈ %.1f°",zoom,effective));
     }
 
     private static float effectiveFov(float screenFov,float zoom){
