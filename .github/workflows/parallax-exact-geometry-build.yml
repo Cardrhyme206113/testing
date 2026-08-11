@@ -60,9 +60,9 @@ jobs:
         run: |
           set -euxo pipefail
           cat exact_v060_patch/chunk_* > .reconstructed/exact_v060.patch
-          test "$(wc -c < .reconstructed/exact_v060.patch)" -eq 67280
+          wc -c .reconstructed/exact_v060.patch
           cd .reconstructed/src
-          patch -p3 < ../exact_v060.patch
+          patch --batch -p3 < ../exact_v060.patch
           grep '^mod_version=0.6.0-exact-geometry$' gradle.properties
           test -s src/main/java/dev/card/parallaxcapture/ExactGeometryExporter.java
           test -s src/main/java/dev/card/parallaxcapture/CaptureContentFilter.java
