@@ -1,0 +1,98 @@
+name: Parallax Exact Geometry Build
+
+on:
+  push:
+    branches: [parallax-exact-geometry-v060]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Reconstruct Parallax Capture v0.5.5 source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p .reconstructed/src
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, re
+          prefix=Path('parallax_capture_v051_project.tgz.b64').read_text(encoding='utf-8')
+          prefix=re.sub(r'\s+', '', prefix)
+          parts=[prefix[:3500]]
+          for i in range(1,8):
+              s=Path(f'pc051_chunks/chunk_{i:02d}').read_text(encoding='utf-8')
+              parts.append(re.sub(r'\s+', '', s))
+          text=''.join(parts)
+          assert len(text)==24992, len(text)
+          Path('.reconstructed/source.tgz').write_bytes(base64.b64decode(text, validate=True))
+          PY
+          gzip -t .reconstructed/source.tgz
+          tar -xzf .reconstructed/source.tgz -C .reconstructed/src
+
+          base64 -d parallax_replaymod_overlay_v053.tgz.b64 > .reconstructed/replay-overlay.tgz
+          gzip -t .reconstructed/replay-overlay.tgz
+          tar -xzf .reconstructed/replay-overlay.tgz -C .reconstructed/src
+
+          cd .reconstructed/src
+          patch -p1 < ../../parallax_hotkey_v054.patch
+          cd ../..
+
+          cat pc055_chunks/chunk_* | tr -d '\r\n' | base64 -d > .reconstructed/v055-overlay.tgz
+          gzip -t .reconstructed/v055-overlay.tgz
+          tar -xzf .reconstructed/v055-overlay.tgz -C .reconstructed/src
+
+      - name: Apply v0.6 exact-geometry + beauty implementation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat exact_v060_patch/chunk_* > .reconstructed/exact_v060.patch
+          test "$(wc -c < .reconstructed/exact_v060.patch)" -eq 67280
+          cd .reconstructed/src
+          patch -p3 < ../exact_v060.patch
+          grep '^mod_version=0.6.0-exact-geometry$' gradle.properties
+          test -s src/main/java/dev/card/parallaxcapture/ExactGeometryExporter.java
+          test -s src/main/java/dev/card/parallaxcapture/CaptureContentFilter.java
+          test -s src/main/resources/assets/parallaxcapture/exact_geometry_viewer.html
+          grep -R 'EXPORT_GEOMETRY' src/main/java/dev/card/parallaxcapture/CaptureSession.java
+          grep -R 'FireworkRocketEntity' src/main/java/dev/card/parallaxcapture/CaptureContentFilter.java
+
+      - name: Build Fabric 1.20.1 mod
+        working-directory: .reconstructed/src
+        shell: bash
+        run: |
+          set -euxo pipefail
+          gradle --no-daemon clean build --stacktrace
+          find build/libs -maxdepth 1 -type f -name '*.jar' -print
+
+      - name: Upload built mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-capture-v0.6.0-exact-geometry
+          path: .reconstructed/src/build/libs/*.jar
+          if-no-files-found: error
+
+      - name: Upload exact-geometry viewer
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-exact-geometry-viewer-v060
+          path: .reconstructed/src/src/main/resources/assets/parallaxcapture/exact_geometry_viewer.html
+          if-no-files-found: error
+
+      - name: Upload reconstructed source
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-capture-v060-source
+          path: .reconstructed/src
+          if-no-files-found: error
