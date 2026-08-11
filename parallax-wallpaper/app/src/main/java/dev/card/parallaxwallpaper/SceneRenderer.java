@@ -1,6 +1,7 @@
 package dev.card.parallaxwallpaper;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.opengl.*;
@@ -12,21 +13,35 @@ import java.io.*;
 import java.nio.*;
 
 public final class SceneRenderer {
+    public static final int MIN_FOV=35, MAX_FOV=120;
+    public static final float MIN_ZOOM=1.00f, MAX_ZOOM=1.60f;
+    public static final String SOURCE_FOV_KEY="source_fov_override";
+    public static final String SCREEN_FOV_KEY="screen_fov_override";
+    public static final String ZOOM_KEY="view_zoom";
+
     private final Context context;
     private final MotionController motion;
+    private final SharedPreferences prefs;
+    private SharedPreferences.OnSharedPreferenceChangeListener prefListener;
+
     private int program, bgProgram, vbo;
     private int aPos, aUv, uProj, uCamera, uTilt, uTex;
     private int bgScreenAspect, bgTexAspect, bgTex, bgShift, bgZoom;
     private int[] textures = new int[0];
     private int[] triangleCounts = new int[0];
     private int[] drawLayerOrder = new int[0];
-    private float fovY = 70f, maxParallax = .32f, textureAspect = 1.6f;
+    private float sceneFov = 70f, maxParallax = .32f, textureAspect = 1.6f;
+    private volatile float sourceFov=70f, screenFov=70f, extraZoom=1f;
     private int centerTextureLayer = 0;
     private int fallbackTexture = 0;
     private int width=1,height=1;
     private boolean ready=false;
 
-    public SceneRenderer(Context c, MotionController motion) { this.context=c.getApplicationContext(); this.motion=motion; }
+    public SceneRenderer(Context c, MotionController motion) {
+        this.context=c.getApplicationContext();
+        this.motion=motion;
+        this.prefs=context.getSharedPreferences(PackStore.PREFS,0);
+    }
 
     public void surfaceCreated() {
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
@@ -46,16 +61,26 @@ public final class SceneRenderer {
         bgZoom=GLES30.glGetUniformLocation(bgProgram,"uZoom");
         try {
             loadCurrent();
-            context.getSharedPreferences(PackStore.PREFS,0).edit()
-                    .putString("renderer_status", ready ? "3D mesh active • sensor: "+motion.sensorName() : "center image only")
-                    .apply();
+            refreshViewSettings();
+            prefListener=(p,key)->{
+                if(SOURCE_FOV_KEY.equals(key)||SCREEN_FOV_KEY.equals(key)||ZOOM_KEY.equals(key)) refreshViewSettings();
+            };
+            prefs.registerOnSharedPreferenceChangeListener(prefListener);
+            prefs.edit().putString("renderer_status", ready ? "3D mesh active • sensor: "+motion.sensorName() : "center image only").apply();
         } catch(Throwable t) {
             t.printStackTrace();
             ready=false;
-            context.getSharedPreferences(PackStore.PREFS,0).edit()
-                    .putString("renderer_status", "3D mesh failed: "+t.getClass().getSimpleName()+": "+String.valueOf(t.getMessage()))
-                    .apply();
+            prefs.edit().putString("renderer_status", "3D mesh failed: "+t.getClass().getSimpleName()+": "+String.valueOf(t.getMessage())).apply();
         }
+    }
+
+    private void refreshViewSettings(){
+        float src=clamp(prefs.getFloat(SOURCE_FOV_KEY,sceneFov),MIN_FOV,MAX_FOV);
+        float scr=clamp(prefs.getFloat(SCREEN_FOV_KEY,src),MIN_FOV,MAX_FOV);
+        float z=clamp(prefs.getFloat(ZOOM_KEY,1f),MIN_ZOOM,MAX_ZOOM);
+        sourceFov=src;
+        screenFov=scr;
+        extraZoom=z;
     }
 
     public void surfaceChanged(int w,int h){
@@ -70,8 +95,12 @@ public final class SceneRenderer {
         float mx=motion.x(), my=motion.y();
         boolean landscape=width>height;
 
-        // Slight overscan in portrait and a stronger crop in landscape. The extra margin also
-        // helps hide edges/disocclusion while the camera moves farther for a stronger effect.
+        // Screen FOV controls the actual virtual camera. Zoom is applied optically using
+        // tan(FOV/2), so extra zoom naturally increases screen-space parallax speed.
+        float orientationZoom=landscape?1.12f:1f;
+        float totalZoom=extraZoom*orientationZoom;
+        float renderFov=effectiveFov(screenFov,totalZoom);
+
         if(fallbackTexture!=0){
             GLES30.glDisable(GLES30.GL_DEPTH_TEST);
             GLES30.glUseProgram(bgProgram);
@@ -80,31 +109,30 @@ public final class SceneRenderer {
             GLES30.glUniform1i(bgTex,0);
             GLES30.glUniform1f(bgScreenAspect,(float)width/height);
             GLES30.glUniform1f(bgTexAspect,textureAspect);
-            GLES30.glUniform1f(bgZoom,landscape?1.22f:1.03f);
-            float bgMotion=landscape?0.045f:0.035f;
+
+            // The beauty capture was authored at sourceFov. Crop it by the physically matching
+            // focal-length ratio whenever the output camera is narrower / more zoomed.
+            float sourceToView=(float)(Math.tan(Math.toRadians(sourceFov)*0.5)/Math.tan(Math.toRadians(renderFov)*0.5));
+            float fallbackCrop=Math.max(1.0f,sourceToView)*1.015f;
+            GLES30.glUniform1f(bgZoom,fallbackCrop);
+            float bgMotion=(landscape?0.045f:0.035f)*totalZoom;
             GLES30.glUniform2f(bgShift,-mx*bgMotion,my*bgMotion);
             GLES30.glDrawArrays(GLES30.GL_TRIANGLES,0,3);
         }
         if(!ready) return;
 
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
-
-        // Narrower FOV = stronger zoom. Landscape gets a deliberately stronger crop so wide
-        // tablet screens retain a cinematic, depth-heavy framing instead of feeling pulled back.
-        float renderFov=landscape?Math.max(38f,fovY*0.80f):Math.max(46f,fovY*0.97f);
         float[] proj=new float[16];
         Matrix.perspectiveM(proj,0,renderFov,(float)width/height,.03f,2048f);
         GLES30.glUseProgram(program);
         GLES30.glUniformMatrix4fv(uProj,1,false,proj,0);
 
-        // Stronger than v0.6. This intentionally reaches a little past the original +/-0.5
-        // authored capture baseline; the center beauty layer remains behind it to fill gaps.
+        // Keep world-space camera travel independent from zoom. Projection handles the speed
+        // increase naturally: a narrower screen FOV / higher zoom magnifies the same translation.
         float requested=Math.max(landscape?0.64f:0.60f,maxParallax*1.90f);
         float travel=Math.min(requested,0.68f);
         GLES30.glUniform3f(uCamera,mx*travel,my*travel,0f);
 
-        // Extra rotation makes depth separation obvious even before the translation reaches
-        // its maximum. Landscape is amplified slightly more for large tablet displays.
         float tilt=(float)Math.toRadians(landscape?9.0:7.5);
         GLES30.glUniform2f(uTilt,mx*tilt,my*tilt);
 
@@ -127,6 +155,7 @@ public final class SceneRenderer {
     }
 
     public void destroy(){
+        if(prefListener!=null) prefs.unregisterOnSharedPreferenceChangeListener(prefListener);
         if(vbo!=0)GLES30.glDeleteBuffers(1,new int[]{vbo},0);
         if(textures.length>0)GLES30.glDeleteTextures(textures.length,textures,0);
         if(program!=0)GLES30.glDeleteProgram(program);
@@ -136,7 +165,7 @@ public final class SceneRenderer {
     private void loadCurrent() throws Exception {
         File dir=PackStore.currentScene(context); if(dir==null) return;
         JSONObject p=PackStore.readPack(dir);
-        fovY=(float)p.optDouble("verticalFovDegrees",70);
+        sceneFov=clamp((float)p.optDouble("verticalFovDegrees",70),MIN_FOV,MAX_FOV);
         maxParallax=(float)p.optDouble("maxParallaxWorld",.32);
         textureAspect=(float)p.optDouble("textureAspect",1.6);
         centerTextureLayer=p.optInt("centerTextureLayer",0);
@@ -175,6 +204,12 @@ public final class SceneRenderer {
         ready=true;
     }
 
+    private static float effectiveFov(float fov,float zoom){
+        double half=Math.toRadians(fov)*0.5;
+        float out=(float)Math.toDegrees(2.0*Math.atan(Math.tan(half)/Math.max(0.01,zoom)));
+        return clamp(out,18f,MAX_FOV);
+    }
+
     private static void loadTexture(int id, File file) throws IOException {
         Bitmap b=BitmapFactory.decodeFile(file.getAbsolutePath());
         if(b==null)throw new IOException("Could not decode texture: "+file.getName());
@@ -201,6 +236,7 @@ public final class SceneRenderer {
         int[] ok=new int[1];GLES30.glGetShaderiv(sh,GLES30.GL_COMPILE_STATUS,ok,0);
         if(ok[0]==0)throw new RuntimeException(GLES30.glGetShaderInfoLog(sh));return sh;
     }
+    private static float clamp(float v,float a,float b){return Math.max(a,Math.min(b,v));}
 
     private static final String VS=
             "#version 300 es\nprecision highp float;\n"+
