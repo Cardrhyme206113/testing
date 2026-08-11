@@ -63,6 +63,7 @@ jobs:
           wc -c .reconstructed/exact_v060.patch
           cd .reconstructed/src
           patch --batch -p4 < ../exact_v060.patch
+          patch --batch -p0 < ../../exact_v060_transfer_fix.patch
           grep '^mod_version=0.6.0-exact-geometry$' gradle.properties
           test -s src/main/java/dev/card/parallaxcapture/ExactGeometryExporter.java
           test -s src/main/java/dev/card/parallaxcapture/CaptureContentFilter.java
