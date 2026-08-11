@@ -70,6 +70,13 @@ jobs:
           grep -R 'EXPORT_GEOMETRY' src/main/java/dev/card/parallaxcapture/CaptureSession.java
           grep -R 'FireworkRocketEntity' src/main/java/dev/card/parallaxcapture/CaptureContentFilter.java
 
+      - name: Upload patched source diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-v060-patched-source-diagnostic
+          path: .reconstructed/src
+          if-no-files-found: error
+
       - name: Build Fabric 1.20.1 mod
         working-directory: .reconstructed/src
         shell: bash
