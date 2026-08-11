@@ -25,13 +25,13 @@ public final class SceneRenderer {
     private SharedPreferences.OnSharedPreferenceChangeListener prefListener;
 
     private int program, bgProgram, vbo;
-    private int aPos, aUv, uProj, uCamera, uTilt, uTex;
+    private int aPos, aUv, uProj, uCamera, uTilt, uTex, uSourceScale;
     private int bgScreenAspect, bgTexAspect, bgTex, bgShift, bgZoom;
     private int[] textures = new int[0];
     private int[] triangleCounts = new int[0];
     private int[] drawLayerOrder = new int[0];
     private float sceneFov = 70f, maxParallax = .32f, textureAspect = 1.6f;
-    private volatile float sourceFov=70f, screenFov=70f, extraZoom=1f;
+    private volatile float sourceFov=70f, screenFov=70f, extraZoom=1f, sourceScale=1f;
     private int centerTextureLayer = 0;
     private int fallbackTexture = 0;
     private int width=1,height=1;
@@ -48,10 +48,12 @@ public final class SceneRenderer {
         GLES30.glDisable(GLES30.GL_CULL_FACE);
         GLES30.glClearColor(0,0,0,1);
         program = link(VS, FS);
-        aPos=GLES30.glGetAttribLocation(program,"aPos"); aUv=GLES30.glGetAttribLocation(program,"aUv");
+        aPos=GLES30.glGetAttribLocation(program,"aPos");
+        aUv=GLES30.glGetAttribLocation(program,"aUv");
         uProj=GLES30.glGetUniformLocation(program,"uProj");
         uCamera=GLES30.glGetUniformLocation(program,"uCamera");
         uTilt=GLES30.glGetUniformLocation(program,"uTilt");
+        uSourceScale=GLES30.glGetUniformLocation(program,"uSourceScale");
         uTex=GLES30.glGetUniformLocation(program,"uTex");
         bgProgram=link(BG_VS,BG_FS);
         bgScreenAspect=GLES30.glGetUniformLocation(bgProgram,"uScreenAspect");
@@ -63,10 +65,12 @@ public final class SceneRenderer {
             loadCurrent();
             refreshViewSettings();
             prefListener=(p,key)->{
-                if(SOURCE_FOV_KEY.equals(key)||SCREEN_FOV_KEY.equals(key)||ZOOM_KEY.equals(key)) refreshViewSettings();
+                if(SOURCE_FOV_KEY.equals(key)||SCREEN_FOV_KEY.equals(key)||ZOOM_KEY.equals(key)) {
+                    refreshViewSettings();
+                }
             };
             prefs.registerOnSharedPreferenceChangeListener(prefListener);
-            prefs.edit().putString("renderer_status", ready ? "3D mesh active • sensor: "+motion.sensorName() : "center image only").apply();
+            publishStatus();
         } catch(Throwable t) {
             t.printStackTrace();
             ready=false;
@@ -81,6 +85,22 @@ public final class SceneRenderer {
         sourceFov=src;
         screenFov=scr;
         extraZoom=z;
+
+        // The baked mesh XY positions were reconstructed using sceneFov. If the real capture
+        // FOV was different, reinterpret those XY coordinates using the ratio of focal slopes.
+        // Example: 70 -> 110 degrees scales XY by tan(55)/tan(35) ~= 2.04.
+        sourceScale=(float)(Math.tan(Math.toRadians(sourceFov)*0.5) /
+                Math.max(1e-6,Math.tan(Math.toRadians(sceneFov)*0.5)));
+        sourceScale=clamp(sourceScale,0.25f,4.0f);
+        publishStatus();
+    }
+
+    private void publishStatus(){
+        if(!ready) return;
+        prefs.edit().putString("renderer_status",
+                String.format(java.util.Locale.US,
+                        "3D mesh active • src %.0f° • screen %.0f° • zoom %.2fx • meshXY %.2fx • sensor: %s",
+                        sourceFov,screenFov,extraZoom,sourceScale,motion.sensorName())).apply();
     }
 
     public void surfaceChanged(int w,int h){
@@ -95,9 +115,9 @@ public final class SceneRenderer {
         float mx=motion.x(), my=motion.y();
         boolean landscape=width>height;
 
-        // Screen FOV controls the actual virtual camera. Zoom is applied optically using
-        // tan(FOV/2), so extra zoom naturally increases screen-space parallax speed.
-        float orientationZoom=landscape?1.12f:1f;
+        // Screen FOV controls the actual output camera. Zoom is a separate optical multiplier.
+        // A tiny landscape safety crop is retained from the previous tablet tuning.
+        float orientationZoom=landscape?1.06f:1f;
         float totalZoom=extraZoom*orientationZoom;
         float renderFov=effectiveFov(screenFov,totalZoom);
 
@@ -110,9 +130,9 @@ public final class SceneRenderer {
             GLES30.glUniform1f(bgScreenAspect,(float)width/height);
             GLES30.glUniform1f(bgTexAspect,textureAspect);
 
-            // The beauty capture was authored at sourceFov. Crop it by the physically matching
-            // focal-length ratio whenever the output camera is narrower / more zoomed.
-            float sourceToView=(float)(Math.tan(Math.toRadians(sourceFov)*0.5)/Math.tan(Math.toRadians(renderFov)*0.5));
+            // Match the 2D hole-filler to source capture FOV versus the requested output FOV.
+            float sourceToView=(float)(Math.tan(Math.toRadians(sourceFov)*0.5) /
+                    Math.max(1e-6,Math.tan(Math.toRadians(renderFov)*0.5)));
             float fallbackCrop=Math.max(1.0f,sourceToView)*1.015f;
             GLES30.glUniform1f(bgZoom,fallbackCrop);
             float bgMotion=(landscape?0.045f:0.035f)*totalZoom;
@@ -126,9 +146,10 @@ public final class SceneRenderer {
         Matrix.perspectiveM(proj,0,renderFov,(float)width/height,.03f,2048f);
         GLES30.glUseProgram(program);
         GLES30.glUniformMatrix4fv(uProj,1,false,proj,0);
+        GLES30.glUniform1f(uSourceScale,sourceScale);
 
-        // Keep world-space camera travel independent from zoom. Projection handles the speed
-        // increase naturally: a narrower screen FOV / higher zoom magnifies the same translation.
+        // World-space camera travel stays independent from output zoom/FOV. Projection naturally
+        // makes the same translation look faster when the screen FOV is narrower or zoom is higher.
         float requested=Math.max(landscape?0.64f:0.60f,maxParallax*1.90f);
         float travel=Math.min(requested,0.68f);
         GLES30.glUniform3f(uCamera,mx*travel,my*travel,0f);
@@ -138,9 +159,12 @@ public final class SceneRenderer {
 
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER,vbo);
         int stride=7*4;
-        GLES30.glEnableVertexAttribArray(aPos); GLES30.glVertexAttribPointer(aPos,3,GLES30.GL_FLOAT,false,stride,0);
-        GLES30.glEnableVertexAttribArray(aUv); GLES30.glVertexAttribPointer(aUv,2,GLES30.GL_FLOAT,false,stride,3*4);
-        GLES30.glUniform1i(uTex,0); GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
+        GLES30.glEnableVertexAttribArray(aPos);
+        GLES30.glVertexAttribPointer(aPos,3,GLES30.GL_FLOAT,false,stride,0);
+        GLES30.glEnableVertexAttribArray(aUv);
+        GLES30.glVertexAttribPointer(aUv,2,GLES30.GL_FLOAT,false,stride,3*4);
+        GLES30.glUniform1i(uTex,0);
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
 
         for(int k=0;k<drawLayerOrder.length;k++){
             int layer=drawLayerOrder[k];
@@ -171,8 +195,8 @@ public final class SceneRenderer {
         centerTextureLayer=p.optInt("centerTextureLayer",0);
 
         JSONArray tc=p.getJSONArray("trianglesPerSource");
-        triangleCounts=new int[tc.length()]; int tris=0;
-        for(int i=0;i<tc.length();i++){triangleCounts[i]=tc.getInt(i);tris+=triangleCounts[i];}
+        triangleCounts=new int[tc.length()];
+        for(int i=0;i<tc.length();i++) triangleCounts[i]=tc.getInt(i);
         JSONArray order=p.optJSONArray("drawLayerOrder");
         drawLayerOrder=new int[order!=null?order.length():triangleCounts.length];
         for(int i=0;i<drawLayerOrder.length;i++) drawLayerOrder[i]=order!=null?order.getInt(i):i;
@@ -194,8 +218,10 @@ public final class SceneRenderer {
         byte[] raw=Zstd.decompress(compressed,rawBytes);
         if(raw.length!=rawBytes) throw new IOException("Mesh decompression size mismatch");
         ByteBuffer mesh=ByteBuffer.allocateDirect(raw.length).order(ByteOrder.LITTLE_ENDIAN);
-        mesh.put(raw).flip(); raw=null; compressed=null;
-        int[] ids=new int[1]; GLES30.glGenBuffers(1,ids,0); vbo=ids[0];
+        mesh.put(raw).flip();
+        int[] ids=new int[1];
+        GLES30.glGenBuffers(1,ids,0);
+        vbo=ids[0];
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER,vbo);
         GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER,mesh.remaining(),mesh,GLES30.GL_STATIC_DRAW);
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER,0);
@@ -231,18 +257,22 @@ public final class SceneRenderer {
         if(ok[0]==0)throw new RuntimeException(GLES30.glGetProgramInfoLog(p));
         GLES30.glDeleteShader(v);GLES30.glDeleteShader(f);return p;
     }
+
     private static int compile(int type,String s){
         int sh=GLES30.glCreateShader(type);GLES30.glShaderSource(sh,s);GLES30.glCompileShader(sh);
         int[] ok=new int[1];GLES30.glGetShaderiv(sh,GLES30.GL_COMPILE_STATUS,ok,0);
-        if(ok[0]==0)throw new RuntimeException(GLES30.glGetShaderInfoLog(sh));return sh;
+        if(ok[0]==0)throw new RuntimeException(GLES30.glGetShaderInfoLog(sh));
+        return sh;
     }
+
     private static float clamp(float v,float a,float b){return Math.max(a,Math.min(b,v));}
 
     private static final String VS=
             "#version 300 es\nprecision highp float;\n"+
-            "in vec3 aPos; in vec2 aUv; uniform mat4 uProj; uniform vec3 uCamera; uniform vec2 uTilt; out vec2 vUv;\n"+
+            "in vec3 aPos; in vec2 aUv; uniform mat4 uProj; uniform vec3 uCamera; uniform vec2 uTilt; uniform float uSourceScale; out vec2 vUv;\n"+
             "void main(){\n"+
-            " vec3 p=aPos-uCamera;\n"+
+            " vec3 authored=vec3(aPos.x*uSourceScale,aPos.y*uSourceScale,aPos.z);\n"+
+            " vec3 p=authored-uCamera;\n"+
             " float yaw=-uTilt.x, pitch=-uTilt.y;\n"+
             " float cy=cos(yaw), sy=sin(yaw);\n"+
             " p=vec3(cy*p.x+sy*p.z,p.y,-sy*p.x+cy*p.z);\n"+
