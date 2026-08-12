@@ -6,6 +6,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
 import org.java_websocket.server.WebSocketServer;
@@ -22,6 +23,7 @@ import java.util.concurrent.Executors;
 final class WebStreamServer extends WebSocketServer {
     private final StreamConfig config;
     private final Set<WebSocket> clients = ConcurrentHashMap.newKeySet();
+    private final Set<InputUtil.Key> remotelyHeldKeys = ConcurrentHashMap.newKeySet();
     private HttpServer httpServer;
     private volatile VideoConfig lastVideoConfig;
 
@@ -95,12 +97,14 @@ final class WebStreamServer extends WebSocketServer {
         clients.add(conn);
         JsonObject hello = new JsonObject();
         hello.addProperty("type", "hello");
-        hello.addProperty("protocol", 1);
+        hello.addProperty("protocol", 2);
         hello.addProperty("cubeSize", SemanticStateTracker.SIZE);
         hello.addProperty("wsPort", config.wsPort);
         hello.addProperty("videoWidth", config.videoWidth);
         hello.addProperty("videoHeight", config.videoHeight);
         hello.addProperty("videoFps", config.videoFps);
+        hello.addProperty("rawInput", true);
+        hello.addProperty("remoteGui", true);
         conn.send(hello.toString());
         VideoConfig currentVideoConfig = lastVideoConfig;
         if (currentVideoConfig != null) conn.send(videoConfigJson(currentVideoConfig).toString());
@@ -115,9 +119,9 @@ final class WebStreamServer extends WebSocketServer {
     @Override public void onMessage(WebSocket conn, String message) {
         try {
             JsonObject obj = JsonParser.parseString(message).getAsJsonObject();
-            if (!obj.has("type") || !"input".equals(obj.get("type").getAsString())) return;
+            if (!obj.has("type")) return;
             MinecraftClient client = MinecraftClient.getInstance();
-            client.execute(() -> applyInput(client, obj));
+            client.execute(() -> applyMessage(client, obj));
         } catch (Exception e) {
             McWebStreamClient.LOGGER.debug("Ignoring malformed web input: {}", e.toString());
         }
@@ -164,39 +168,115 @@ final class WebStreamServer extends WebSocketServer {
         }
     }
 
-    private static void applyInput(MinecraftClient client, JsonObject obj) {
-        if (client.player == null) return;
-        set(client.options.forwardKey, bool(obj, "forward"));
-        set(client.options.backKey, bool(obj, "back"));
-        set(client.options.leftKey, bool(obj, "left"));
-        set(client.options.rightKey, bool(obj, "right"));
-        set(client.options.jumpKey, bool(obj, "jump"));
-        set(client.options.sneakKey, bool(obj, "sneak"));
-        set(client.options.sprintKey, bool(obj, "sprint"));
-        set(client.options.attackKey, bool(obj, "attack"));
-        set(client.options.useKey, bool(obj, "use"));
-
-        float dx = number(obj, "mouseDx"), dy = number(obj, "mouseDy");
-        if (dx != 0 || dy != 0) {
-            float yaw = client.player.getYaw() + dx * 0.12f;
-            float pitch = Math.max(-90f, Math.min(90f, client.player.getPitch() + dy * 0.12f));
-            client.player.setYaw(yaw);
-            client.player.setPitch(pitch);
-            client.player.setHeadYaw(yaw);
+    private void applyMessage(MinecraftClient client, JsonObject obj) {
+        switch (obj.get("type").getAsString()) {
+            case "input" -> applyLook(client, obj);
+            case "key" -> applyKeyboard(client, obj);
+            case "mouse" -> applyMouse(client, obj);
+            case "wheel" -> applyWheel(client, obj);
+            case "char" -> applyChar(client, obj);
+            case "release-all" -> releaseRemoteKeys();
+            default -> { }
         }
+    }
+
+    private static void applyLook(MinecraftClient client, JsonObject obj) {
+        if (client.player == null || client.currentScreen != null) return;
+        float dx = number(obj, "mouseDx"), dy = number(obj, "mouseDy");
+        if (dx == 0 && dy == 0) return;
+        float yaw = client.player.getYaw() + dx * 0.12f;
+        float pitch = Math.max(-90f, Math.min(90f, client.player.getPitch() + dy * 0.12f));
+        client.player.setYaw(yaw);
+        client.player.setPitch(pitch);
+        client.player.setHeadYaw(yaw);
+    }
+
+    private void applyKeyboard(MinecraftClient client, JsonObject obj) {
+        int keyCode = integer(obj, "keyCode", -1);
+        if (keyCode < 0) return;
+        boolean down = bool(obj, "down");
+        boolean repeat = bool(obj, "repeat");
+        int modifiers = integer(obj, "modifiers", 0);
+
+        if (client.currentScreen != null) {
+            if (down) client.currentScreen.keyPressed(keyCode, 0, modifiers);
+            else client.currentScreen.keyReleased(keyCode, 0, modifiers);
+            return;
+        }
+
+        InputUtil.Key key = InputUtil.fromKeyCode(keyCode, 0);
+        if (down) {
+            remotelyHeldKeys.add(key);
+            if (!repeat) KeyBinding.onKeyPressed(key);
+        } else {
+            remotelyHeldKeys.remove(key);
+        }
+        KeyBinding.setKeyPressed(key, down);
+    }
+
+    private void applyMouse(MinecraftClient client, JsonObject obj) {
+        int button = integer(obj, "button", -1);
+        if (button < 0) return;
+        boolean down = bool(obj, "down");
+
+        if (client.currentScreen != null) {
+            double x = doubleNumber(obj, "x");
+            double y = doubleNumber(obj, "y");
+            if (down) client.currentScreen.mouseClicked(x, y, button);
+            else client.currentScreen.mouseReleased(x, y, button);
+            return;
+        }
+
+        InputUtil.Key key = InputUtil.fromTranslationKey(mouseTranslationKey(button));
+        if (down) {
+            remotelyHeldKeys.add(key);
+            KeyBinding.onKeyPressed(key);
+        } else {
+            remotelyHeldKeys.remove(key);
+        }
+        KeyBinding.setKeyPressed(key, down);
+    }
+
+    private static void applyWheel(MinecraftClient client, JsonObject obj) {
+        double amount = doubleNumber(obj, "amount");
+        if (amount == 0) return;
+        if (client.currentScreen != null) {
+            client.currentScreen.mouseScrolled(doubleNumber(obj, "x"), doubleNumber(obj, "y"), amount);
+        } else if (client.player != null) {
+            client.player.getInventory().scrollInHotbar(amount);
+        }
+    }
+
+    private static void applyChar(MinecraftClient client, JsonObject obj) {
+        if (client.currentScreen == null || !obj.has("text")) return;
+        String text = obj.get("text").getAsString();
+        int modifiers = integer(obj, "modifiers", 0);
+        for (int offset = 0; offset < text.length();) {
+            int codePoint = text.codePointAt(offset);
+            client.currentScreen.charTyped((char) codePoint, modifiers);
+            offset += Character.charCount(codePoint);
+        }
+    }
+
+    private static String mouseTranslationKey(int button) {
+        return switch (button) {
+            case 0 -> "key.mouse.left";
+            case 1 -> "key.mouse.right";
+            case 2 -> "key.mouse.middle";
+            default -> "key.mouse." + (button + 1);
+        };
     }
 
     private static boolean bool(JsonObject o, String key) { return o.has(key) && o.get(key).getAsBoolean(); }
     private static float number(JsonObject o, String key) { return o.has(key) ? o.get(key).getAsFloat() : 0f; }
-    private static void set(KeyBinding key, boolean down) { key.setPressed(down); }
+    private static double doubleNumber(JsonObject o, String key) { return o.has(key) ? o.get(key).getAsDouble() : 0d; }
+    private static int integer(JsonObject o, String key, int fallback) { return o.has(key) ? o.get(key).getAsInt() : fallback; }
 
-    private static void releaseRemoteKeys() {
+    private void releaseRemoteKeys() {
         MinecraftClient client = MinecraftClient.getInstance();
         client.execute(() -> {
-            set(client.options.forwardKey, false); set(client.options.backKey, false);
-            set(client.options.leftKey, false); set(client.options.rightKey, false);
-            set(client.options.jumpKey, false); set(client.options.sneakKey, false);
-            set(client.options.sprintKey, false); set(client.options.attackKey, false); set(client.options.useKey, false);
+            for (InputUtil.Key key : remotelyHeldKeys) KeyBinding.setKeyPressed(key, false);
+            remotelyHeldKeys.clear();
         });
     }
 }
