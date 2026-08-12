@@ -1,20 +1,25 @@
-# MC WebStream prototype (Fabric 1.20.1)
+# MC WebStream (Fabric 1.20.1)
 
-Experimental hybrid Minecraft streaming client mod:
+A simple remote Minecraft stream/control client mod.
 
-- **8×8×8 semantic block cache** around the player. A full 512-block snapshot is sent once; normal ticks only send changed/entered blocks.
-- **Entity deltas** for nearby entities (position, velocity, rotation, bounds).
-- **Remote browser controls** (WASD, jump, sneak, sprint, mouse, attack/use key state).
-- **Client-side prediction** in the browser for immediate camera/movement response, with simple collision against the 8³ cache.
-- **Nearby WebGL geometry overlay** so fast camera motion has real local 3D structure instead of waiting for the beauty stream.
-- **720p60 beauty stream** captured from Minecraft and encoded by FFmpeg. It prefers RTX 40-series `av1_nvenc` and sends AV1/IVF frames directly to browser WebCodecs; CPU VP9 is the fallback.
-- Beauty-frame camera pose is sent with every encoded frame so the browser can immediately shift the delayed beauty image toward the predicted view.
+The old semantic 3D proxy renderer has been removed. The browser now shows only the real Minecraft framebuffer encoded as AV1.
 
-This is a proof-of-concept, not a security-hardened remote desktop. It currently binds to the LAN by default and has **no authentication**.
+## Current behavior
+
+- Captures the **entire Minecraft render framebuffer**, including title screen, menus, HUD, inventory/screens, worlds, and servers.
+- Streams **AV1 only**.
+- Prefers NVIDIA `av1_nvenc`; falls back to `libsvtav1` if NVENC AV1 is unavailable.
+- Default output: **1280×720 @ 60 FPS, 4000 kbit/s**.
+- Preserves the Minecraft window aspect ratio and pads the encoded 720p frame when needed rather than cropping the game.
+- Browser input is forwarded into Minecraft's native keyboard/mouse callbacks.
+- A tiny UI-state message tells the browser whether a Minecraft screen is open so it can automatically switch between relative gameplay mouse input and absolute menu cursor input.
+- No block geometry cache, entity proxy geometry, prediction renderer, or beauty-image reprojection remains.
+
+This is still a prototype and currently has **no authentication**. Do not expose ports 8765/8766 directly to the public internet.
 
 ## Build
 
-The current Loom toolchain needs **JDK 21 to run Gradle**. The mod source is still compiled with `--release 17`, so the produced Fabric 1.20.1 mod targets Java 17 bytecode.
+The Gradle/Loom toolchain uses JDK 21. The produced Fabric 1.20.1 mod targets Java 17 bytecode.
 
 ```bash
 gradle build
@@ -22,32 +27,36 @@ gradle build
 
 The jar appears under `build/libs/`.
 
-CI in the parent `testing` repository also builds this folder and uploads the jar.
-
 ## Run
 
-1. Put the built jar plus Fabric API in a Fabric **1.20.1** client.
-2. Make sure `ffmpeg` is installed and visible in `PATH`.
-3. Start Minecraft and enter a world/server.
-4. On another device on your LAN open:
+1. Put the mod jar plus Fabric API into a Fabric 1.20.1 client.
+2. Make sure `ffmpeg` is installed and available in `PATH`.
+3. Start Minecraft. You do **not** need to enter a world first; menu/title-screen capture works too.
+4. Open the viewer:
+
+```text
+http://localhost:8766/
+```
+
+or from another machine on the LAN:
 
 ```text
 http://HOST_PC_IP:8766/
 ```
 
-5. Click the view to pointer-lock it. Use WASD/mouse normally.
+The browser page uses WebSocket port `8765` automatically.
 
-The WebSocket/state/video port is `8765`.
-
-### RTX 4050 / AV1 check
+## AV1 encoder check
 
 ```bash
-ffmpeg -hide_banner -encoders | grep av1_nvenc
+ffmpeg -hide_banner -encoders | grep -E 'av1_nvenc|libsvtav1'
 ```
 
-If that encoder exists, the mod uses AV1 NVENC with `p1`, `ull`, CBR, no B-frames, and a 60-frame GOP. Default beauty budget is **2200 kbit/s**.
+On an RTX 40-series machine, `av1_nvenc` is preferred. NVENC uses a `p4` preset, ultra-low-latency tuning, CBR, no B-frames, and the configured GOP.
 
-## Environment knobs
+## Environment settings
+
+Defaults:
 
 ```text
 MC_WEBSTREAM_BIND=0.0.0.0
@@ -56,20 +65,23 @@ MC_WEBSTREAM_HTTP_PORT=8766
 MC_WEBSTREAM_WIDTH=1280
 MC_WEBSTREAM_HEIGHT=720
 MC_WEBSTREAM_FPS=60
-MC_WEBSTREAM_BITRATE_KBPS=2200
+MC_WEBSTREAM_BITRATE_KBPS=4000
 MC_WEBSTREAM_GOP=60
 MC_WEBSTREAM_FFMPEG=ffmpeg
 ```
 
-For an initial low-bandwidth test, try `MC_WEBSTREAM_BITRATE_KBPS=1600`.
+Example: 1080p60 at 8 Mbit/s:
 
-## What is intentionally rough in v0.1
+```bash
+MC_WEBSTREAM_WIDTH=1920 \
+MC_WEBSTREAM_HEIGHT=1080 \
+MC_WEBSTREAM_FPS=60 \
+MC_WEBSTREAM_BITRATE_KBPS=8000 \
+java ...
+```
 
-- Blocks are represented as simple cubes in the browser; blockstate strings are transmitted but stair/slab/custom model geometry is not reconstructed yet.
-- The browser hashes block IDs into rough colors instead of streaming the real resource-pack atlas yet.
-- Entity geometry is bounding boxes, not actual entity models.
-- Beauty capture currently uses `glReadPixels`; the queue drops frames instead of accumulating latency, but the next performance step is PBO/zero-copy-ish capture.
-- Local prediction is approximate. Minecraft remains authoritative and browser state is reconciled toward it.
-- Attack/use are currently remote key states; some edge-triggered interactions may need explicit click injection.
+Set the environment variables on the Minecraft/launcher process before starting the game.
 
-Those limitations are deliberate: this version is meant to tell us whether **semantic local rendering + delayed 2-ish Mbit/s beauty** actually feels good before making the capture/render pipeline complicated.
+## Remaining rough edge
+
+Framebuffer readback currently uses synchronous `glReadPixels`. Frames are dropped instead of queued when capture/encoding falls behind, so latency does not intentionally accumulate, but a PBO-based readback path would reduce render-thread stalls later.
