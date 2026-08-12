@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "dev.card.webstream.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "client": [
+    "KeyboardInvoker",
+    "MouseInvoker"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
