@@ -3,7 +3,6 @@ package dev.card.webstream;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.client.MinecraftClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,17 +45,17 @@ public final class McWebStreamClient implements ClientModInitializer {
             }
         });
 
-        WorldRenderEvents.END.register(context -> {
-            BeautyEncoder encoder = beautyEncoder;
-            if (encoder != null) {
-                encoder.captureIfNeeded(MinecraftClient.getInstance());
-            }
-        });
-
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> shutdown());
 
         LOGGER.info("MC WebStream ready. Open http://<this-PC>:{} from a browser; WebSocket port is {}.",
                 config.httpPort, config.wsPort);
+    }
+
+    public static void captureBeautyFrame() {
+        BeautyEncoder encoder = beautyEncoder;
+        if (encoder != null) {
+            encoder.captureIfNeeded(MinecraftClient.getInstance());
+        }
     }
 
     static void requestFullSnapshot() {
