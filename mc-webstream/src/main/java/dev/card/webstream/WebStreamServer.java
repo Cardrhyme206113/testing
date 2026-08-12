@@ -4,6 +4,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import dev.card.webstream.mixin.KeyboardInvoker;
+import dev.card.webstream.mixin.MouseInvoker;
 import net.minecraft.client.MinecraftClient;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
@@ -21,7 +23,6 @@ import java.util.concurrent.Executors;
 final class WebStreamServer extends WebSocketServer {
     private static final int GLFW_RELEASE = 0;
     private static final int GLFW_PRESS = 1;
-    private static final int GLFW_REPEAT = 2;
 
     private final StreamConfig config;
     private final Set<WebSocket> clients = ConcurrentHashMap.newKeySet();
@@ -194,7 +195,7 @@ final class WebStreamServer extends WebSocketServer {
         if (action == GLFW_RELEASE) remotelyHeldKeys.remove(keyCode);
         else if (action == GLFW_PRESS) remotelyHeldKeys.add(keyCode);
 
-        client.keyboard.onKey(handle, keyCode, 0, action, modifiers);
+        keyboard(client).mcwebstream$invokeOnKey(handle, keyCode, 0, action, modifiers);
     }
 
     private static void applyChar(MinecraftClient client, JsonObject obj) {
@@ -204,21 +205,22 @@ final class WebStreamServer extends WebSocketServer {
         String text = obj.get("text").getAsString();
         for (int offset = 0; offset < text.length();) {
             int codePoint = text.codePointAt(offset);
-            client.keyboard.onChar(handle, codePoint, modifiers);
+            keyboard(client).mcwebstream$invokeOnChar(handle, codePoint, modifiers);
             offset += Character.charCount(codePoint);
         }
     }
 
     private static void applyMouseMove(MinecraftClient client, JsonObject obj) {
         long handle = client.getWindow().getHandle();
+        MouseInvoker mouse = mouse(client);
         if (bool(obj, "relative")) {
             double dx = doubleNumber(obj, "dx");
             double dy = doubleNumber(obj, "dy");
-            client.mouse.onCursorPos(handle, client.mouse.getX() + dx, client.mouse.getY() + dy);
+            mouse.mcwebstream$invokeOnCursorPos(handle, client.mouse.getX() + dx, client.mouse.getY() + dy);
         } else {
             double xNorm = clamp01(doubleNumber(obj, "xNorm"));
             double yNorm = clamp01(doubleNumber(obj, "yNorm"));
-            client.mouse.onCursorPos(handle,
+            mouse.mcwebstream$invokeOnCursorPos(handle,
                     xNorm * client.getWindow().getWidth(),
                     yNorm * client.getWindow().getHeight());
         }
@@ -230,9 +232,10 @@ final class WebStreamServer extends WebSocketServer {
         int action = integer(obj, "action", GLFW_PRESS);
         int modifiers = integer(obj, "modifiers", 0);
         long handle = client.getWindow().getHandle();
+        MouseInvoker mouse = mouse(client);
 
         if (obj.has("xNorm") && obj.has("yNorm")) {
-            client.mouse.onCursorPos(handle,
+            mouse.mcwebstream$invokeOnCursorPos(handle,
                     clamp01(doubleNumber(obj, "xNorm")) * client.getWindow().getWidth(),
                     clamp01(doubleNumber(obj, "yNorm")) * client.getWindow().getHeight());
         }
@@ -240,32 +243,37 @@ final class WebStreamServer extends WebSocketServer {
         if (action == GLFW_RELEASE) remotelyHeldMouseButtons.remove(button);
         else if (action == GLFW_PRESS) remotelyHeldMouseButtons.add(button);
 
-        client.mouse.onMouseButton(handle, button, action, modifiers);
+        mouse.mcwebstream$invokeOnMouseButton(handle, button, action, modifiers);
     }
 
     private static void applyWheel(MinecraftClient client, JsonObject obj) {
         double amount = doubleNumber(obj, "amount");
         if (amount == 0) return;
         long handle = client.getWindow().getHandle();
+        MouseInvoker mouse = mouse(client);
         if (obj.has("xNorm") && obj.has("yNorm")) {
-            client.mouse.onCursorPos(handle,
+            mouse.mcwebstream$invokeOnCursorPos(handle,
                     clamp01(doubleNumber(obj, "xNorm")) * client.getWindow().getWidth(),
                     clamp01(doubleNumber(obj, "yNorm")) * client.getWindow().getHeight());
         }
-        client.mouse.onMouseScroll(handle, 0, amount);
+        mouse.mcwebstream$invokeOnMouseScroll(handle, 0, amount);
     }
 
     private void releaseRemoteInput() {
         MinecraftClient client = MinecraftClient.getInstance();
         client.execute(() -> {
             long handle = client.getWindow().getHandle();
-            for (Integer key : remotelyHeldKeys) client.keyboard.onKey(handle, key, 0, GLFW_RELEASE, 0);
-            for (Integer button : remotelyHeldMouseButtons) client.mouse.onMouseButton(handle, button, GLFW_RELEASE, 0);
+            KeyboardInvoker keyboard = keyboard(client);
+            MouseInvoker mouse = mouse(client);
+            for (Integer key : remotelyHeldKeys) keyboard.mcwebstream$invokeOnKey(handle, key, 0, GLFW_RELEASE, 0);
+            for (Integer button : remotelyHeldMouseButtons) mouse.mcwebstream$invokeOnMouseButton(handle, button, GLFW_RELEASE, 0);
             remotelyHeldKeys.clear();
             remotelyHeldMouseButtons.clear();
         });
     }
 
+    private static KeyboardInvoker keyboard(MinecraftClient client) { return (KeyboardInvoker) (Object) client.keyboard; }
+    private static MouseInvoker mouse(MinecraftClient client) { return (MouseInvoker) (Object) client.mouse; }
     private static boolean bool(JsonObject o, String key) { return o.has(key) && o.get(key).getAsBoolean(); }
     private static double doubleNumber(JsonObject o, String key) { return o.has(key) ? o.get(key).getAsDouble() : 0d; }
     private static int integer(JsonObject o, String key, int fallback) { return o.has(key) ? o.get(key).getAsInt() : fallback; }
