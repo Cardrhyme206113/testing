@@ -41,6 +41,7 @@ final class WebStreamServer extends WebSocketServer {
 
     void startAll() throws IOException {
         start();
+
         httpServer = HttpServer.create(new InetSocketAddress(config.bindHost, config.httpPort), 0);
         httpServer.createContext("/", this::serveViewer);
         httpServer.createContext("/config", exchange -> {
@@ -49,6 +50,7 @@ final class WebStreamServer extends WebSocketServer {
             cfg.addProperty("videoWidth", config.videoWidth);
             cfg.addProperty("videoHeight", config.videoHeight);
             cfg.addProperty("videoFps", config.videoFps);
+            cfg.addProperty("videoBitrateKbps", config.videoBitrateKbps);
             byte[] bytes = cfg.toString().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
             exchange.getResponseHeaders().set("Cache-Control", "no-store");
@@ -71,56 +73,65 @@ final class WebStreamServer extends WebSocketServer {
         httpServer.start();
     }
 
-    boolean hasClients() { return !clients.isEmpty(); }
-
-    void sendState(String json) {
-        if (!clients.isEmpty()) broadcast(json);
+    boolean hasClients() {
+        return !clients.isEmpty();
     }
 
-    void sendVideoConfig(String codec, int width, int height, int fps) {
-        lastVideoConfig = new VideoConfig(codec, width, height, fps);
-        broadcast(videoConfigJson(lastVideoConfig).toString());
-    }
-
-    void sendVideoFrame(byte codecId, boolean keyFrame, long timestampUs,
-                        float x, float y, float z, float yaw, float pitch, byte[] payload) {
+    void sendUiState(boolean screenOpen, String title) {
         if (clients.isEmpty()) return;
-        ByteBuffer packet = ByteBuffer.allocate(32 + payload.length);
+        JsonObject obj = new JsonObject();
+        obj.addProperty("type", "ui-state");
+        obj.addProperty("screenOpen", screenOpen);
+        obj.addProperty("title", title == null ? "" : title);
+        broadcast(obj.toString());
+    }
+
+    void sendVideoConfig(String codec, int width, int height, int fps, int bitrateKbps,
+                         int sourceWidth, int sourceHeight) {
+        lastVideoConfig = new VideoConfig(codec, width, height, fps, bitrateKbps, sourceWidth, sourceHeight);
+        if (!clients.isEmpty()) broadcast(videoConfigJson(lastVideoConfig).toString());
+    }
+
+    void sendVideoFrame(byte codecId, boolean keyFrame, long timestampUs, byte[] payload) {
+        if (clients.isEmpty()) return;
+        ByteBuffer packet = ByteBuffer.allocate(12 + payload.length);
         packet.put((byte) 0x56);
         packet.put(codecId);
         packet.put((byte) (keyFrame ? 1 : 0));
         packet.put((byte) 0);
         packet.putLong(timestampUs);
-        packet.putFloat(x); packet.putFloat(y); packet.putFloat(z);
-        packet.putFloat(yaw); packet.putFloat(pitch);
         packet.put(payload);
         broadcast(packet.array());
     }
 
-    @Override public void onOpen(WebSocket conn, ClientHandshake handshake) {
+    @Override
+    public void onOpen(WebSocket conn, ClientHandshake handshake) {
         clients.add(conn);
+
         JsonObject hello = new JsonObject();
         hello.addProperty("type", "hello");
-        hello.addProperty("protocol", 3);
-        hello.addProperty("cubeSize", SemanticStateTracker.SIZE);
+        hello.addProperty("protocol", 4);
         hello.addProperty("wsPort", config.wsPort);
         hello.addProperty("videoWidth", config.videoWidth);
         hello.addProperty("videoHeight", config.videoHeight);
         hello.addProperty("videoFps", config.videoFps);
+        hello.addProperty("videoBitrateKbps", config.videoBitrateKbps);
+        hello.addProperty("codec", "AV1");
         hello.addProperty("nativeInputInjection", true);
-        hello.addProperty("remoteGui", true);
         conn.send(hello.toString());
+
         VideoConfig currentVideoConfig = lastVideoConfig;
         if (currentVideoConfig != null) conn.send(videoConfigJson(currentVideoConfig).toString());
-        McWebStreamClient.requestFullSnapshot();
     }
 
-    @Override public void onClose(WebSocket conn, int code, String reason, boolean remote) {
+    @Override
+    public void onClose(WebSocket conn, int code, String reason, boolean remote) {
         clients.remove(conn);
         if (clients.isEmpty()) releaseRemoteInput();
     }
 
-    @Override public void onMessage(WebSocket conn, String message) {
+    @Override
+    public void onMessage(WebSocket conn, String message) {
         try {
             JsonObject obj = JsonParser.parseString(message).getAsJsonObject();
             if (!obj.has("type")) return;
@@ -131,9 +142,19 @@ final class WebStreamServer extends WebSocketServer {
         }
     }
 
-    @Override public void onMessage(WebSocket conn, ByteBuffer message) {}
-    @Override public void onError(WebSocket conn, Exception ex) { McWebStreamClient.LOGGER.warn("WebStream socket error", ex); }
-    @Override public void onStart() { McWebStreamClient.LOGGER.info("MC WebStream WebSocket listening on {}:{}", config.bindHost, config.wsPort); }
+    @Override
+    public void onMessage(WebSocket conn, ByteBuffer message) {
+    }
+
+    @Override
+    public void onError(WebSocket conn, Exception ex) {
+        McWebStreamClient.LOGGER.warn("WebStream socket error", ex);
+    }
+
+    @Override
+    public void onStart() {
+        McWebStreamClient.LOGGER.info("MC WebStream WebSocket listening on {}:{}", config.bindHost, config.wsPort);
+    }
 
     void stopAll() throws InterruptedException {
         HttpServer http = httpServer;
@@ -150,20 +171,35 @@ final class WebStreamServer extends WebSocketServer {
         obj.addProperty("width", config.width);
         obj.addProperty("height", config.height);
         obj.addProperty("fps", config.fps);
+        obj.addProperty("bitrateKbps", config.bitrateKbps);
+        obj.addProperty("sourceWidth", config.sourceWidth);
+        obj.addProperty("sourceHeight", config.sourceHeight);
         return obj;
     }
 
-    private record VideoConfig(String codec, int width, int height, int fps) {}
+    private record VideoConfig(String codec, int width, int height, int fps, int bitrateKbps,
+                               int sourceWidth, int sourceHeight) {
+    }
 
     private void serveViewer(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
+        if (path.equals("/favicon.ico")) {
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+            return;
+        }
         if (!path.equals("/") && !path.equals("/index.html")) {
             exchange.sendResponseHeaders(404, -1);
             exchange.close();
             return;
         }
+
         try (InputStream in = WebStreamServer.class.getResourceAsStream("/assets/mcwebstream/viewer/index.html")) {
-            if (in == null) { exchange.sendResponseHeaders(500, -1); exchange.close(); return; }
+            if (in == null) {
+                exchange.sendResponseHeaders(500, -1);
+                exchange.close();
+                return;
+            }
             byte[] bytes = in.readAllBytes();
             exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
             exchange.getResponseHeaders().set("Cache-Control", "no-store");
@@ -181,7 +217,8 @@ final class WebStreamServer extends WebSocketServer {
             case "mouse" -> applyMouseButton(client, obj);
             case "wheel" -> applyWheel(client, obj);
             case "release-all" -> releaseRemoteInput();
-            default -> { }
+            default -> {
+            }
         }
     }
 
@@ -203,7 +240,7 @@ final class WebStreamServer extends WebSocketServer {
         int modifiers = integer(obj, "modifiers", 0);
         long handle = client.getWindow().getHandle();
         String text = obj.get("text").getAsString();
-        for (int offset = 0; offset < text.length();) {
+        for (int offset = 0; offset < text.length(); ) {
             int codePoint = text.codePointAt(offset);
             keyboard(client).mcwebstream$invokeOnChar(handle, codePoint, modifiers);
             offset += Character.charCount(codePoint);
@@ -265,17 +302,38 @@ final class WebStreamServer extends WebSocketServer {
             long handle = client.getWindow().getHandle();
             KeyboardInvoker keyboard = keyboard(client);
             MouseInvoker mouse = mouse(client);
-            for (Integer key : remotelyHeldKeys) keyboard.mcwebstream$invokeOnKey(handle, key, 0, GLFW_RELEASE, 0);
-            for (Integer button : remotelyHeldMouseButtons) mouse.mcwebstream$invokeOnMouseButton(handle, button, GLFW_RELEASE, 0);
+            for (Integer key : remotelyHeldKeys) {
+                keyboard.mcwebstream$invokeOnKey(handle, key, 0, GLFW_RELEASE, 0);
+            }
+            for (Integer button : remotelyHeldMouseButtons) {
+                mouse.mcwebstream$invokeOnMouseButton(handle, button, GLFW_RELEASE, 0);
+            }
             remotelyHeldKeys.clear();
             remotelyHeldMouseButtons.clear();
         });
     }
 
-    private static KeyboardInvoker keyboard(MinecraftClient client) { return (KeyboardInvoker) (Object) client.keyboard; }
-    private static MouseInvoker mouse(MinecraftClient client) { return (MouseInvoker) (Object) client.mouse; }
-    private static boolean bool(JsonObject o, String key) { return o.has(key) && o.get(key).getAsBoolean(); }
-    private static double doubleNumber(JsonObject o, String key) { return o.has(key) ? o.get(key).getAsDouble() : 0d; }
-    private static int integer(JsonObject o, String key, int fallback) { return o.has(key) ? o.get(key).getAsInt() : fallback; }
-    private static double clamp01(double v) { return Math.max(0d, Math.min(1d, v)); }
+    private static KeyboardInvoker keyboard(MinecraftClient client) {
+        return (KeyboardInvoker) (Object) client.keyboard;
+    }
+
+    private static MouseInvoker mouse(MinecraftClient client) {
+        return (MouseInvoker) (Object) client.mouse;
+    }
+
+    private static boolean bool(JsonObject o, String key) {
+        return o.has(key) && o.get(key).getAsBoolean();
+    }
+
+    private static double doubleNumber(JsonObject o, String key) {
+        return o.has(key) ? o.get(key).getAsDouble() : 0d;
+    }
+
+    private static int integer(JsonObject o, String key, int fallback) {
+        return o.has(key) ? o.get(key).getAsInt() : fallback;
+    }
+
+    private static double clamp01(double v) {
+        return Math.max(0d, Math.min(1d, v));
+    }
 }
