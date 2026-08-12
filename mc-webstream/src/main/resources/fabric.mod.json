@@ -3,7 +3,7 @@
   "id": "mcwebstream",
   "version": "${version}",
   "name": "MC WebStream",
-  "description": "Experimental hybrid Minecraft-to-browser streamer with an 8x8x8 semantic geometry layer and low-latency beauty video.",
+  "description": "Experimental hybrid Minecraft-to-browser streaming service with native remote input, an 8x8x8 semantic geometry layer, and low-latency beauty video.",
   "authors": ["Card", "OpenAI"],
   "license": "MIT",
   "environment": "client",
@@ -12,6 +12,9 @@
       "dev.card.webstream.McWebStreamClient"
     ]
   },
+  "mixins": [
+    "mcwebstream.mixins.json"
+  ],
   "depends": {
     "fabricloader": ">=0.14.21",
     "fabric-api": "*",
