@@ -32,7 +32,7 @@ final class StreamConfig {
                 envInt("MC_WEBSTREAM_WIDTH", 1280),
                 envInt("MC_WEBSTREAM_HEIGHT", 720),
                 envInt("MC_WEBSTREAM_FPS", 60),
-                envInt("MC_WEBSTREAM_BITRATE_KBPS", 2200),
+                envInt("MC_WEBSTREAM_BITRATE_KBPS", 4000),
                 envInt("MC_WEBSTREAM_GOP", 60),
                 env("MC_WEBSTREAM_FFMPEG", "ffmpeg")
         );
