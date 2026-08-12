@@ -119,7 +119,9 @@ final class SemanticStateTracker {
                 e.addProperty("yaw", fp.yaw); e.addProperty("pitch", fp.pitch);
                 e.addProperty("vx", fp.vx); e.addProperty("vy", fp.vy); e.addProperty("vz", fp.vz);
                 Box bb = entity.getBoundingBox();
-                e.addProperty("w", bb.getLengthX()); e.addProperty("h", bb.getLengthY()); e.addProperty("d", bb.getLengthZ());
+                e.addProperty("w", bb.maxX - bb.minX);
+                e.addProperty("h", bb.maxY - bb.minY);
+                e.addProperty("d", bb.maxZ - bb.minZ);
                 upsert.add(e);
             }
         }
