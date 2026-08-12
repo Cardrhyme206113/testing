@@ -8,16 +8,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Objects;
 
 public final class McWebStreamClient implements ClientModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("mc-webstream");
 
-    private static final SemanticStateTracker TRACKER = new SemanticStateTracker();
-    private static final AtomicBoolean FULL_SNAPSHOT_REQUESTED = new AtomicBoolean(true);
-
     private static WebStreamServer server;
     private static BeautyEncoder beautyEncoder;
+    private static Boolean lastScreenOpen;
+    private static String lastScreenTitle;
 
     @Override
     public void onInitializeClient() {
@@ -33,22 +32,28 @@ public final class McWebStreamClient implements ClientModInitializer {
         beautyEncoder = new BeautyEncoder(config, server);
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (FULL_SNAPSHOT_REQUESTED.getAndSet(false)) {
-                TRACKER.reset();
-            }
-            if (server == null || !server.hasClients()) {
+            WebStreamServer runningServer = server;
+            if (runningServer == null || !runningServer.hasClients()) {
+                lastScreenOpen = null;
+                lastScreenTitle = null;
                 return;
             }
-            var state = TRACKER.sample(client);
-            if (state != null) {
-                server.sendState(state.toString());
+
+            boolean open = client.currentScreen != null;
+            String title = open ? client.currentScreen.getTitle().getString() : "";
+            if (!Objects.equals(lastScreenOpen, open) || !Objects.equals(lastScreenTitle, title)) {
+                lastScreenOpen = open;
+                lastScreenTitle = title;
+                runningServer.sendUiState(open, title);
             }
         });
 
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> shutdown());
 
-        LOGGER.info("MC WebStream ready. Open http://<this-PC>:{} from a browser; WebSocket port is {}.",
-                config.httpPort, config.wsPort);
+        LOGGER.info("MC WebStream ready. Open http://<this-PC>:{} from a browser; WebSocket port is {}. " +
+                        "Video defaults to {}x{} @ {} FPS, {} kbit/s AV1.",
+                config.httpPort, config.wsPort, config.videoWidth, config.videoHeight,
+                config.videoFps, config.videoBitrateKbps);
     }
 
     public static void captureBeautyFrame() {
@@ -56,10 +61,6 @@ public final class McWebStreamClient implements ClientModInitializer {
         if (encoder != null) {
             encoder.captureIfNeeded(MinecraftClient.getInstance());
         }
-    }
-
-    static void requestFullSnapshot() {
-        FULL_SNAPSHOT_REQUESTED.set(true);
     }
 
     private static void shutdown() {
