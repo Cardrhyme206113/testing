@@ -14,7 +14,7 @@ This is a proof-of-concept, not a security-hardened remote desktop. It currently
 
 ## Build
 
-Java 17 is required. From this directory:
+The current Loom toolchain needs **JDK 21 to run Gradle**. The mod source is still compiled with `--release 17`, so the produced Fabric 1.20.1 mod targets Java 17 bytecode.
 
 ```bash
 gradle build
