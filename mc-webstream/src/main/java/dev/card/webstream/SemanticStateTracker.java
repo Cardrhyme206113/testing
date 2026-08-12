@@ -46,6 +46,16 @@ final class SemanticStateTracker {
         root.addProperty("full", full);
         root.add("center", vec3i(center.getX(), center.getY(), center.getZ()));
 
+        JsonObject screen = new JsonObject();
+        screen.addProperty("open", client.currentScreen != null);
+        screen.addProperty("scaledWidth", client.getWindow().getScaledWidth());
+        screen.addProperty("scaledHeight", client.getWindow().getScaledHeight());
+        if (client.currentScreen != null) {
+            screen.addProperty("title", client.currentScreen.getTitle().getString());
+            screen.addProperty("class", client.currentScreen.getClass().getName());
+        }
+        root.add("screen", screen);
+
         JsonObject camera = new JsonObject();
         Vec3d cameraPos = client.gameRenderer.getCamera().getPos();
         camera.addProperty("x", cameraPos.x);
