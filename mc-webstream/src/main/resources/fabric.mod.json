@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "mcwebstream",
+  "version": "${version}",
+  "name": "MC WebStream",
+  "description": "Experimental hybrid Minecraft-to-browser streamer with an 8x8x8 semantic geometry layer and low-latency beauty video.",
+  "authors": ["Card", "OpenAI"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.card.webstream.McWebStreamClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.14.21",
+    "fabric-api": "*",
+    "minecraft": "~1.20.1",
+    "java": ">=17"
+  }
+}
