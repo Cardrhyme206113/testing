@@ -151,6 +151,16 @@ function sourceNorm(e){
   v=(v*th-py)/ch;
   return{xNorm:Math.max(0,Math.min(1,u)),yNorm:Math.max(0,Math.min(1,v))};
 }
+function mousePacket(e,action){
+  const packet={type:'mouse',button:glfwMouseButton(e.button),action,modifiers:modifiers(e)};
+  if(screenOpen)Object.assign(packet,sourceNorm(e));
+  return packet;
+}
+function wheelPacket(e,amount){
+  const packet={type:'wheel',amount};
+  if(screenOpen)Object.assign(packet,sourceNorm(e));
+  return packet;
+}
 
 addEventListener('resize',scheduleViewport,{passive:true});
 addEventListener('orientationchange',scheduleViewport,{passive:true});
@@ -183,18 +193,18 @@ addEventListener('keyup',e=>{
 stage.addEventListener('mousedown',e=>{
   if(!screenOpen&&document.pointerLockElement!==stage)return;
   e.preventDefault();
-  send({type:'mouse',button:glfwMouseButton(e.button),action:1,modifiers:modifiers(e),...sourceNorm(e)});
+  send(mousePacket(e,1));
 });
 addEventListener('mouseup',e=>{
   if(!screenOpen&&document.pointerLockElement!==stage)return;
-  send({type:'mouse',button:glfwMouseButton(e.button),action:0,modifiers:modifiers(e),...sourceNorm(e)});
+  send(mousePacket(e,0));
 });
 addEventListener('wheel',e=>{
   const dy=Number(e.deltaY)||0;
   if(dy===0)return;
   if(!screenOpen&&document.pointerLockElement!==stage)return;
   e.preventDefault();
-  send({type:'wheel',amount:-Math.sign(dy),...sourceNorm(e)});
+  send(wheelPacket(e,-Math.sign(dy)));
 },{passive:false,capture:true});
 stage.addEventListener('contextmenu',e=>e.preventDefault());
 function releaseAll(){send({type:'release-all'})}
