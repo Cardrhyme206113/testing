@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "offline_identity",
+  "version": "${version}",
+  "name": "Offline Identity",
+  "description": "Replaces an authenticated Minecraft client session with a configurable offline identity after launch.",
+  "authors": ["Cardrhyme206113"],
+  "environment": "client",
+  "license": "MIT",
+  "mixins": [
+    "offline_identity.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.14.22",
+    "minecraft": "1.20.1",
+    "java": ">=17"
+  }
+}
