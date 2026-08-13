@@ -20,7 +20,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:
   <canvas id="video" width="1280" height="720"></canvas>
   <div id="ui">
     <div class="p" id="net">connecting…</div>
-    <div class="p" id="vid">AV1: waiting</div>
+    <div class="p" id="vid">AV1: waiting for encoder</div>
     <div class="p" id="mode">input: waiting</div>
   </div>
   <div id="hint"><span>Click to capture mouse</span></div>
@@ -32,7 +32,7 @@ const ctx=canvas.getContext('2d',{alpha:false,desynchronized:true});
 const net=document.querySelector('#net');
 const vid=document.querySelector('#vid');
 const mode=document.querySelector('#mode');
-let ws=null,wsPort=8765,decoder=null,codec='',frames=0,lastFrames=0,lastFpsAt=performance.now();
+let ws=null,wsPort=8765,decoder=null,codec='',frames=0,lastFrames=0,chunks=0,lastChunks=0;
 let screenOpen=true;
 let cfg={width:1280,height:720,sourceWidth:1280,sourceHeight:720,fps:60,bitrateKbps:4000};
 
@@ -92,7 +92,7 @@ async function configureVideo(c){
       error:e=>{vid.textContent='AV1 decode error: '+e.message;console.error(e)}
     });
     decoder.configure(dc);
-    vid.textContent=`AV1 ${c.width}×${c.height}@${c.fps} · ${c.bitrateKbps||'?'} kbps`;
+    vid.textContent=`AV1 configured ${c.width}×${c.height}@${c.fps} · waiting for packets`;
   }catch(e){
     vid.textContent='AV1 unavailable: '+e.message;
     console.error(e);
@@ -102,6 +102,7 @@ function handleVideo(buf){
   if(!(buf instanceof ArrayBuffer)||buf.byteLength<12)return;
   const d=new DataView(buf);
   if(d.getUint8(0)!==0x56)return;
+  chunks++;
   const key=d.getUint8(2)!==0;
   const ts=Number(d.getBigInt64(4,false));
   if(!decoder||decoder.state!=='configured')return;
@@ -110,6 +111,7 @@ function handleVideo(buf){
     decoder.decode(new EncodedVideoChunk({type:key?'key':'delta',timestamp:ts,data:new Uint8Array(buf,12)}));
   }catch(e){
     vid.textContent='AV1 chunk error: '+e.message;
+    console.error(e);
   }
 }
 
@@ -168,8 +170,13 @@ addEventListener('blur',releaseAll);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseAll()});
 
 setInterval(()=>{
-  const n=frames-lastFrames;lastFrames=frames;
-  if(codec)vid.textContent=`AV1 ${cfg.width}×${cfg.height}@${cfg.fps} · ${cfg.bitrateKbps||'?'} kbps · ${n} fps · q${decoder?.decodeQueueSize||0}`;
+  const decoded=frames-lastFrames;lastFrames=frames;
+  const packetRate=chunks-lastChunks;lastChunks=chunks;
+  if(codec){
+    vid.textContent=`AV1 ${cfg.width}×${cfg.height}@${cfg.fps} · ${cfg.bitrateKbps||'?'} kbps · packets ${packetRate}/s · decoded ${decoded}/s · q${decoder?.decodeQueueSize||0}`;
+  }else if(chunks){
+    vid.textContent=`AV1 packets arriving (${packetRate}/s), decoder not configured`;
+  }
 },1000);
 
 boot();
