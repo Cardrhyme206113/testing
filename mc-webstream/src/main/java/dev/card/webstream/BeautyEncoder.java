@@ -35,6 +35,7 @@ final class BeautyEncoder implements AutoCloseable {
     private volatile int sourceWidth = -1;
     private volatile int sourceHeight = -1;
     private volatile EncoderChoice selectedEncoder;
+    private volatile Boolean useFlatpakHostFfmpeg;
     private long lastCaptureNs;
     private long nextEncoderRetryNs;
     private boolean loggedFirstCapture;
@@ -199,8 +200,7 @@ final class BeautyEncoder implements AutoCloseable {
     private void startEncoder(int inputWidth, int inputHeight, EncoderChoice choice) throws IOException {
         stopProcess();
 
-        List<String> c = new ArrayList<>();
-        c.add(config.ffmpeg);
+        List<String> c = ffmpegCommand();
         c.add("-hide_banner");
         c.add("-loglevel");
         c.add("warning");
@@ -247,7 +247,7 @@ final class BeautyEncoder implements AutoCloseable {
             case NVENC_LL, NVENC_HQ, NVENC_BASIC -> {
                 c.add("-c:v"); c.add("av1_nvenc");
                 c.add("-preset"); c.add("p4");
-                if (choice == EncoderChoice.NVENC_LL) { c.add("-tune"); c.add("ll"); }
+                if (choice == EncoderChoice.NVENC_LL) { c.add("-tune"); c.add("ull"); }
                 if (choice == EncoderChoice.NVENC_HQ) { c.add("-tune"); c.add("hq"); }
                 if (choice != EncoderChoice.NVENC_BASIC) { c.add("-rc"); c.add("cbr"); }
                 c.add("-b:v"); c.add(config.videoBitrateKbps + "k");
@@ -259,10 +259,8 @@ final class BeautyEncoder implements AutoCloseable {
             }
             case SVT_AV1 -> {
                 c.add("-c:v"); c.add("libsvtav1");
-                c.add("-preset"); c.add("12");
+                c.add("-preset"); c.add("10");
                 c.add("-b:v"); c.add(config.videoBitrateKbps + "k");
-                c.add("-maxrate"); c.add(config.videoBitrateKbps + "k");
-                c.add("-bufsize"); c.add((config.videoBitrateKbps * 2) + "k");
                 c.add("-g"); c.add(Integer.toString(config.gop));
                 c.add("-pix_fmt"); c.add("yuv420p");
             }
@@ -327,8 +325,10 @@ final class BeautyEncoder implements AutoCloseable {
 
         String encoders;
         try {
-            Process probe = new ProcessBuilder(config.ffmpeg, "-hide_banner", "-encoders")
-                    .redirectErrorStream(true).start();
+            List<String> c = ffmpegCommand();
+            c.add("-hide_banner");
+            c.add("-encoders");
+            Process probe = new ProcessBuilder(c).redirectErrorStream(true).start();
             encoders = new String(probe.getInputStream().readAllBytes(), StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
             if (!probe.waitFor(3, TimeUnit.SECONDS)) probe.destroyForcibly();
         } catch (Exception e) {
@@ -350,15 +350,23 @@ final class BeautyEncoder implements AutoCloseable {
         }
 
         if (encoders.contains("libsvtav1")) {
-            selectedEncoder = EncoderChoice.SVT_AV1;
-            McWebStreamClient.LOGGER.info("Using libsvtav1 fallback because NVENC AV1 is unavailable at runtime");
-            return selectedEncoder;
+            ProbeResult result = probeEncoder(EncoderChoice.SVT_AV1);
+            if (result.ok) {
+                selectedEncoder = EncoderChoice.SVT_AV1;
+                McWebStreamClient.LOGGER.info("Using libsvtav1 fallback because NVENC AV1 is unavailable at runtime");
+                return selectedEncoder;
+            }
+            McWebStreamClient.LOGGER.warn("AV1 encoder probe rejected SVT_AV1: {}", result.message);
         }
 
         if (encoders.contains("libaom-av1")) {
-            selectedEncoder = EncoderChoice.AOM_AV1;
-            McWebStreamClient.LOGGER.warn("Using libaom-av1 realtime fallback; this can use substantial CPU");
-            return selectedEncoder;
+            ProbeResult result = probeEncoder(EncoderChoice.AOM_AV1);
+            if (result.ok) {
+                selectedEncoder = EncoderChoice.AOM_AV1;
+                McWebStreamClient.LOGGER.warn("Using libaom-av1 realtime fallback; this can use substantial CPU");
+                return selectedEncoder;
+            }
+            McWebStreamClient.LOGGER.warn("AV1 encoder probe rejected AOM_AV1: {}", result.message);
         }
 
         McWebStreamClient.LOGGER.warn("FFmpeg has no usable AV1 encoder (tried av1_nvenc, libsvtav1, libaom-av1)");
@@ -366,8 +374,7 @@ final class BeautyEncoder implements AutoCloseable {
     }
 
     private ProbeResult probeEncoder(EncoderChoice choice) {
-        List<String> c = new ArrayList<>();
-        c.add(config.ffmpeg);
+        List<String> c = ffmpegCommand();
         c.add("-hide_banner");
         c.add("-loglevel");
         c.add("error");
@@ -398,6 +405,70 @@ final class BeautyEncoder implements AutoCloseable {
         } catch (Exception e) {
             return new ProbeResult(false, e.toString());
         }
+    }
+
+    /**
+     * Flatpak has its own /usr and therefore its own FFmpeg. On systems where that
+     * runtime FFmpeg requires a newer NVENC API than the installed NVIDIA driver,
+     * use the host FFmpeg through flatpak-spawn when the permission is available.
+     */
+    private List<String> ffmpegCommand() {
+        List<String> c = new ArrayList<>();
+        if (shouldUseFlatpakHostFfmpeg()) {
+            c.add("flatpak-spawn");
+            c.add("--host");
+            c.add(hostFfmpegPath());
+        } else {
+            c.add(config.ffmpeg);
+        }
+        return c;
+    }
+
+    private boolean shouldUseFlatpakHostFfmpeg() {
+        String flatpakId = System.getenv("FLATPAK_ID");
+        if (flatpakId == null || flatpakId.isBlank()) return false;
+
+        Boolean cached = useFlatpakHostFfmpeg;
+        if (cached != null) return cached;
+
+        synchronized (this) {
+            cached = useFlatpakHostFfmpeg;
+            if (cached != null) return cached;
+
+            String hostFfmpeg = hostFfmpegPath();
+            try {
+                Process probe = new ProcessBuilder("flatpak-spawn", "--host", hostFfmpeg, "-version")
+                        .redirectErrorStream(true).start();
+                boolean exited = probe.waitFor(3, TimeUnit.SECONDS);
+                if (!exited) {
+                    probe.destroyForcibly();
+                    useFlatpakHostFfmpeg = false;
+                    McWebStreamClient.LOGGER.warn("Flatpak host FFmpeg probe timed out; using sandbox FFmpeg");
+                    return false;
+                }
+                String output = new String(probe.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+                if (probe.exitValue() == 0) {
+                    useFlatpakHostFfmpeg = true;
+                    String firstLine = output.lines().findFirst().orElse(hostFfmpeg);
+                    McWebStreamClient.LOGGER.info("Flatpak detected; using host FFmpeg via flatpak-spawn: {}", firstLine);
+                    return true;
+                }
+                useFlatpakHostFfmpeg = false;
+                McWebStreamClient.LOGGER.warn("Flatpak host FFmpeg unavailable; using sandbox FFmpeg: {}",
+                        output.replace('\n', ' ').replace('\r', ' '));
+                return false;
+            } catch (Exception e) {
+                useFlatpakHostFfmpeg = false;
+                McWebStreamClient.LOGGER.warn("Could not invoke host FFmpeg through flatpak-spawn; using sandbox FFmpeg: {}",
+                        e.toString());
+                return false;
+            }
+        }
+    }
+
+    private String hostFfmpegPath() {
+        if (config.ffmpeg == null || config.ffmpeg.isBlank() || "ffmpeg".equals(config.ffmpeg)) return "/usr/bin/ffmpeg";
+        return config.ffmpeg;
     }
 
     private void streamStderr(InputStream stream) {
