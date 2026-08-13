@@ -32,7 +32,8 @@ const ctx=canvas.getContext('2d',{alpha:false,desynchronized:true});
 const net=document.querySelector('#net');
 const vid=document.querySelector('#vid');
 const mode=document.querySelector('#mode');
-let ws=null,wsPort=8765,decoder=null,codec='',frames=0,lastFrames=0,chunks=0,lastChunks=0;
+const MAX_STREAM_PIXELS=1280*720;
+let ws=null,wsPort=8765,decoder=null,codec='',frames=0,lastFrames=0,chunks=0,lastChunks=0,resizeTimer=0;
 let screenOpen=true;
 let cfg={width:1280,height:720,sourceWidth:1280,sourceHeight:720,fps:60,bitrateKbps:4000};
 
@@ -40,6 +41,17 @@ const special={Space:32,Quote:39,Comma:44,Minus:45,Period:46,Slash:47,Semicolon:
 function glfw(code){if(/^Key[A-Z]$/.test(code))return code.charCodeAt(3);if(/^Digit[0-9]$/.test(code))return code.charCodeAt(5);let m=/^F([1-9]|1\d|2[0-5])$/.exec(code);if(m)return 289+Number(m[1]);m=/^Numpad([0-9])$/.exec(code);if(m)return 320+Number(m[1]);return special[code]??-1}
 function modifiers(e){return(e.shiftKey?1:0)|(e.ctrlKey?2:0)|(e.altKey?4:0)|(e.metaKey?8:0)}
 function send(o){if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify(o))}
+function viewportTarget(){
+  const dpr=Math.max(1,Number(devicePixelRatio)||1);
+  let w=Math.max(64,Math.round(innerWidth*dpr));
+  let h=Math.max(64,Math.round(innerHeight*dpr));
+  const pixels=w*h;
+  if(pixels>MAX_STREAM_PIXELS){const s=Math.sqrt(MAX_STREAM_PIXELS/pixels);w=Math.round(w*s);h=Math.round(h*s)}
+  w=Math.max(64,w&~1);h=Math.max(64,h&~1);
+  return{width:w,height:h};
+}
+function sendViewport(){send({type:'viewport',...viewportTarget()})}
+function scheduleViewport(){clearTimeout(resizeTimer);resizeTimer=setTimeout(sendViewport,120)}
 
 async function boot(){
   try{
@@ -53,7 +65,7 @@ function connect(){
   const p=location.protocol==='https:'?'wss:':'ws:';
   ws=new WebSocket(`${p}//${location.hostname}:${wsPort}/`);
   ws.binaryType='arraybuffer';
-  ws.onopen=()=>net.textContent='connected';
+  ws.onopen=()=>{net.textContent='connected';sendViewport()};
   ws.onclose=()=>{net.textContent='disconnected — retrying';releaseAll();setTimeout(connect,1000)};
   ws.onerror=()=>net.textContent='socket error';
   ws.onmessage=e=>typeof e.data==='string'?handleJson(e.data):handleVideo(e.data);
@@ -82,9 +94,11 @@ async function configureVideo(c){
     return;
   }
   try{
-    const dc={codec:c.codec,codedWidth:c.width,codedHeight:c.height,optimizeForLatency:true,hardwareAcceleration:'prefer-hardware'};
+    // Do not force prefer-hardware here. Firefox can report that hint as supported
+    // even when the selected decoder cannot actually be initialized.
+    const dc={codec:c.codec,codedWidth:c.width,codedHeight:c.height,optimizeForLatency:true};
     const supported=await VideoDecoder.isConfigSupported(dc);
-    if(!supported.supported)throw Error('AV1 decoder config unsupported');
+    if(!supported.supported)throw Error(`AV1 decoder config unsupported (${c.codec})`);
     if(decoder)decoder.close();
     codec=c.codec;
     decoder=new VideoDecoder({
@@ -125,6 +139,8 @@ function sourceNorm(e){
   return{xNorm:Math.max(0,Math.min(1,u)),yNorm:Math.max(0,Math.min(1,v))};
 }
 
+addEventListener('resize',scheduleViewport,{passive:true});
+addEventListener('orientationchange',scheduleViewport,{passive:true});
 stage.addEventListener('click',()=>{
   if(!screenOpen&&document.pointerLockElement!==stage)stage.requestPointerLock();
 });
