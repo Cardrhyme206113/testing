@@ -4,8 +4,8 @@ final class StreamConfig {
     final String bindHost;
     final int wsPort;
     final int httpPort;
-    final int videoWidth;
-    final int videoHeight;
+    volatile int videoWidth;
+    volatile int videoHeight;
     final int videoFps;
     final int videoBitrateKbps;
     final int gop;
