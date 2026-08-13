@@ -24,14 +24,17 @@ import java.util.concurrent.Executors;
 final class WebStreamServer extends WebSocketServer {
     private static final int GLFW_RELEASE = 0;
     private static final int GLFW_PRESS = 1;
-    private static final long MAX_STREAM_PIXELS = 1280L * 720L;
 
     private final StreamConfig config;
     private final Set<WebSocket> clients = ConcurrentHashMap.newKeySet();
     private final Set<Integer> remotelyHeldKeys = ConcurrentHashMap.newKeySet();
     private final Set<Integer> remotelyHeldMouseButtons = ConcurrentHashMap.newKeySet();
+
     private HttpServer httpServer;
+    private volatile BeautyEncoder encoder;
     private volatile VideoConfig lastVideoConfig;
+    private volatile int browserWidth = 1280;
+    private volatile int browserHeight = 720;
 
     WebStreamServer(StreamConfig config) {
         super(new InetSocketAddress(config.bindHost, config.wsPort));
@@ -41,19 +44,17 @@ final class WebStreamServer extends WebSocketServer {
         setConnectionLostTimeout(5);
     }
 
+    void attachEncoder(BeautyEncoder encoder) {
+        this.encoder = encoder;
+    }
+
     void startAll() throws IOException {
         start();
 
         httpServer = HttpServer.create(new InetSocketAddress(config.bindHost, config.httpPort), 0);
         httpServer.createContext("/", this::serveViewer);
         httpServer.createContext("/config", exchange -> {
-            JsonObject cfg = new JsonObject();
-            cfg.addProperty("wsPort", config.wsPort);
-            cfg.addProperty("videoWidth", config.videoWidth);
-            cfg.addProperty("videoHeight", config.videoHeight);
-            cfg.addProperty("videoFps", config.videoFps);
-            cfg.addProperty("videoBitrateKbps", config.videoBitrateKbps);
-            byte[] bytes = cfg.toString().getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = settingsJson("config").toString().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
             exchange.getResponseHeaders().set("Cache-Control", "no-store");
             exchange.sendResponseHeaders(200, bytes.length);
@@ -88,9 +89,10 @@ final class WebStreamServer extends WebSocketServer {
         broadcast(obj.toString());
     }
 
-    void sendVideoConfig(String codec, int width, int height, int fps, int bitrateKbps,
+    void sendVideoConfig(String codecName, String codec, int width, int height, int fps, int bitrateKbps,
                          int sourceWidth, int sourceHeight) {
-        lastVideoConfig = new VideoConfig(codec, width, height, fps, bitrateKbps, sourceWidth, sourceHeight);
+        lastVideoConfig = new VideoConfig(codecName, codec, width, height, fps,
+                bitrateKbps, sourceWidth, sourceHeight);
         if (!clients.isEmpty()) broadcast(videoConfigJson(lastVideoConfig).toString());
     }
 
@@ -110,20 +112,23 @@ final class WebStreamServer extends WebSocketServer {
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
         clients.add(conn);
 
-        JsonObject hello = new JsonObject();
-        hello.addProperty("type", "hello");
-        hello.addProperty("protocol", 4);
-        hello.addProperty("wsPort", config.wsPort);
-        hello.addProperty("videoWidth", config.videoWidth);
-        hello.addProperty("videoHeight", config.videoHeight);
-        hello.addProperty("videoFps", config.videoFps);
-        hello.addProperty("videoBitrateKbps", config.videoBitrateKbps);
-        hello.addProperty("codec", "AV1");
+        JsonObject hello = settingsJson("hello");
+        hello.addProperty("protocol", 5);
         hello.addProperty("nativeInputInjection", true);
         conn.send(hello.toString());
 
         VideoConfig currentVideoConfig = lastVideoConfig;
         if (currentVideoConfig != null) conn.send(videoConfigJson(currentVideoConfig).toString());
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        client.execute(() -> {
+            boolean open = client.currentScreen != null;
+            JsonObject ui = new JsonObject();
+            ui.addProperty("type", "ui-state");
+            ui.addProperty("screenOpen", open);
+            ui.addProperty("title", open ? client.currentScreen.getTitle().getString() : "");
+            conn.send(ui.toString());
+        });
     }
 
     @Override
@@ -138,7 +143,7 @@ final class WebStreamServer extends WebSocketServer {
             JsonObject obj = JsonParser.parseString(message).getAsJsonObject();
             if (!obj.has("type")) return;
             MinecraftClient client = MinecraftClient.getInstance();
-            client.execute(() -> applyMessage(client, obj));
+            client.execute(() -> applyMessage(client, conn, obj));
         } catch (Exception e) {
             McWebStreamClient.LOGGER.debug("Ignoring malformed web input: {}", e.toString());
         }
@@ -155,7 +160,8 @@ final class WebStreamServer extends WebSocketServer {
 
     @Override
     public void onStart() {
-        McWebStreamClient.LOGGER.info("MC WebStream WebSocket listening on {}:{}", config.bindHost, config.wsPort);
+        McWebStreamClient.LOGGER.info("MC WebStream WebSocket listening on {}:{}",
+                config.bindHost, config.wsPort);
     }
 
     void stopAll() throws InterruptedException {
@@ -166,9 +172,34 @@ final class WebStreamServer extends WebSocketServer {
         stop(500);
     }
 
+    private JsonObject settingsJson(String type) {
+        StreamConfig.StreamSettings settings = config.snapshot();
+        JsonObject obj = new JsonObject();
+        obj.addProperty("type", type);
+        obj.addProperty("wsPort", config.wsPort);
+        obj.addProperty("codecName", settings.codec());
+        obj.addProperty("videoWidth", settings.width());
+        obj.addProperty("videoHeight", settings.height());
+        obj.addProperty("videoFps", settings.fps());
+        obj.addProperty("videoBitrateKbps", settings.bitrateKbps());
+        obj.addProperty("resolutionCap", settings.resolutionCap());
+        obj.addProperty("maxPixels", settings.maxPixels());
+        obj.addProperty("browserWidth", browserWidth);
+        obj.addProperty("browserHeight", browserHeight);
+        obj.addProperty("settingsRevision", settings.revision());
+        return obj;
+    }
+
+    private void sendSettingsState(WebSocket only) {
+        JsonObject state = settingsJson("stream-settings-state");
+        if (only == null) broadcast(state.toString());
+        else only.send(state.toString());
+    }
+
     private static JsonObject videoConfigJson(VideoConfig config) {
         JsonObject obj = new JsonObject();
         obj.addProperty("type", "video-config");
+        obj.addProperty("codecName", config.codecName);
         obj.addProperty("codec", config.codec);
         obj.addProperty("width", config.width);
         obj.addProperty("height", config.height);
@@ -179,8 +210,8 @@ final class WebStreamServer extends WebSocketServer {
         return obj;
     }
 
-    private record VideoConfig(String codec, int width, int height, int fps, int bitrateKbps,
-                               int sourceWidth, int sourceHeight) {
+    private record VideoConfig(String codecName, String codec, int width, int height, int fps,
+                               int bitrateKbps, int sourceWidth, int sourceHeight) {
     }
 
     private void serveViewer(HttpExchange exchange) throws IOException {
@@ -196,7 +227,8 @@ final class WebStreamServer extends WebSocketServer {
             return;
         }
 
-        try (InputStream in = WebStreamServer.class.getResourceAsStream("/assets/mcwebstream/viewer/index.html")) {
+        try (InputStream in = WebStreamServer.class.getResourceAsStream(
+                "/assets/mcwebstream/viewer/index.html")) {
             if (in == null) {
                 exchange.sendResponseHeaders(500, -1);
                 exchange.close();
@@ -211,9 +243,11 @@ final class WebStreamServer extends WebSocketServer {
         }
     }
 
-    private void applyMessage(MinecraftClient client, JsonObject obj) {
+    private void applyMessage(MinecraftClient client, WebSocket conn, JsonObject obj) {
         switch (obj.get("type").getAsString()) {
-            case "viewport" -> applyViewport(client, obj);
+            case "viewport" -> applyViewport(client, conn, obj);
+            case "stream-settings" -> applyStreamSettings(client, conn, obj);
+            case "request-settings" -> sendSettingsState(conn);
             case "key" -> applyKeyboard(client, obj);
             case "char" -> applyChar(client, obj);
             case "mouse-move" -> applyMouseMove(client, obj);
@@ -225,28 +259,75 @@ final class WebStreamServer extends WebSocketServer {
         }
     }
 
-    private void applyViewport(MinecraftClient client, JsonObject obj) {
+    private void applyViewport(MinecraftClient client, WebSocket conn, JsonObject obj) {
         int requestedWidth = integer(obj, "width", 0);
         int requestedHeight = integer(obj, "height", 0);
-        if (requestedWidth < 64 || requestedHeight < 64) return;
+        if (!validViewport(requestedWidth, requestedHeight)) {
+            sendSettingsState(conn);
+            return;
+        }
 
-        requestedWidth = Math.min(requestedWidth, 4096);
-        requestedHeight = Math.min(requestedHeight, 4096);
+        browserWidth = Math.min(requestedWidth, 7680);
+        browserHeight = Math.min(requestedHeight, 4320);
+        long before = config.revision();
+        resizeForBrowser(client);
+        finishReconfigure(before);
+    }
+
+    private void applyStreamSettings(MinecraftClient client, WebSocket conn, JsonObject obj) {
+        String codec = obj.has("codec") ? obj.get("codec").getAsString() : config.videoCodec;
+        int fps = integer(obj, "fps", config.videoFps);
+        int bitrate = integer(obj, "bitrateKbps", config.videoBitrateKbps);
+        int cap = integer(obj, "resolutionCap", config.resolutionCap);
+
+        int requestedWidth = integer(obj, "viewportWidth", browserWidth);
+        int requestedHeight = integer(obj, "viewportHeight", browserHeight);
+        if (validViewport(requestedWidth, requestedHeight)) {
+            browserWidth = Math.min(requestedWidth, 7680);
+            browserHeight = Math.min(requestedHeight, 4320);
+        }
+
+        long before = config.revision();
+        StreamConfig.StreamSettings accepted = config.applySettings(codec, fps, bitrate, cap);
+        resizeForBrowser(client);
+        finishReconfigure(before);
+
+        McWebStreamClient.LOGGER.info(
+                "Browser applied stream settings: codec={}, cap={}p, {} FPS, {} kbit/s, output={}x{}",
+                accepted.codec().toUpperCase(), accepted.resolutionCap(), accepted.fps(),
+                accepted.bitrateKbps(), config.videoWidth, config.videoHeight);
+        sendSettingsState(conn);
+    }
+
+    private void resizeForBrowser(MinecraftClient client) {
+        int requestedWidth = browserWidth;
+        int requestedHeight = browserHeight;
+        if (!validViewport(requestedWidth, requestedHeight)) return;
+
+        long maxPixels = StreamConfig.maxPixelsForCap(config.resolutionCap);
         double pixels = (double) requestedWidth * requestedHeight;
-        double scale = pixels > MAX_STREAM_PIXELS ? Math.sqrt(MAX_STREAM_PIXELS / pixels) : 1.0;
-        int width = Math.max(64, ((int) Math.round(requestedWidth * scale)) & ~1);
-        int height = Math.max(64, ((int) Math.round(requestedHeight * scale)) & ~1);
+        double scale = pixels > maxPixels ? Math.sqrt(maxPixels / pixels) : 1.0;
+        int width = Math.max(64, ((int) Math.floor(requestedWidth * scale)) & ~1);
+        int height = Math.max(64, ((int) Math.floor(requestedHeight * scale)) & ~1);
 
-        if (config.videoWidth == width && config.videoHeight == height &&
-                Math.abs(client.getWindow().getWidth() - width) <= 2 &&
-                Math.abs(client.getWindow().getHeight() - height) <= 2) return;
+        config.setOutputSize(width, height);
+        if (Math.abs(client.getWindow().getWidth() - width) > 2
+                || Math.abs(client.getWindow().getHeight() - height) > 2) {
+            GLFW.glfwSetWindowSize(client.getWindow().getHandle(), width, height);
+        }
+    }
 
-        config.videoWidth = width;
-        config.videoHeight = height;
-        lastVideoConfig = null;
-        GLFW.glfwSetWindowSize(client.getWindow().getHandle(), width, height);
-        McWebStreamClient.LOGGER.info("Browser viewport resized Minecraft/stream target to {}x{} ({} pixels)",
-                width, height, (long) width * height);
+    private void finishReconfigure(long revisionBefore) {
+        if (config.revision() != revisionBefore) {
+            lastVideoConfig = null;
+            BeautyEncoder currentEncoder = encoder;
+            if (currentEncoder != null) currentEncoder.requestReconfigure();
+            sendSettingsState(null);
+        }
+    }
+
+    private static boolean validViewport(int width, int height) {
+        return width >= 64 && height >= 64 && width >= height;
     }
 
     private void applyKeyboard(MinecraftClient client, JsonObject obj) {
