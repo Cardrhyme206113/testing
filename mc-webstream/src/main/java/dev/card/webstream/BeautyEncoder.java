@@ -1,8 +1,10 @@
 package dev.card.webstream;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gl.Framebuffer;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL12;
+import org.lwjgl.opengl.GL15;
+import org.lwjgl.opengl.GL21;
+import org.lwjgl.opengl.GL30;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
@@ -32,6 +34,11 @@ final class BeautyEncoder implements AutoCloseable {
     private volatile int sourceHeight = -1;
     private long lastCaptureNs;
     private long nextEncoderRetryNs;
+    private long capturedFrames;
+    private long encodedFrames;
+    private boolean loggedFirstCapture;
+    private boolean loggedFirstEncoded;
+    private boolean loggedReadError;
 
     BeautyEncoder(StreamConfig config, WebStreamServer server) {
         this.config = config;
@@ -41,7 +48,12 @@ final class BeautyEncoder implements AutoCloseable {
         encoderThread.start();
     }
 
-    void captureIfNeeded(MinecraftClient client) {
+    /**
+     * Captures the actual default framebuffer backbuffer immediately before GLFW swaps it.
+     * This is intentionally not MinecraftClient#getFramebuffer(): shader mods may composite
+     * their final image later, while the GLFW backbuffer is exactly what is about to be shown.
+     */
+    void captureBackbufferIfNeeded(int width, int height) {
         if (!running || !server.hasClients()) return;
 
         long now = System.nanoTime();
@@ -49,8 +61,6 @@ final class BeautyEncoder implements AutoCloseable {
         if (now - lastCaptureNs < frameInterval) return;
         lastCaptureNs = now;
 
-        int width = client.getWindow().getFramebufferWidth();
-        int height = client.getWindow().getFramebufferHeight();
         if (width <= 0 || height <= 0) return;
 
         if (width != sourceWidth || height != sourceHeight) {
@@ -59,26 +69,69 @@ final class BeautyEncoder implements AutoCloseable {
             queue.clear();
             bufferPool.clear();
             stopProcess();
+            McWebStreamClient.LOGGER.info("WebStream capture source is now {}x{}", width, height);
         }
 
         int bytes = Math.multiplyExact(Math.multiplyExact(width, height), 4);
         ByteBuffer buffer = takeBuffer(bytes);
         if (buffer == null) return;
 
+        int oldReadFramebuffer = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+        int oldReadBuffer = GL11.glGetInteger(GL11.GL_READ_BUFFER);
+        int oldPixelPackBuffer = GL11.glGetInteger(GL21.GL_PIXEL_PACK_BUFFER_BINDING);
+        int oldPackAlignment = GL11.glGetInteger(GL11.GL_PACK_ALIGNMENT);
+        int oldPackRowLength = GL11.glGetInteger(GL12.GL_PACK_ROW_LENGTH);
+        int oldPackSkipRows = GL11.glGetInteger(GL12.GL_PACK_SKIP_ROWS);
+        int oldPackSkipPixels = GL11.glGetInteger(GL12.GL_PACK_SKIP_PIXELS);
+
         try {
-            Framebuffer framebuffer = client.getFramebuffer();
-            framebuffer.beginWrite(false);
-            buffer.clear();
+            // Read the window's real backbuffer, not Minecraft's intermediate FBO.
+            GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, 0);
+            GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
+            GL11.glReadBuffer(GL11.GL_BACK);
             GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 1);
+            GL11.glPixelStorei(GL12.GL_PACK_ROW_LENGTH, 0);
+            GL11.glPixelStorei(GL12.GL_PACK_SKIP_ROWS, 0);
+            GL11.glPixelStorei(GL12.GL_PACK_SKIP_PIXELS, 0);
+
+            buffer.clear();
             GL11.glReadPixels(0, 0, width, height, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buffer);
+            int error = GL11.glGetError();
+            if (error != GL11.GL_NO_ERROR) {
+                bufferPool.offer(buffer);
+                if (!loggedReadError) {
+                    loggedReadError = true;
+                    McWebStreamClient.LOGGER.error("Final backbuffer glReadPixels failed with GL error 0x{}",
+                            Integer.toHexString(error));
+                }
+                return;
+            }
+
             buffer.position(0);
             buffer.limit(bytes);
+            capturedFrames++;
+            if (!loggedFirstCapture) {
+                loggedFirstCapture = true;
+                McWebStreamClient.LOGGER.info("WebStream captured first final-window frame ({} bytes)", bytes);
+            }
+
             if (!queue.offer(new RawFrame(width, height, buffer))) {
                 bufferPool.offer(buffer);
             }
         } catch (Throwable t) {
             bufferPool.offer(buffer);
-            McWebStreamClient.LOGGER.warn("Full-window capture failed", t);
+            McWebStreamClient.LOGGER.warn("Final-window capture failed", t);
+        } finally {
+            try {
+                GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, oldReadFramebuffer);
+                GL11.glReadBuffer(oldReadBuffer);
+                GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, oldPixelPackBuffer);
+                GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, oldPackAlignment);
+                GL11.glPixelStorei(GL12.GL_PACK_ROW_LENGTH, oldPackRowLength);
+                GL11.glPixelStorei(GL12.GL_PACK_SKIP_ROWS, oldPackSkipRows);
+                GL11.glPixelStorei(GL12.GL_PACK_SKIP_PIXELS, oldPackSkipPixels);
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -128,6 +181,10 @@ final class BeautyEncoder implements AutoCloseable {
         try (WritableByteChannel stdin = Channels.newChannel(current.getOutputStream())) {
             RawFrame frame = first;
             while (running && process == current && current.isAlive()) {
+                if (frame == null) {
+                    frame = queue.poll(250, TimeUnit.MILLISECONDS);
+                    continue;
+                }
                 if (frame.width != sourceWidth || frame.height != sourceHeight) {
                     bufferPool.offer(frame.data);
                     break;
@@ -141,7 +198,6 @@ final class BeautyEncoder implements AutoCloseable {
                 }
 
                 frame = queue.poll(250, TimeUnit.MILLISECONDS);
-                if (frame == null) continue;
             }
         } finally {
             stopProcess();
@@ -169,7 +225,7 @@ final class BeautyEncoder implements AutoCloseable {
         c.add("-an");
 
         String filter = "vflip,scale=" + config.videoWidth + ":" + config.videoHeight +
-                ":force_original_aspect_ratio=decrease:flags=bilinear,pad=" +
+                ":force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=" +
                 config.videoWidth + ":" + config.videoHeight + ":(ow-iw)/2:(oh-ih)/2:black";
         c.add("-vf");
         c.add(filter);
@@ -212,6 +268,8 @@ final class BeautyEncoder implements AutoCloseable {
             c.add("yuv420p");
         }
 
+        c.add("-flush_packets");
+        c.add("1");
         c.add("-f");
         c.add("ivf");
         c.add("pipe:1");
@@ -224,20 +282,22 @@ final class BeautyEncoder implements AutoCloseable {
         stderr.setDaemon(true);
         stderr.start();
 
-        Thread output = new Thread(() -> readIvf(started.getInputStream(), choice), "mc-webstream-video-out");
+        Thread output = new Thread(() -> readIvf(started.getInputStream(), choice, inputWidth, inputHeight),
+                "mc-webstream-video-out");
         output.setDaemon(true);
         output.start();
-
-        server.sendVideoConfig("av01.0.05M.08", config.videoWidth, config.videoHeight,
-                config.videoFps, config.videoBitrateKbps, inputWidth, inputHeight);
     }
 
-    private void readIvf(InputStream raw, EncoderChoice choice) {
+    private void readIvf(InputStream raw, EncoderChoice choice, int inputWidth, int inputHeight) {
         try (BufferedInputStream in = new BufferedInputStream(raw, 1 << 20)) {
             byte[] header = readExactly(in, 32);
             if (header == null || header[0] != 'D' || header[1] != 'K' || header[2] != 'I' || header[3] != 'F') {
                 throw new IOException("FFmpeg did not emit IVF");
             }
+
+            // Only advertise a decoder config after FFmpeg has proved it is actually producing AV1.
+            server.sendVideoConfig(codecString(), config.videoWidth, config.videoHeight,
+                    config.videoFps, config.videoBitrateKbps, inputWidth, inputHeight);
 
             long frameIndex = 0;
             while (running) {
@@ -253,11 +313,28 @@ final class BeautyEncoder implements AutoCloseable {
                 long ts = frameIndex * 1_000_000L / Math.max(1, config.videoFps);
                 boolean key = frameIndex % Math.max(1, config.gop) == 0;
                 server.sendVideoFrame(choice.codecId, key, ts, payload);
+                encodedFrames++;
+                if (!loggedFirstEncoded) {
+                    loggedFirstEncoded = true;
+                    McWebStreamClient.LOGGER.info("WebStream emitted first AV1 frame ({} bytes, encoder={})",
+                            payload.length, choice.name());
+                }
                 frameIndex++;
             }
         } catch (IOException e) {
             if (running) McWebStreamClient.LOGGER.warn("AV1 output ended: {}", e.toString());
         }
+    }
+
+    private String codecString() {
+        // 720p60 is safer advertised as AV1 level 4.0. Use 5.0 for >1080p modes.
+        if (config.videoWidth > 1920 || config.videoHeight > 1080 || config.videoFps > 120) {
+            return "av01.0.12M.08";
+        }
+        if (config.videoWidth > 1280 || config.videoHeight > 720 || config.videoFps > 30) {
+            return "av01.0.08M.08";
+        }
+        return "av01.0.05M.08";
     }
 
     private EncoderChoice chooseEncoder() {
@@ -324,7 +401,8 @@ final class BeautyEncoder implements AutoCloseable {
         stopProcess();
     }
 
-    private record RawFrame(int width, int height, ByteBuffer data) {}
+    private record RawFrame(int width, int height, ByteBuffer data) {
+    }
 
     private enum EncoderChoice {
         AV1_NVENC((byte) 1),
