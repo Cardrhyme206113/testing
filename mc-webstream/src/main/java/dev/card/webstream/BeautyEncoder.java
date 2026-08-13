@@ -8,9 +8,11 @@ import org.lwjgl.opengl.GL30;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.PushbackInputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.WritableByteChannel;
@@ -22,20 +24,24 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 final class BeautyEncoder implements AutoCloseable {
     private final StreamConfig config;
     private final WebStreamServer server;
     private final BlockingQueue<RawFrame> queue = new ArrayBlockingQueue<>(2);
     private final ConcurrentLinkedQueue<ByteBuffer> bufferPool = new ConcurrentLinkedQueue<>();
+    private final AtomicLong encoderGeneration = new AtomicLong();
     private final Thread encoderThread;
 
     private volatile boolean running = true;
     private volatile Process process;
     private volatile int sourceWidth = -1;
     private volatile int sourceHeight = -1;
+    private volatile long activeRevision = -1L;
     private volatile EncoderChoice selectedEncoder;
     private volatile Boolean useFlatpakHostFfmpeg;
+    private volatile String availableEncoders;
     private long lastCaptureNs;
     private long nextEncoderRetryNs;
     private boolean loggedFirstCapture;
@@ -50,9 +56,10 @@ final class BeautyEncoder implements AutoCloseable {
         encoderThread.start();
     }
 
-    /** Capture the actual default framebuffer backbuffer immediately before GLFW swaps it. */
     void captureBackbufferIfNeeded(int width, int height) {
         if (!running || !server.hasClients()) return;
+
+        if (process != null && activeRevision != config.revision()) requestReconfigure();
 
         long now = System.nanoTime();
         long frameInterval = 1_000_000_000L / Math.max(1, config.videoFps);
@@ -64,9 +71,8 @@ final class BeautyEncoder implements AutoCloseable {
         if (width != sourceWidth || height != sourceHeight) {
             sourceWidth = width;
             sourceHeight = height;
-            queue.clear();
+            requestReconfigure();
             bufferPool.clear();
-            stopProcess();
             McWebStreamClient.LOGGER.info("WebStream capture source is now {}x{}", width, height);
         }
 
@@ -129,6 +135,22 @@ final class BeautyEncoder implements AutoCloseable {
         }
     }
 
+    void requestReconfigure() {
+        EncoderChoice cached = selectedEncoder;
+        if (cached != null && !cached.codec.equals(config.videoCodec)) selectedEncoder = null;
+        nextEncoderRetryNs = 0L;
+        drainQueue();
+        stopProcess();
+    }
+
+    private void drainQueue() {
+        RawFrame frame;
+        while ((frame = queue.poll()) != null) {
+            frame.data.clear();
+            bufferPool.offer(frame.data);
+        }
+    }
+
     private ByteBuffer takeBuffer(int bytes) {
         ByteBuffer b;
         while ((b = bufferPool.poll()) != null) if (b.capacity() == bytes) return b;
@@ -147,34 +169,36 @@ final class BeautyEncoder implements AutoCloseable {
                     continue;
                 }
 
-                choice = chooseEncoder();
+                StreamConfig.StreamSettings settings = config.snapshot();
+                choice = chooseEncoder(settings);
                 if (choice == null) {
                     bufferPool.offer(first.data);
                     nextEncoderRetryNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
                     continue;
                 }
 
-                startEncoder(first.width, first.height, choice);
-                writeFrames(first);
+                EncoderSession session = startEncoder(first.width, first.height, choice, settings);
+                writeFrames(first, session);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
             } catch (Throwable t) {
-                McWebStreamClient.LOGGER.warn("AV1 encoder loop failed{}", choice == null ? "" : " (" + choice + ")", t);
-                selectedEncoder = null;
+                String codec = config.videoCodec.toUpperCase(Locale.ROOT);
+                McWebStreamClient.LOGGER.warn("{} encoder loop failed{}", codec,
+                        choice == null ? "" : " (" + choice + ")", t);
+                if (choice != null && !choice.codec.equals(config.videoCodec)) selectedEncoder = null;
                 stopProcess();
                 nextEncoderRetryNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
             }
         }
     }
 
-    private void writeFrames(RawFrame first) throws IOException, InterruptedException {
-        Process current = process;
-        if (current == null) return;
-
+    private void writeFrames(RawFrame first, EncoderSession session) throws IOException, InterruptedException {
+        Process current = session.process;
         try (WritableByteChannel stdin = Channels.newChannel(current.getOutputStream())) {
             RawFrame frame = first;
-            while (running && process == current && current.isAlive()) {
+            while (running && process == current && current.isAlive()
+                    && config.revision() == session.settings.revision()) {
                 if (frame == null) {
                     frame = queue.poll(250, TimeUnit.MILLISECONDS);
                     continue;
@@ -193,11 +217,12 @@ final class BeautyEncoder implements AutoCloseable {
                 frame = queue.poll(250, TimeUnit.MILLISECONDS);
             }
         } finally {
-            stopProcess();
+            stopProcess(current);
         }
     }
 
-    private void startEncoder(int inputWidth, int inputHeight, EncoderChoice choice) throws IOException {
+    private EncoderSession startEncoder(int inputWidth, int inputHeight, EncoderChoice choice,
+                                        StreamConfig.StreamSettings settings) throws IOException {
         stopProcess();
 
         List<String> c = ffmpegCommand();
@@ -211,57 +236,70 @@ final class BeautyEncoder implements AutoCloseable {
         c.add("-video_size");
         c.add(inputWidth + "x" + inputHeight);
         c.add("-framerate");
-        c.add(Integer.toString(config.videoFps));
+        c.add(Integer.toString(settings.fps()));
         c.add("-i");
         c.add("pipe:0");
         c.add("-an");
 
-        String filter = "vflip,scale=" + config.videoWidth + ":" + config.videoHeight +
-                ":force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=" +
-                config.videoWidth + ":" + config.videoHeight + ":(ow-iw)/2:(oh-ih)/2:black";
+        String filter = "vflip,scale=" + settings.width() + ":" + settings.height()
+                + ":force_original_aspect_ratio=decrease:flags=fast_bilinear,pad="
+                + settings.width() + ":" + settings.height() + ":(ow-iw)/2:(oh-ih)/2:black";
         c.add("-vf");
         c.add(filter);
-        addEncoderArgs(c, choice);
+        addEncoderArgs(c, choice, settings);
         c.add("-flush_packets");
         c.add("1");
-        c.add("-f");
-        c.add("ivf");
+
+        if (choice.codec.equals("av1")) {
+            c.add("-f");
+            c.add("ivf");
+        } else {
+            c.add("-f");
+            c.add("hevc");
+        }
         c.add("pipe:1");
 
-        McWebStreamClient.LOGGER.info("Starting AV1 stream encoder [{}]: {}", choice, String.join(" ", c));
+        McWebStreamClient.LOGGER.info("Starting {} stream encoder [{}]: {}",
+                choice.codec.toUpperCase(Locale.ROOT), choice, String.join(" ", c));
         Process started = new ProcessBuilder(c).start();
         process = started;
+        activeRevision = settings.revision();
+        long generation = encoderGeneration.incrementAndGet();
 
         Thread stderr = new Thread(() -> streamStderr(started.getErrorStream()), "mc-webstream-ffmpeg-log");
         stderr.setDaemon(true);
         stderr.start();
 
-        Thread output = new Thread(() -> readIvf(started.getInputStream(), choice, inputWidth, inputHeight),
-                "mc-webstream-video-out");
+        Runnable outputTask = choice.codec.equals("av1")
+                ? () -> readIvf(started, generation, choice, settings, inputWidth, inputHeight)
+                : () -> readHevc(started, generation, choice, settings, inputWidth, inputHeight);
+        Thread output = new Thread(outputTask, "mc-webstream-video-out");
         output.setDaemon(true);
         output.start();
+
+        return new EncoderSession(started, generation, choice, settings);
     }
 
-    private void addEncoderArgs(List<String> c, EncoderChoice choice) {
+    private void addEncoderArgs(List<String> c, EncoderChoice choice, StreamConfig.StreamSettings settings) {
+        int bitrate = settings.bitrateKbps();
+        int gop = settings.gop();
         switch (choice) {
-            case NVENC_LL, NVENC_HQ, NVENC_BASIC -> {
+            case AV1_NVENC_LL, AV1_NVENC_HQ, AV1_NVENC_BASIC -> {
                 c.add("-c:v"); c.add("av1_nvenc");
                 c.add("-preset"); c.add("p4");
-                if (choice == EncoderChoice.NVENC_LL) { c.add("-tune"); c.add("ull"); }
-                if (choice == EncoderChoice.NVENC_HQ) { c.add("-tune"); c.add("hq"); }
-                if (choice != EncoderChoice.NVENC_BASIC) { c.add("-rc"); c.add("cbr"); }
-                c.add("-b:v"); c.add(config.videoBitrateKbps + "k");
-                c.add("-maxrate"); c.add(config.videoBitrateKbps + "k");
-                c.add("-bufsize"); c.add((config.videoBitrateKbps * 2) + "k");
-                c.add("-g"); c.add(Integer.toString(config.gop));
+                if (choice == EncoderChoice.AV1_NVENC_LL) { c.add("-tune"); c.add("ull"); }
+                if (choice == EncoderChoice.AV1_NVENC_HQ) { c.add("-tune"); c.add("hq"); }
+                if (choice != EncoderChoice.AV1_NVENC_BASIC) { c.add("-rc"); c.add("cbr"); }
+                addRateArgs(c, bitrate);
+                c.add("-g"); c.add(Integer.toString(gop));
                 c.add("-bf"); c.add("0");
                 c.add("-pix_fmt"); c.add("nv12");
             }
             case SVT_AV1 -> {
                 c.add("-c:v"); c.add("libsvtav1");
                 c.add("-preset"); c.add("10");
-                c.add("-b:v"); c.add(config.videoBitrateKbps + "k");
-                c.add("-g"); c.add(Integer.toString(config.gop));
+                c.add("-b:v"); c.add(bitrate + "k");
+                c.add("-g"); c.add(Integer.toString(gop));
                 c.add("-pix_fmt"); c.add("yuv420p");
             }
             case AOM_AV1 -> {
@@ -271,109 +309,241 @@ final class BeautyEncoder implements AutoCloseable {
                 c.add("-row-mt"); c.add("1");
                 c.add("-lag-in-frames"); c.add("0");
                 c.add("-error-resilient"); c.add("1");
-                c.add("-threads"); c.add(Integer.toString(Math.max(2, Runtime.getRuntime().availableProcessors() / 2)));
-                c.add("-b:v"); c.add(config.videoBitrateKbps + "k");
-                c.add("-g"); c.add(Integer.toString(config.gop));
+                c.add("-threads"); c.add(Integer.toString(Math.max(2,
+                        Runtime.getRuntime().availableProcessors() / 2)));
+                c.add("-b:v"); c.add(bitrate + "k");
+                c.add("-g"); c.add(Integer.toString(gop));
+                c.add("-pix_fmt"); c.add("yuv420p");
+            }
+            case HEVC_NVENC_LL, HEVC_NVENC_BASIC -> {
+                c.add("-c:v"); c.add("hevc_nvenc");
+                c.add("-preset"); c.add("p4");
+                if (choice == EncoderChoice.HEVC_NVENC_LL) {
+                    c.add("-tune"); c.add("ull");
+                    c.add("-rc"); c.add("cbr");
+                }
+                addRateArgs(c, bitrate);
+                c.add("-g"); c.add(Integer.toString(gop));
+                c.add("-bf"); c.add("0");
+                c.add("-aud"); c.add("1");
+                c.add("-pix_fmt"); c.add("nv12");
+            }
+            case X265_HEVC -> {
+                c.add("-c:v"); c.add("libx265");
+                c.add("-preset"); c.add("ultrafast");
+                c.add("-tune"); c.add("zerolatency");
+                c.add("-b:v"); c.add(bitrate + "k");
+                c.add("-maxrate"); c.add(bitrate + "k");
+                c.add("-bufsize"); c.add((bitrate * 2) + "k");
+                c.add("-x265-params");
+                c.add("aud=1:repeat-headers=1:keyint=" + gop + ":min-keyint=" + gop
+                        + ":scenecut=0:bframes=0:vbv-maxrate=" + bitrate
+                        + ":vbv-bufsize=" + (bitrate * 2));
                 c.add("-pix_fmt"); c.add("yuv420p");
             }
         }
     }
 
-    private void readIvf(InputStream raw, EncoderChoice choice, int inputWidth, int inputHeight) {
-        try (BufferedInputStream in = new BufferedInputStream(raw, 1 << 20)) {
+    private static void addRateArgs(List<String> c, int bitrate) {
+        c.add("-b:v"); c.add(bitrate + "k");
+        c.add("-maxrate"); c.add(bitrate + "k");
+        c.add("-bufsize"); c.add((bitrate * 2) + "k");
+    }
+
+    private void readIvf(Process owner, long generation, EncoderChoice choice,
+                         StreamConfig.StreamSettings settings, int inputWidth, int inputHeight) {
+        try (BufferedInputStream in = new BufferedInputStream(owner.getInputStream(), 1 << 20)) {
             byte[] header = readExactly(in, 32);
-            if (header == null || header[0] != 'D' || header[1] != 'K' || header[2] != 'I' || header[3] != 'F') {
+            if (header == null || header[0] != 'D' || header[1] != 'K'
+                    || header[2] != 'I' || header[3] != 'F') {
                 throw new IOException("FFmpeg did not emit IVF");
             }
 
-            server.sendVideoConfig(codecString(), config.videoWidth, config.videoHeight,
-                    config.videoFps, config.videoBitrateKbps, inputWidth, inputHeight);
+            if (!isCurrent(owner, generation, settings)) return;
+            server.sendVideoConfig("av1", codecString(settings), settings.width(), settings.height(),
+                    settings.fps(), settings.bitrateKbps(), inputWidth, inputHeight);
 
             long frameIndex = 0;
-            while (running) {
+            while (running && isCurrent(owner, generation, settings)) {
                 byte[] fh = readExactly(in, 12);
                 if (fh == null) break;
                 int size = le32(fh, 0);
-                if (size <= 0 || size > 16 * 1024 * 1024) throw new IOException("Invalid IVF frame size: " + size);
+                if (size <= 0 || size > 32 * 1024 * 1024) {
+                    throw new IOException("Invalid IVF frame size: " + size);
+                }
                 byte[] payload = readExactly(in, size);
                 if (payload == null) break;
 
-                long ts = frameIndex * 1_000_000L / Math.max(1, config.videoFps);
-                boolean key = frameIndex % Math.max(1, config.gop) == 0;
-                server.sendVideoFrame(choice.codecId, key, ts, payload);
-                if (!loggedFirstEncoded) {
-                    loggedFirstEncoded = true;
-                    McWebStreamClient.LOGGER.info("WebStream emitted first AV1 frame ({} bytes, encoder={})",
-                            payload.length, choice);
+                long ts = frameIndex * 1_000_000L / Math.max(1, settings.fps());
+                boolean key = frameIndex % Math.max(1, settings.gop()) == 0;
+                if (isCurrent(owner, generation, settings)) {
+                    server.sendVideoFrame(choice.codecId, key, ts, payload);
+                    logFirstFrame(payload.length, choice);
                 }
                 frameIndex++;
             }
         } catch (IOException e) {
-            if (running) McWebStreamClient.LOGGER.warn("AV1 output ended: {}", e.toString());
+            if (running && isCurrent(owner, generation, settings)) {
+                McWebStreamClient.LOGGER.warn("AV1 output ended: {}", e.toString());
+            }
         }
     }
 
-    private String codecString() {
-        if (config.videoWidth > 1920 || config.videoHeight > 1080 || config.videoFps > 120) return "av01.0.12M.08";
-        if (config.videoWidth > 1280 || config.videoHeight > 720 || config.videoFps > 30) return "av01.0.08M.08";
+    private void readHevc(Process owner, long generation, EncoderChoice choice,
+                          StreamConfig.StreamSettings settings, int inputWidth, int inputHeight) {
+        try (PushbackInputStream in = new PushbackInputStream(
+                new BufferedInputStream(owner.getInputStream(), 1 << 20), 8)) {
+            if (!isCurrent(owner, generation, settings)) return;
+            server.sendVideoConfig("hevc", codecString(settings), settings.width(), settings.height(),
+                    settings.fps(), settings.bitrateKbps(), inputWidth, inputHeight);
+
+            ByteArrayOutputStream beforeFirstAud = new ByteArrayOutputStream();
+            ByteArrayOutputStream current = null;
+            ByteArrayOutputStream nextPrefix = new ByteArrayOutputStream();
+            boolean currentHasVcl = false;
+            long frameIndex = 0;
+
+            byte[] nal;
+            while (running && isCurrent(owner, generation, settings)
+                    && (nal = readAnnexBNal(in)) != null) {
+                int type = hevcNalType(nal);
+                if (type < 0) continue;
+
+                if (type == 35) {
+                    if (current != null && currentHasVcl) {
+                        emitHevcAccessUnit(owner, generation, choice, settings,
+                                frameIndex++, current.toByteArray());
+                    }
+                    current = new ByteArrayOutputStream();
+                    if (beforeFirstAud.size() > 0) {
+                        current.writeBytes(beforeFirstAud.toByteArray());
+                        beforeFirstAud.reset();
+                    }
+                    if (nextPrefix.size() > 0) {
+                        current.writeBytes(nextPrefix.toByteArray());
+                        nextPrefix.reset();
+                    }
+                    current.writeBytes(nal);
+                    currentHasVcl = false;
+                    continue;
+                }
+
+                if (current == null) {
+                    beforeFirstAud.writeBytes(nal);
+                    continue;
+                }
+
+                boolean prefixForNext = currentHasVcl && (type == 32 || type == 33 || type == 34 || type == 39);
+                if (prefixForNext) {
+                    nextPrefix.writeBytes(nal);
+                } else {
+                    current.writeBytes(nal);
+                    if (type >= 0 && type <= 31) currentHasVcl = true;
+                }
+            }
+
+            if (current != null && currentHasVcl && isCurrent(owner, generation, settings)) {
+                emitHevcAccessUnit(owner, generation, choice, settings,
+                        frameIndex, current.toByteArray());
+            }
+        } catch (IOException e) {
+            if (running && isCurrent(owner, generation, settings)) {
+                McWebStreamClient.LOGGER.warn("HEVC output ended: {}", e.toString());
+            }
+        }
+    }
+
+    private void emitHevcAccessUnit(Process owner, long generation, EncoderChoice choice,
+                                    StreamConfig.StreamSettings settings, long frameIndex, byte[] payload) {
+        if (payload.length == 0 || !isCurrent(owner, generation, settings)) return;
+        long ts = frameIndex * 1_000_000L / Math.max(1, settings.fps());
+        boolean key = containsHevcRandomAccess(payload);
+        server.sendVideoFrame(choice.codecId, key, ts, payload);
+        logFirstFrame(payload.length, choice);
+    }
+
+    private void logFirstFrame(int length, EncoderChoice choice) {
+        if (!loggedFirstEncoded) {
+            loggedFirstEncoded = true;
+            McWebStreamClient.LOGGER.info("WebStream emitted first {} frame ({} bytes, encoder={})",
+                    choice.codec.toUpperCase(Locale.ROOT), length, choice);
+        }
+    }
+
+    private boolean isCurrent(Process owner, long generation, StreamConfig.StreamSettings settings) {
+        return process == owner && encoderGeneration.get() == generation
+                && config.revision() == settings.revision();
+    }
+
+    private String codecString(StreamConfig.StreamSettings settings) {
+        if (settings.codec().equals("hevc")) {
+            long pixels = (long) settings.width() * settings.height();
+            if (pixels > 3840L * 2160L || settings.fps() > 60) return "hev1.1.6.L186.B0";
+            if (pixels > 1920L * 1080L || settings.fps() > 30) return "hev1.1.6.L153.B0";
+            if (pixels > 1280L * 720L || settings.fps() > 30) return "hev1.1.6.L123.B0";
+            return "hev1.1.6.L93.B0";
+        }
+        if (settings.width() > 1920 || settings.height() > 1080 || settings.fps() > 120) {
+            return "av01.0.12M.08";
+        }
+        if (settings.width() > 1280 || settings.height() > 720 || settings.fps() > 30) {
+            return "av01.0.08M.08";
+        }
         return "av01.0.05M.08";
     }
 
-    private EncoderChoice chooseEncoder() {
+    private EncoderChoice chooseEncoder(StreamConfig.StreamSettings settings) {
         EncoderChoice cached = selectedEncoder;
-        if (cached != null) return cached;
+        if (cached != null && cached.codec.equals(settings.codec())) return cached;
 
-        String encoders;
+        String encoders = availableEncoderText();
+        if (encoders == null) return null;
+
+        EncoderChoice[] candidates = settings.codec().equals("hevc")
+                ? new EncoderChoice[]{EncoderChoice.HEVC_NVENC_LL,
+                EncoderChoice.HEVC_NVENC_BASIC, EncoderChoice.X265_HEVC}
+                : new EncoderChoice[]{EncoderChoice.AV1_NVENC_LL,
+                EncoderChoice.AV1_NVENC_HQ, EncoderChoice.AV1_NVENC_BASIC,
+                EncoderChoice.SVT_AV1, EncoderChoice.AOM_AV1};
+
+        for (EncoderChoice candidate : candidates) {
+            if (!encoders.contains(candidate.ffmpegName)) continue;
+            ProbeResult result = probeEncoder(candidate, settings);
+            if (result.ok) {
+                selectedEncoder = candidate;
+                McWebStreamClient.LOGGER.info("{} encoder probe selected {}",
+                        settings.codec().toUpperCase(Locale.ROOT), candidate);
+                return candidate;
+            }
+            McWebStreamClient.LOGGER.warn("{} encoder probe rejected {}: {}",
+                    settings.codec().toUpperCase(Locale.ROOT), candidate, result.message);
+        }
+
+        McWebStreamClient.LOGGER.warn("FFmpeg has no usable {} encoder",
+                settings.codec().toUpperCase(Locale.ROOT));
+        return null;
+    }
+
+    private String availableEncoderText() {
+        String cached = availableEncoders;
+        if (cached != null) return cached;
         try {
             List<String> c = ffmpegCommand();
             c.add("-hide_banner");
             c.add("-encoders");
             Process probe = new ProcessBuilder(c).redirectErrorStream(true).start();
-            encoders = new String(probe.getInputStream().readAllBytes(), StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
+            String text = new String(probe.getInputStream().readAllBytes(), StandardCharsets.UTF_8)
+                    .toLowerCase(Locale.ROOT);
             if (!probe.waitFor(3, TimeUnit.SECONDS)) probe.destroyForcibly();
+            availableEncoders = text;
+            return text;
         } catch (Exception e) {
             McWebStreamClient.LOGGER.warn("Could not execute FFmpeg '{}': {}", config.ffmpeg, e.toString());
             return null;
         }
-
-        if (encoders.contains("av1_nvenc")) {
-            for (EncoderChoice candidate : new EncoderChoice[]{EncoderChoice.NVENC_LL, EncoderChoice.NVENC_HQ, EncoderChoice.NVENC_BASIC}) {
-                ProbeResult result = probeEncoder(candidate);
-                if (result.ok) {
-                    selectedEncoder = candidate;
-                    McWebStreamClient.LOGGER.info("AV1 encoder probe selected {}", candidate);
-                    return candidate;
-                }
-                McWebStreamClient.LOGGER.warn("AV1 encoder probe rejected {}: {}", candidate, result.message);
-            }
-            McWebStreamClient.LOGGER.warn("av1_nvenc is listed by FFmpeg but cannot initialize; falling back to software AV1");
-        }
-
-        if (encoders.contains("libsvtav1")) {
-            ProbeResult result = probeEncoder(EncoderChoice.SVT_AV1);
-            if (result.ok) {
-                selectedEncoder = EncoderChoice.SVT_AV1;
-                McWebStreamClient.LOGGER.info("Using libsvtav1 fallback because NVENC AV1 is unavailable at runtime");
-                return selectedEncoder;
-            }
-            McWebStreamClient.LOGGER.warn("AV1 encoder probe rejected SVT_AV1: {}", result.message);
-        }
-
-        if (encoders.contains("libaom-av1")) {
-            ProbeResult result = probeEncoder(EncoderChoice.AOM_AV1);
-            if (result.ok) {
-                selectedEncoder = EncoderChoice.AOM_AV1;
-                McWebStreamClient.LOGGER.warn("Using libaom-av1 realtime fallback; this can use substantial CPU");
-                return selectedEncoder;
-            }
-            McWebStreamClient.LOGGER.warn("AV1 encoder probe rejected AOM_AV1: {}", result.message);
-        }
-
-        McWebStreamClient.LOGGER.warn("FFmpeg has no usable AV1 encoder (tried av1_nvenc, libsvtav1, libaom-av1)");
-        return null;
     }
 
-    private ProbeResult probeEncoder(EncoderChoice choice) {
+    private ProbeResult probeEncoder(EncoderChoice choice, StreamConfig.StreamSettings settings) {
         List<String> c = ffmpegCommand();
         c.add("-hide_banner");
         c.add("-loglevel");
@@ -381,17 +551,18 @@ final class BeautyEncoder implements AutoCloseable {
         c.add("-f");
         c.add("lavfi");
         c.add("-i");
-        c.add("color=c=black:s=" + config.videoWidth + "x" + config.videoHeight + ":r=" + config.videoFps);
+        c.add("color=c=black:s=" + settings.width() + "x" + settings.height()
+                + ":r=" + settings.fps());
         c.add("-frames:v");
         c.add("1");
-        addEncoderArgs(c, choice);
+        addEncoderArgs(c, choice, settings);
         c.add("-f");
         c.add("null");
         c.add("-");
 
         try {
             Process p = new ProcessBuilder(c).redirectErrorStream(true).start();
-            boolean exited = p.waitFor(6, TimeUnit.SECONDS);
+            boolean exited = p.waitFor(8, TimeUnit.SECONDS);
             if (!exited) {
                 p.destroyForcibly();
                 return new ProbeResult(false, "probe timed out");
@@ -407,11 +578,6 @@ final class BeautyEncoder implements AutoCloseable {
         }
     }
 
-    /**
-     * Flatpak has its own /usr and therefore its own FFmpeg. On systems where that
-     * runtime FFmpeg requires a newer NVENC API than the installed NVIDIA driver,
-     * use the host FFmpeg through flatpak-spawn when the permission is available.
-     */
     private List<String> ffmpegCommand() {
         List<String> c = new ArrayList<>();
         if (shouldUseFlatpakHostFfmpeg()) {
@@ -450,7 +616,8 @@ final class BeautyEncoder implements AutoCloseable {
                 if (probe.exitValue() == 0) {
                     useFlatpakHostFfmpeg = true;
                     String firstLine = output.lines().findFirst().orElse(hostFfmpeg);
-                    McWebStreamClient.LOGGER.info("Flatpak detected; using host FFmpeg via flatpak-spawn: {}", firstLine);
+                    McWebStreamClient.LOGGER.info("Flatpak detected; using host FFmpeg via flatpak-spawn: {}",
+                            firstLine);
                     return true;
                 }
                 useFlatpakHostFfmpeg = false;
@@ -459,7 +626,8 @@ final class BeautyEncoder implements AutoCloseable {
                 return false;
             } catch (Exception e) {
                 useFlatpakHostFfmpeg = false;
-                McWebStreamClient.LOGGER.warn("Could not invoke host FFmpeg through flatpak-spawn; using sandbox FFmpeg: {}",
+                McWebStreamClient.LOGGER.warn(
+                        "Could not invoke host FFmpeg through flatpak-spawn; using sandbox FFmpeg: {}",
                         e.toString());
                 return false;
             }
@@ -467,7 +635,9 @@ final class BeautyEncoder implements AutoCloseable {
     }
 
     private String hostFfmpegPath() {
-        if (config.ffmpeg == null || config.ffmpeg.isBlank() || "ffmpeg".equals(config.ffmpeg)) return "/usr/bin/ffmpeg";
+        if (config.ffmpeg == null || config.ffmpeg.isBlank() || "ffmpeg".equals(config.ffmpeg)) {
+            return "/usr/bin/ffmpeg";
+        }
         return config.ffmpeg;
     }
 
@@ -492,13 +662,89 @@ final class BeautyEncoder implements AutoCloseable {
         return out;
     }
 
+    private static byte[] readAnnexBNal(PushbackInputStream in) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream(4096);
+        int zeros = 0;
+        boolean found = false;
+        int b;
+
+        while ((b = in.read()) >= 0) {
+            if (b == 0) {
+                zeros++;
+                continue;
+            }
+            if (b == 1 && zeros >= 2) {
+                if (zeros >= 3) out.writeBytes(new byte[]{0, 0, 0, 1});
+                else out.writeBytes(new byte[]{0, 0, 1});
+                found = true;
+                break;
+            }
+            zeros = 0;
+        }
+        if (!found) return null;
+
+        zeros = 0;
+        while ((b = in.read()) >= 0) {
+            if (b == 0) {
+                zeros++;
+                continue;
+            }
+            if (b == 1 && zeros >= 2) {
+                byte[] startCode = zeros >= 3
+                        ? new byte[]{0, 0, 0, 1}
+                        : new byte[]{0, 0, 1};
+                in.unread(startCode);
+                return out.toByteArray();
+            }
+            while (zeros-- > 0) out.write(0);
+            zeros = 0;
+            out.write(b);
+        }
+        while (zeros-- > 0) out.write(0);
+        return out.size() > 4 ? out.toByteArray() : null;
+    }
+
+    private static int hevcNalType(byte[] nal) {
+        int offset;
+        if (nal.length >= 5 && nal[0] == 0 && nal[1] == 0 && nal[2] == 0 && nal[3] == 1) offset = 4;
+        else if (nal.length >= 4 && nal[0] == 0 && nal[1] == 0 && nal[2] == 1) offset = 3;
+        else return -1;
+        return (nal[offset] >> 1) & 0x3f;
+    }
+
+    private static boolean containsHevcRandomAccess(byte[] accessUnit) {
+        int i = 0;
+        while (i + 5 < accessUnit.length) {
+            int start = -1;
+            if (accessUnit[i] == 0 && accessUnit[i + 1] == 0 && accessUnit[i + 2] == 1) start = i + 3;
+            else if (i + 4 < accessUnit.length && accessUnit[i] == 0 && accessUnit[i + 1] == 0
+                    && accessUnit[i + 2] == 0 && accessUnit[i + 3] == 1) start = i + 4;
+            if (start >= 0 && start < accessUnit.length) {
+                int type = (accessUnit[start] >> 1) & 0x3f;
+                if (type >= 16 && type <= 21) return true;
+                i = start + 2;
+            } else {
+                i++;
+            }
+        }
+        return false;
+    }
+
     private static int le32(byte[] b, int o) {
-        return (b[o] & 255) | ((b[o + 1] & 255) << 8) | ((b[o + 2] & 255) << 16) | ((b[o + 3] & 255) << 24);
+        return (b[o] & 255) | ((b[o + 1] & 255) << 8)
+                | ((b[o + 2] & 255) << 16) | ((b[o + 3] & 255) << 24);
     }
 
     private synchronized void stopProcess() {
+        stopProcess(process);
+    }
+
+    private synchronized void stopProcess(Process expected) {
         Process p = process;
+        if (p == null || (expected != null && p != expected)) return;
         process = null;
+        activeRevision = -1L;
+        encoderGeneration.incrementAndGet();
         if (p != null) {
             p.destroy();
             try {
@@ -513,20 +759,38 @@ final class BeautyEncoder implements AutoCloseable {
     public void close() {
         running = false;
         encoderThread.interrupt();
+        drainQueue();
         stopProcess();
     }
 
-    private record RawFrame(int width, int height, ByteBuffer data) {}
-    private record ProbeResult(boolean ok, String message) {}
+    private record RawFrame(int width, int height, ByteBuffer data) {
+    }
+
+    private record ProbeResult(boolean ok, String message) {
+    }
+
+    private record EncoderSession(Process process, long generation, EncoderChoice choice,
+                                  StreamConfig.StreamSettings settings) {
+    }
 
     private enum EncoderChoice {
-        NVENC_LL((byte) 1),
-        NVENC_HQ((byte) 1),
-        NVENC_BASIC((byte) 1),
-        SVT_AV1((byte) 1),
-        AOM_AV1((byte) 1);
+        AV1_NVENC_LL("av1", "av1_nvenc", (byte) 1),
+        AV1_NVENC_HQ("av1", "av1_nvenc", (byte) 1),
+        AV1_NVENC_BASIC("av1", "av1_nvenc", (byte) 1),
+        SVT_AV1("av1", "libsvtav1", (byte) 1),
+        AOM_AV1("av1", "libaom-av1", (byte) 1),
+        HEVC_NVENC_LL("hevc", "hevc_nvenc", (byte) 2),
+        HEVC_NVENC_BASIC("hevc", "hevc_nvenc", (byte) 2),
+        X265_HEVC("hevc", "libx265", (byte) 2);
 
+        final String codec;
+        final String ffmpegName;
         final byte codecId;
-        EncoderChoice(byte codecId) { this.codecId = codecId; }
+
+        EncoderChoice(String codec, String ffmpegName, byte codecId) {
+            this.codec = codec;
+            this.ffmpegName = ffmpegName;
+            this.codecId = codecId;
+        }
     }
 }
