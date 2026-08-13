@@ -10,6 +10,7 @@ import net.minecraft.client.MinecraftClient;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
 import org.java_websocket.server.WebSocketServer;
+import org.lwjgl.glfw.GLFW;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -23,6 +24,7 @@ import java.util.concurrent.Executors;
 final class WebStreamServer extends WebSocketServer {
     private static final int GLFW_RELEASE = 0;
     private static final int GLFW_PRESS = 1;
+    private static final long MAX_STREAM_PIXELS = 1280L * 720L;
 
     private final StreamConfig config;
     private final Set<WebSocket> clients = ConcurrentHashMap.newKeySet();
@@ -211,6 +213,7 @@ final class WebStreamServer extends WebSocketServer {
 
     private void applyMessage(MinecraftClient client, JsonObject obj) {
         switch (obj.get("type").getAsString()) {
+            case "viewport" -> applyViewport(client, obj);
             case "key" -> applyKeyboard(client, obj);
             case "char" -> applyChar(client, obj);
             case "mouse-move" -> applyMouseMove(client, obj);
@@ -220,6 +223,30 @@ final class WebStreamServer extends WebSocketServer {
             default -> {
             }
         }
+    }
+
+    private void applyViewport(MinecraftClient client, JsonObject obj) {
+        int requestedWidth = integer(obj, "width", 0);
+        int requestedHeight = integer(obj, "height", 0);
+        if (requestedWidth < 64 || requestedHeight < 64) return;
+
+        requestedWidth = Math.min(requestedWidth, 4096);
+        requestedHeight = Math.min(requestedHeight, 4096);
+        double pixels = (double) requestedWidth * requestedHeight;
+        double scale = pixels > MAX_STREAM_PIXELS ? Math.sqrt(MAX_STREAM_PIXELS / pixels) : 1.0;
+        int width = Math.max(64, ((int) Math.round(requestedWidth * scale)) & ~1);
+        int height = Math.max(64, ((int) Math.round(requestedHeight * scale)) & ~1);
+
+        if (config.videoWidth == width && config.videoHeight == height &&
+                Math.abs(client.getWindow().getWidth() - width) <= 2 &&
+                Math.abs(client.getWindow().getHeight() - height) <= 2) return;
+
+        config.videoWidth = width;
+        config.videoHeight = height;
+        lastVideoConfig = null;
+        GLFW.glfwSetWindowSize(client.getWindow().getHandle(), width, height);
+        McWebStreamClient.LOGGER.info("Browser viewport resized Minecraft/stream target to {}x{} ({} pixels)",
+                width, height, (long) width * height);
     }
 
     private void applyKeyboard(MinecraftClient client, JsonObject obj) {
