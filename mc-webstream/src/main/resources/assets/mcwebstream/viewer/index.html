@@ -34,6 +34,7 @@ const vid=document.querySelector('#vid');
 const mode=document.querySelector('#mode');
 const MAX_STREAM_PIXELS=1280*720;
 let ws=null,wsPort=8765,decoder=null,codec='',frames=0,lastFrames=0,chunks=0,lastChunks=0,resizeTimer=0;
+let waitingForKey=true,droppedUntilKey=0;
 let screenOpen=true;
 let cfg={width:1280,height:720,sourceWidth:1280,sourceHeight:720,fps:60,bitrateKbps:4000};
 
@@ -66,7 +67,7 @@ function connect(){
   ws=new WebSocket(`${p}//${location.hostname}:${wsPort}/`);
   ws.binaryType='arraybuffer';
   ws.onopen=()=>{net.textContent='connected';sendViewport()};
-  ws.onclose=()=>{net.textContent='disconnected — retrying';releaseAll();setTimeout(connect,1000)};
+  ws.onclose=()=>{net.textContent='disconnected — retrying';releaseAll();waitingForKey=true;setTimeout(connect,1000)};
   ws.onerror=()=>net.textContent='socket error';
   ws.onmessage=e=>typeof e.data==='string'?handleJson(e.data):handleVideo(e.data);
 }
@@ -94,19 +95,19 @@ async function configureVideo(c){
     return;
   }
   try{
-    // Do not force prefer-hardware here. Firefox can report that hint as supported
-    // even when the selected decoder cannot actually be initialized.
     const dc={codec:c.codec,codedWidth:c.width,codedHeight:c.height,optimizeForLatency:true};
     const supported=await VideoDecoder.isConfigSupported(dc);
     if(!supported.supported)throw Error(`AV1 decoder config unsupported (${c.codec})`);
     if(decoder)decoder.close();
     codec=c.codec;
+    waitingForKey=true;
+    droppedUntilKey=0;
     decoder=new VideoDecoder({
       output:frame=>{ctx.drawImage(frame,0,0,canvas.width,canvas.height);frame.close();frames++},
-      error:e=>{vid.textContent='AV1 decode error: '+e.message;console.error(e)}
+      error:e=>{waitingForKey=true;vid.textContent='AV1 decode error: '+e.message;console.error(e)}
     });
     decoder.configure(dc);
-    vid.textContent=`AV1 configured ${c.width}×${c.height}@${c.fps} · waiting for packets`;
+    vid.textContent=`AV1 configured ${c.width}×${c.height}@${c.fps} · waiting for keyframe`;
   }catch(e){
     vid.textContent='AV1 unavailable: '+e.message;
     console.error(e);
@@ -120,10 +121,24 @@ function handleVideo(buf){
   const key=d.getUint8(2)!==0;
   const ts=Number(d.getBigInt64(4,false));
   if(!decoder||decoder.state!=='configured')return;
+
+  // A newly configured WebCodecs decoder cannot start from a delta frame. This
+  // happens normally when a browser joins an already-running GOP, or after a
+  // resize causes the decoder to be recreated. Drop deltas until the next key.
+  if(waitingForKey){
+    if(!key){droppedUntilKey++;return}
+    waitingForKey=false;
+    droppedUntilKey=0;
+  }
   if(decoder.decodeQueueSize>6&&!key)return;
   try{
     decoder.decode(new EncodedVideoChunk({type:key?'key':'delta',timestamp:ts,data:new Uint8Array(buf,12)}));
   }catch(e){
+    if(String(e?.message||e).toLowerCase().includes('key chunk')){
+      waitingForKey=true;
+      vid.textContent='AV1: waiting for next keyframe';
+      return;
+    }
     vid.textContent='AV1 chunk error: '+e.message;
     console.error(e);
   }
@@ -189,7 +204,8 @@ setInterval(()=>{
   const decoded=frames-lastFrames;lastFrames=frames;
   const packetRate=chunks-lastChunks;lastChunks=chunks;
   if(codec){
-    vid.textContent=`AV1 ${cfg.width}×${cfg.height}@${cfg.fps} · ${cfg.bitrateKbps||'?'} kbps · packets ${packetRate}/s · decoded ${decoded}/s · q${decoder?.decodeQueueSize||0}`;
+    const keyState=waitingForKey?' · waiting key':'';
+    vid.textContent=`AV1 ${cfg.width}×${cfg.height}@${cfg.fps} · ${cfg.bitrateKbps||'?'} kbps · packets ${packetRate}/s · decoded ${decoded}/s · q${decoder?.decodeQueueSize||0}${keyState}`;
   }else if(chunks){
     vid.textContent=`AV1 packets arriving (${packetRate}/s), decoder not configured`;
   }
