@@ -1,0 +1,31 @@
+name: Build Offline Identity
+
+on:
+  push:
+    branches:
+      - fabric-offline-identity-1.20.1
+    paths:
+      - 'fabric-offline-identity/**'
+      - '.github/workflows/offline-identity-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fabric-offline-identity
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.3'
+      - run: gradle build --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offline-identity-fabric-1.20.1
+          path: fabric-offline-identity/build/libs/*.jar
