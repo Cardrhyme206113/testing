@@ -29,6 +29,7 @@ public final class McWebStreamClient implements ClientModInitializer {
         }
 
         beautyEncoder = new BeautyEncoder(config, server);
+        server.attachEncoder(beautyEncoder);
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             WebStreamServer runningServer = server;
@@ -49,10 +50,12 @@ public final class McWebStreamClient implements ClientModInitializer {
 
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> shutdown());
 
-        LOGGER.info("MC WebStream ready. Open http://<this-PC>:{} from a browser; WebSocket port is {}. " +
-                        "Video defaults to {}x{} @ {} FPS, {} kbit/s AV1.",
-                config.httpPort, config.wsPort, config.videoWidth, config.videoHeight,
-                config.videoFps, config.videoBitrateKbps);
+        StreamConfig.StreamSettings settings = config.snapshot();
+        LOGGER.info("MC WebStream ready. Open http://<this-PC>:{} from a browser; WebSocket port is {}. "
+                        + "Video defaults to {}x{} @ {} FPS, {} kbit/s {}, cap={}p.",
+                config.httpPort, config.wsPort, settings.width(), settings.height(),
+                settings.fps(), settings.bitrateKbps(), settings.codec().toUpperCase(),
+                settings.resolutionCap());
     }
 
     public static void captureFinalBackbuffer(int framebufferWidth, int framebufferHeight) {
