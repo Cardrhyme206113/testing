@@ -40,6 +40,7 @@ let cfg={width:1280,height:720,sourceWidth:1280,sourceHeight:720,fps:60,bitrateK
 
 const special={Space:32,Quote:39,Comma:44,Minus:45,Period:46,Slash:47,Semicolon:59,Equal:61,BracketLeft:91,Backslash:92,BracketRight:93,Backquote:96,Escape:256,Enter:257,Tab:258,Backspace:259,Insert:260,Delete:261,ArrowRight:262,ArrowLeft:263,ArrowDown:264,ArrowUp:265,PageUp:266,PageDown:267,Home:268,End:269,CapsLock:280,ScrollLock:281,NumLock:282,PrintScreen:283,Pause:284,NumpadDecimal:330,NumpadDivide:331,NumpadMultiply:332,NumpadSubtract:333,NumpadAdd:334,NumpadEnter:335,NumpadEqual:336,ShiftLeft:340,ControlLeft:341,AltLeft:342,MetaLeft:343,ShiftRight:344,ControlRight:345,AltRight:346,MetaRight:347,ContextMenu:348};
 function glfw(code){if(/^Key[A-Z]$/.test(code))return code.charCodeAt(3);if(/^Digit[0-9]$/.test(code))return code.charCodeAt(5);let m=/^F([1-9]|1\d|2[0-5])$/.exec(code);if(m)return 289+Number(m[1]);m=/^Numpad([0-9])$/.exec(code);if(m)return 320+Number(m[1]);return special[code]??-1}
+function glfwMouseButton(button){return button===1?2:button===2?1:button}
 function modifiers(e){return(e.shiftKey?1:0)|(e.ctrlKey?2:0)|(e.altKey?4:0)|(e.metaKey?8:0)}
 function send(o){if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify(o))}
 function viewportTarget(){
@@ -122,9 +123,6 @@ function handleVideo(buf){
   const ts=Number(d.getBigInt64(4,false));
   if(!decoder||decoder.state!=='configured')return;
 
-  // A newly configured WebCodecs decoder cannot start from a delta frame. This
-  // happens normally when a browser joins an already-running GOP, or after a
-  // resize causes the decoder to be recreated. Drop deltas until the next key.
   if(waitingForKey){
     if(!key){droppedUntilKey++;return}
     waitingForKey=false;
@@ -185,11 +183,11 @@ addEventListener('keyup',e=>{
 stage.addEventListener('mousedown',e=>{
   if(!screenOpen&&document.pointerLockElement!==stage)return;
   e.preventDefault();
-  send({type:'mouse',button:e.button,action:1,modifiers:modifiers(e),...sourceNorm(e)});
+  send({type:'mouse',button:glfwMouseButton(e.button),action:1,modifiers:modifiers(e),...sourceNorm(e)});
 });
 addEventListener('mouseup',e=>{
   if(!screenOpen&&document.pointerLockElement!==stage)return;
-  send({type:'mouse',button:e.button,action:0,modifiers:modifiers(e),...sourceNorm(e)});
+  send({type:'mouse',button:glfwMouseButton(e.button),action:0,modifiers:modifiers(e),...sourceNorm(e)});
 });
 stage.addEventListener('wheel',e=>{
   e.preventDefault();
