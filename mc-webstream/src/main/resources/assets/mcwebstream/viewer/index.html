@@ -189,10 +189,13 @@ addEventListener('mouseup',e=>{
   if(!screenOpen&&document.pointerLockElement!==stage)return;
   send({type:'mouse',button:glfwMouseButton(e.button),action:0,modifiers:modifiers(e),...sourceNorm(e)});
 });
-stage.addEventListener('wheel',e=>{
+addEventListener('wheel',e=>{
+  const dy=Number(e.deltaY)||0;
+  if(dy===0)return;
+  if(!screenOpen&&document.pointerLockElement!==stage)return;
   e.preventDefault();
-  send({type:'wheel',amount:-Math.sign(e.deltaY),...sourceNorm(e)});
-},{passive:false});
+  send({type:'wheel',amount:-Math.sign(dy),...sourceNorm(e)});
+},{passive:false,capture:true});
 stage.addEventListener('contextmenu',e=>e.preventDefault());
 function releaseAll(){send({type:'release-all'})}
 addEventListener('blur',releaseAll);
