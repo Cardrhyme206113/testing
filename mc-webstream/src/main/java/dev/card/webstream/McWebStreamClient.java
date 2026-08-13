@@ -3,7 +3,6 @@ package dev.card.webstream;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.minecraft.client.MinecraftClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,10 +55,10 @@ public final class McWebStreamClient implements ClientModInitializer {
                 config.videoFps, config.videoBitrateKbps);
     }
 
-    public static void captureBeautyFrame() {
+    public static void captureFinalBackbuffer(int framebufferWidth, int framebufferHeight) {
         BeautyEncoder encoder = beautyEncoder;
         if (encoder != null) {
-            encoder.captureIfNeeded(MinecraftClient.getInstance());
+            encoder.captureBackbufferIfNeeded(framebufferWidth, framebufferHeight);
         }
     }
 
