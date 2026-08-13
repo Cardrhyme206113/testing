@@ -3,7 +3,8 @@
   "package": "dev.card.webstream.mixin",
   "compatibilityLevel": "JAVA_17",
   "client": [
-    "GameRendererMixin",
+    "WindowMixin",
+    "MinecraftClientMixin",
     "KeyboardInvoker",
     "MouseInvoker"
   ],
