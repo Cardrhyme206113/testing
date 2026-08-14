@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "package": "dev.cardrhyme.cinecontrols.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "LevelTimeMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
