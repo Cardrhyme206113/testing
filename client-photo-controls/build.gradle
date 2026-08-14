@@ -24,16 +24,6 @@ dependencies {
     implementation "net.caffeinemc:sodium-fabric-api:${project.sodium_api_version}"
 }
 
-loom {
-    mixin {
-        // 26.2 production uses remapped Minecraft names. Generate a refmap so
-        // @Inject targets such as getDayTime/getRainLevel/getThunderLevel are
-        // translated correctly instead of being left as development names.
-        useLegacyMixinAp = true
-        defaultRefmapName = "client_photo_controls.refmap.json"
-    }
-}
-
 processResources {
     inputs.property 'version', project.version
     filesMatching('fabric.mod.json') {
