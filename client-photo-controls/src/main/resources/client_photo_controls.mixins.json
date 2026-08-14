@@ -3,7 +3,8 @@
   "package": "dev.cardrhyme.cinecontrols.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "LevelTimeMixin"
+    "ClientClockManagerMixin",
+    "LevelWeatherMixin"
   ],
   "injectors": {
     "defaultRequire": 1
