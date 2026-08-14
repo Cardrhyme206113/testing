@@ -6,7 +6,31 @@ on:
     branches: [client-photo-controls-26.2]
 
 jobs:
-  staging:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Project files are being staged."
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+      - name: Build Fabric mod
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon -p client-photo-controls clean build 2>&1 | tee client-photo-controls/build.log
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-photo-controls-build-log
+          path: client-photo-controls/build.log
+      - name: Upload mod jar
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-photo-controls-26.2
+          path: client-photo-controls/build/libs/client-photo-controls-1.0.0.jar
