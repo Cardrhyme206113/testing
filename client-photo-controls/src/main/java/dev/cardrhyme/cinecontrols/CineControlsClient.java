@@ -14,17 +14,13 @@ public final class CineControlsClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        ClientTickEvents.END_CLIENT_TICK.register(CineControlsClient::applyOverrides);
+        ClientTickEvents.END_CLIENT_TICK.register(CineControlsClient::applyWeatherOverride);
     }
 
-    private static void applyOverrides(Minecraft client) {
+    private static void applyWeatherOverride(Minecraft client) {
         ClientLevel level = client.level;
         if (level == null) {
             return;
-        }
-
-        if (CONFIG.overrideTime) {
-            level.setDayTime(CONFIG.timeOfDay);
         }
 
         switch (CONFIG.weather) {
