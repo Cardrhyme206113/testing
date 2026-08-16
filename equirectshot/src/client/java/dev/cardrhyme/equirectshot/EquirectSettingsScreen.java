@@ -17,13 +17,23 @@ public final class EquirectSettingsScreen extends Screen {
     protected void init() {
         int width = Math.min(310, this.width - 40);
         int x = (this.width - width) / 2;
-        int y = this.height / 2 - 46;
+        int y = this.height / 2 - 60;
 
         this.addRenderableWidget(new ResolutionSlider(x, y, width));
         this.addRenderableWidget(new DelaySlider(x, y + 26, width));
-        this.addRenderableWidget(Button.builder(Component.literal("Done"), button -> closeAndSave())
-                .bounds(x, y + 62, width, 20)
+        this.addRenderableWidget(Button.builder(selfLabel(), button -> {
+                    EquirectShotClient.CONFIG.renderSelf = !EquirectShotClient.CONFIG.renderSelf;
+                    button.setMessage(selfLabel());
+                })
+                .bounds(x, y + 52, width, 20)
                 .build());
+        this.addRenderableWidget(Button.builder(Component.literal("Done"), button -> closeAndSave())
+                .bounds(x, y + 82, width, 20)
+                .build());
+    }
+
+    private static Component selfLabel() {
+        return Component.literal("Render own player: " + (EquirectShotClient.CONFIG.renderSelf ? "ON" : "OFF"));
     }
 
     private void closeAndSave() {
