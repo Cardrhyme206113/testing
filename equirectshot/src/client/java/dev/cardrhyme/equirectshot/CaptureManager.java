@@ -63,7 +63,7 @@ public final class CaptureManager {
         originalXRotO = cameraEntity.xRotO;
         originalYRotO = cameraEntity.yRotO;
 
-        RenderTarget target = client.getMainRenderTarget();
+        RenderTarget target = client.gameRenderer.mainRenderTarget();
         oldWindowWidth = client.getWindow().getWidth();
         oldWindowHeight = client.getWindow().getHeight();
         oldTargetWidth = target.width;
@@ -73,7 +73,7 @@ public final class CaptureManager {
         if (hudChanged) client.gui.hud.toggle();
 
         client.gameRenderer.setRenderBlockOutline(false);
-        Camera camera = client.gameRenderer.getMainCamera();
+        Camera camera = client.gameRenderer.mainCamera();
         camera.enablePanoramicMode();
         client.getWindow().setWidth(faceSize);
         client.getWindow().setHeight(faceSize);
@@ -106,7 +106,7 @@ public final class CaptureManager {
 
         waitingForReadback = true;
         int capturedFace = face;
-        Screenshot.takeScreenshot(client.getMainRenderTarget(), image -> {
+        Screenshot.takeScreenshot(client.gameRenderer.mainRenderTarget(), image -> {
             try {
                 int w = image.getWidth();
                 int h = image.getHeight();
@@ -176,11 +176,11 @@ public final class CaptureManager {
         waitingForReadback = false;
         if (cameraEntity != null) restoreEntityRotation();
         try {
-            client.gameRenderer.getMainCamera().disablePanoramicMode();
+            client.gameRenderer.mainCamera().disablePanoramicMode();
             client.gameRenderer.setRenderBlockOutline(true);
             client.getWindow().setWidth(oldWindowWidth);
             client.getWindow().setHeight(oldWindowHeight);
-            client.getMainRenderTarget().resize(oldTargetWidth, oldTargetHeight);
+            client.gameRenderer.mainRenderTarget().resize(oldTargetWidth, oldTargetHeight);
             if (hudChanged && client.gui.hud.isHidden()) client.gui.hud.toggle();
         } finally {
             cameraEntity = null;
