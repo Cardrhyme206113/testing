@@ -19,6 +19,7 @@ public final class EquirectConfig {
     public int resolutionIndex = 3;
     public double settleSeconds = 1.0;
     public boolean renderSelf = true;
+    public boolean parallelFaces = false;
 
     public static EquirectConfig load() {
         if (!Files.isRegularFile(PATH)) {
