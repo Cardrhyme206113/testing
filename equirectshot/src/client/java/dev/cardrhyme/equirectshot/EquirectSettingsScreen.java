@@ -17,19 +17,30 @@ public final class EquirectSettingsScreen extends Screen {
     protected void init() {
         int width = Math.min(310, this.width - 40);
         int x = (this.width - width) / 2;
-        int y = this.height / 2 - 60;
+        int y = this.height / 2 - 74;
 
         this.addRenderableWidget(new ResolutionSlider(x, y, width));
         this.addRenderableWidget(new DelaySlider(x, y + 26, width));
+        this.addRenderableWidget(Button.builder(parallelLabel(), button -> {
+                    EquirectShotClient.CONFIG.parallelFaces = !EquirectShotClient.CONFIG.parallelFaces;
+                    button.setMessage(parallelLabel());
+                })
+                .bounds(x, y + 52, width, 20)
+                .build());
         this.addRenderableWidget(Button.builder(selfLabel(), button -> {
                     EquirectShotClient.CONFIG.renderSelf = !EquirectShotClient.CONFIG.renderSelf;
                     button.setMessage(selfLabel());
                 })
-                .bounds(x, y + 52, width, 20)
+                .bounds(x, y + 78, width, 20)
                 .build());
         this.addRenderableWidget(Button.builder(Component.literal("Done"), button -> closeAndSave())
-                .bounds(x, y + 82, width, 20)
+                .bounds(x, y + 108, width, 20)
                 .build());
+    }
+
+    private static Component parallelLabel() {
+        return Component.literal("Parallel / same-frame faces: " +
+                (EquirectShotClient.CONFIG.parallelFaces ? "ON" : "OFF"));
     }
 
     private static Component selfLabel() {
@@ -78,7 +89,7 @@ public final class EquirectSettingsScreen extends Screen {
         @Override
         protected void updateMessage() {
             setMessage(Component.literal(String.format(java.util.Locale.ROOT,
-                    "Shader settle per face: %.1f s", EquirectShotClient.CONFIG.settleSeconds)));
+                    "Shader settle / pre-capture wait: %.1f s", EquirectShotClient.CONFIG.settleSeconds)));
         }
 
         @Override
