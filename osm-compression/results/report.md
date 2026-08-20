@@ -4,9 +4,9 @@ All candidates are rendered from the exact generated vector tiles over the same 
 
 | profile | PMTiles MiB | temp MBTiles MiB | Istanbul road vertices @z12 | vs ref | address points @z12 | building features @z12 |
 |---|---:|---:|---:|---:|---:|---:|
-| compact | 112.35 | 125.38 | 133131 | 57.0% | 15451 | 0 |
-| lean | 154.25 | 175.75 | 195718 | 83.8% | 15451 | 0 |
-| balanced | 263.21 | 290.94 | 163523 | 70.0% | 15451 | 0 |
+| compact | 112.33 | 125.81 | 133131 | 57.0% | 15451 | 0 |
+| lean | 154.22 | 175.75 | 195718 | 83.8% | 15451 | 0 |
+| balanced | 263.23 | 291.69 | 163523 | 70.0% | 15451 | 0 |
 
 ## Notes
 
