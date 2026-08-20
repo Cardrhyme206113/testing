@@ -76,6 +76,33 @@ docker run --rm -v "$ROOT:/data" -w /data ghcr.io/systemed/tilemaker:master \
   --store /data/osm-compression/ankara-hq/output/store \
   --threads 0
 
+# tilemaker can emit zero-area MBTiles bounds for polygon-clipped extracts.
+# Derive the real Ankara Province bounds from the exact boundary GeoJSON before PMTiles conversion.
+python3 - "$OUT/ankara-hq.mbtiles" "$OUT/ankara-boundary.geojson" <<'PY'
+import json,sqlite3,sys
+mb,gj=sys.argv[1:]
+data=json.load(open(gj,encoding='utf-8'))
+pts=[]
+def walk(x):
+    if isinstance(x,list):
+        if len(x)>=2 and isinstance(x[0],(int,float)) and isinstance(x[1],(int,float)):
+            pts.append((float(x[0]),float(x[1])))
+        else:
+            for y in x: walk(y)
+for f in data.get('features',[]): walk((f.get('geometry') or {}).get('coordinates',[]))
+if not pts: raise SystemExit('No Ankara boundary coordinates for MBTiles bounds')
+xs=[p[0] for p in pts]; ys=[p[1] for p in pts]
+minx,miny,maxx,maxy=min(xs),min(ys),max(xs),max(ys)
+bounds=f'{minx:.7f},{miny:.7f},{maxx:.7f},{maxy:.7f}'
+center=f'{(minx+maxx)/2:.7f},{(miny+maxy)/2:.7f},8'
+db=sqlite3.connect(mb)
+db.execute("DELETE FROM metadata WHERE name IN ('bounds','center')")
+db.execute("INSERT INTO metadata(name,value) VALUES('bounds',?)",(bounds,))
+db.execute("INSERT INTO metadata(name,value) VALUES('center',?)",(center,))
+db.commit(); db.close()
+print('Fixed MBTiles bounds:',bounds)
+PY
+
 docker run --rm -v "$ROOT:/data" protomaps/go-pmtiles:latest convert \
   /data/osm-compression/ankara-hq/output/ankara-hq.mbtiles \
   /data/osm-compression/ankara-hq/output/ankara-hq.pmtiles
