@@ -1,12 +1,8 @@
-name: Deploy OSM compression viewer
+name: Deploy Ankara HQ viewer
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/osm-pages-deploy.yml'
   workflow_run:
-    workflows: ['Turkey OSM compression PR lab']
+    workflows: ['Ankara HQ OSM build']
     types: [completed]
   workflow_dispatch:
 
@@ -33,40 +29,38 @@ jobs:
         with:
           ref: osm-compression-lab
 
-      - name: Choose source run
+      - name: Choose successful Ankara source run
         id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            RUN_ID="${{ github.event.workflow_run.id }}"
           else
-            echo "run_id=32358740755" >> "$GITHUB_OUTPUT"
+            RUN_ID="$(gh run list --workflow osm-ankara-hq.yml --branch osm-compression-lab --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
           fi
+          test -n "$RUN_ID"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
 
-      - name: Assemble static site
+      - name: Assemble Ankara HQ site
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN: ${{ steps.source.outputs.run_id }}
         run: |
           set -euxo pipefail
-          mkdir -p site/data tmp/compact tmp/lean tmp/balanced tmp/results
-          cp osm-compression/viewer/index.html site/index.html
+          mkdir -p site/data tmp/pm tmp/results
+          cp osm-compression/ankara-hq/viewer/index.html site/index.html
 
-          gh run download "$SOURCE_RUN" -n turkey-compact-pmtiles -D tmp/compact
-          gh run download "$SOURCE_RUN" -n turkey-lean-pmtiles -D tmp/lean
-          gh run download "$SOURCE_RUN" -n turkey-balanced-pmtiles -D tmp/balanced
-          gh run download "$SOURCE_RUN" -n osm-compression-results -D tmp/results
+          gh run download "$SOURCE_RUN" -n ankara-hq-pmtiles -D tmp/pm
+          gh run download "$SOURCE_RUN" -n ankara-hq-results -D tmp/results
 
-          cp tmp/compact/compact.pmtiles site/data/compact.pmtiles
-          cp tmp/lean/lean.pmtiles site/data/lean.pmtiles
-          cp tmp/balanced/balanced.pmtiles site/data/balanced.pmtiles
-          cp tmp/results/stats-all.json site/data/stats-all.json
-          cp tmp/results/istanbul-comparison.png site/data/istanbul-comparison.png
-          cp tmp/results/istanbul-reference.png site/data/istanbul-reference.png
-          cp tmp/results/istanbul-compact.png site/data/istanbul-compact.png
-          cp tmp/results/istanbul-lean.png site/data/istanbul-lean.png
-          cp tmp/results/istanbul-balanced.png site/data/istanbul-balanced.png
-          cp tmp/results/report.md site/data/report.md
+          cp tmp/pm/ankara-hq.pmtiles site/data/ankara-hq.pmtiles
+          cp tmp/results/summary.json site/data/summary.json
+          cp tmp/results/summary.md site/data/summary.md
+          cp tmp/results/ankara-z15.png site/data/ankara-z15.png
+          cp tmp/results/ankara-z16.png site/data/ankara-z16.png
           touch site/.nojekyll
           du -sh site site/data/*
 
@@ -81,5 +75,3 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
-
-# viewer refresh: d50afea43a8b63ce3c6fc3a883381c3ce14965df
