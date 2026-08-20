@@ -76,6 +76,10 @@ docker run --rm -v "$ROOT:/data" -w /data ghcr.io/systemed/tilemaker:master \
   --store /data/osm-compression/ankara-hq/output/store \
   --threads 0
 
+# Docker created the MBTiles as root; give it back to the runner before editing metadata.
+sudo chown "$(id -u):$(id -g)" "$OUT/ankara-hq.mbtiles"
+chmod u+rw "$OUT/ankara-hq.mbtiles"
+
 # tilemaker can emit zero-area MBTiles bounds for polygon-clipped extracts.
 # Derive the real Ankara Province bounds from the exact boundary GeoJSON before PMTiles conversion.
 python3 - "$OUT/ankara-hq.mbtiles" "$OUT/ankara-boundary.geojson" <<'PY'

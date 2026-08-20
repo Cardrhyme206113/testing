@@ -1,8 +1,8 @@
 name: Ankara HQ OSM build
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches: [osm-compression-lab]
     paths:
       - 'osm-compression/ankara-hq/**'
       - '.github/workflows/osm-ankara-hq.yml'
