@@ -6,6 +6,11 @@ on:
     paths:
       - 'osm-compression/viewer/**'
       - '.github/workflows/osm-pages.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'osm-compression/viewer/**'
+      - '.github/workflows/osm-pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -71,6 +76,7 @@ jobs:
         uses: actions/deploy-pages@v4
 
       - name: Record successful deployment
+        if: github.event_name != 'pull_request'
         run: |
           printf '%s\n' '${{ steps.deployment.outputs.page_url }}' > osm-compression/viewer-deployment.txt
           git config user.name 'github-actions[bot]'
