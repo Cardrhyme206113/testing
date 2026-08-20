@@ -9,7 +9,7 @@
     "layers": {
       "landuse": {
         "features": 1843,
-        "vertices": 55878
+        "vertices": 55875
       },
       "water": {
         "features": 54,
@@ -49,10 +49,10 @@
       }
     },
     "tiles_present": 8,
-    "mbtiles_bytes": 306905088,
-    "pmtiles_bytes": 276028124,
-    "pmtiles_mib": 263.24,
-    "mbtiles_mib": 292.69
+    "mbtiles_bytes": 306380800,
+    "pmtiles_bytes": 276066082,
+    "pmtiles_mib": 263.28,
+    "mbtiles_mib": 292.19
   },
   "reference": {
     "profile": "reference",
@@ -104,7 +104,7 @@
       }
     },
     "tiles_present": 8,
-    "mbtiles_bytes": 45023232
+    "mbtiles_bytes": 45350912
   },
   "compact": {
     "profile": "compact",
@@ -116,7 +116,7 @@
     "layers": {
       "landuse": {
         "features": 4412,
-        "vertices": 26365
+        "vertices": 26366
       },
       "water": {
         "features": 336,
@@ -156,10 +156,10 @@
       }
     },
     "tiles_present": 8,
-    "mbtiles_bytes": 131661824,
-    "pmtiles_bytes": 117800721,
-    "pmtiles_mib": 112.34,
-    "mbtiles_mib": 125.56
+    "mbtiles_bytes": 132055040,
+    "pmtiles_bytes": 117778265,
+    "pmtiles_mib": 112.32,
+    "mbtiles_mib": 125.94
   },
   "lean": {
     "profile": "lean",
@@ -171,11 +171,11 @@
     "layers": {
       "landuse": {
         "features": 9999,
-        "vertices": 62732
+        "vertices": 62766
       },
       "water": {
         "features": 336,
-        "vertices": 1844
+        "vertices": 1845
       },
       "boundary": {
         "features": 967,
@@ -211,9 +211,9 @@
       }
     },
     "tiles_present": 8,
-    "mbtiles_bytes": 184090624,
-    "pmtiles_bytes": 161681501,
-    "pmtiles_mib": 154.19,
-    "mbtiles_mib": 175.56
+    "mbtiles_bytes": 184025088,
+    "pmtiles_bytes": 161695815,
+    "pmtiles_mib": 154.21,
+    "mbtiles_mib": 175.5
   }
 }
