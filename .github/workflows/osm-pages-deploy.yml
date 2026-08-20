@@ -1,0 +1,83 @@
+name: Deploy OSM compression viewer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/osm-pages-deploy.yml'
+  workflow_run:
+    workflows: ['Turkey OSM compression PR lab']
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: osm-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out viewer branch
+        uses: actions/checkout@v4
+        with:
+          ref: osm-compression-lab
+
+      - name: Choose source run
+        id: source
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_id=32358740755" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Assemble static site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ steps.source.outputs.run_id }}
+        run: |
+          set -euxo pipefail
+          mkdir -p site/data tmp/compact tmp/lean tmp/balanced tmp/results
+          cp osm-compression/viewer/index.html site/index.html
+
+          gh run download "$SOURCE_RUN" -n turkey-compact-pmtiles -D tmp/compact
+          gh run download "$SOURCE_RUN" -n turkey-lean-pmtiles -D tmp/lean
+          gh run download "$SOURCE_RUN" -n turkey-balanced-pmtiles -D tmp/balanced
+          gh run download "$SOURCE_RUN" -n osm-compression-results -D tmp/results
+
+          cp tmp/compact/compact.pmtiles site/data/compact.pmtiles
+          cp tmp/lean/lean.pmtiles site/data/lean.pmtiles
+          cp tmp/balanced/balanced.pmtiles site/data/balanced.pmtiles
+          cp tmp/results/stats-all.json site/data/stats-all.json
+          cp tmp/results/istanbul-comparison.png site/data/istanbul-comparison.png
+          cp tmp/results/istanbul-reference.png site/data/istanbul-reference.png
+          cp tmp/results/istanbul-compact.png site/data/istanbul-compact.png
+          cp tmp/results/istanbul-lean.png site/data/istanbul-lean.png
+          cp tmp/results/istanbul-balanced.png site/data/istanbul-balanced.png
+          cp tmp/results/report.md site/data/report.md
+          touch site/.nojekyll
+          du -sh site site/data/*
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
