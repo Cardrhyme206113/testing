@@ -1,11 +1,6 @@
 name: Turkey OSM compression PR lab
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'osm-compression/**'
-      - '.github/workflows/osm-compression-pr.yml'
   workflow_dispatch:
 
 jobs:
