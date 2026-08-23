@@ -6,6 +6,11 @@ on:
     paths:
       - 'phone-motion-server/**'
       - '.github/workflows/phone-motion-server-apk.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'phone-motion-server/**'
+      - '.github/workflows/phone-motion-server-apk.yml'
   workflow_dispatch:
 
 permissions:
