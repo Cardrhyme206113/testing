@@ -36,9 +36,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         buildUi()
         requestNotificationPermissionIfNeeded()
-
-        val prefs = getSharedPreferences("motion_server", MODE_PRIVATE)
-        if (prefs.getBoolean("enabled", true)) {
+        if (getSharedPreferences("motion_server", MODE_PRIVATE).getBoolean("enabled", true)) {
             startMonitoring()
         }
     }
@@ -88,30 +86,21 @@ class MainActivity : Activity() {
         }
         root.addView(statsText)
 
-        val buttonRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        val start = Button(this).apply {
+        val buttonRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        buttonRow.addView(Button(this).apply {
             text = "Start"
             setOnClickListener { startMonitoring() }
-        }
-        val stop = Button(this).apply {
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6) })
+        buttonRow.addView(Button(this).apply {
             text = "Stop"
             setOnClickListener { stopMonitoring() }
-        }
-        buttonRow.addView(start, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginEnd = dp(6)
-        })
-        buttonRow.addView(stop, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginStart = dp(6)
-        })
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(6) })
         root.addView(buttonRow)
 
-        val unrestricted = Button(this).apply {
+        root.addView(Button(this).apply {
             text = "Allow unrestricted battery"
             setOnClickListener { requestUnrestrictedBattery() }
-        }
-        root.addView(unrestricted, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(10)
         })
 
@@ -121,7 +110,7 @@ class MainActivity : Activity() {
         root.addView(batteryModeText)
 
         root.addView(text(13f, Color.rgb(155, 155, 155)).apply {
-            this.text = "HyperOS/Xiaomi: for maximum reliability with the screen off, also enable Autostart and set Battery saver to No restrictions for this app if HyperOS still kills it."
+            this.text = "Debug endpoint: /api/debug"
             setPadding(0, dp(14), 0, 0)
         })
 
@@ -129,8 +118,7 @@ class MainActivity : Activity() {
     }
 
     private fun startMonitoring() {
-        getSharedPreferences("motion_server", MODE_PRIVATE)
-            .edit().putBoolean("enabled", true).apply()
+        getSharedPreferences("motion_server", MODE_PRIVATE).edit().putBoolean("enabled", true).apply()
         try {
             startForegroundService(Intent(this, MotionService::class.java))
         } catch (e: Exception) {
@@ -140,8 +128,7 @@ class MainActivity : Activity() {
     }
 
     private fun stopMonitoring() {
-        getSharedPreferences("motion_server", MODE_PRIVATE)
-            .edit().putBoolean("enabled", false).apply()
+        getSharedPreferences("motion_server", MODE_PRIVATE).edit().putBoolean("enabled", false).apply()
         stopService(Intent(this, MotionService::class.java))
         refreshUi()
     }
@@ -152,30 +139,29 @@ class MainActivity : Activity() {
         statusText.text = if (running) "RUNNING" else "STOPPED"
         statusText.setTextColor(if (running) Color.rgb(130, 220, 150) else Color.rgb(230, 135, 135))
 
-        urlText.text = if (ip != null) {
-            "http://$ip:${RuntimeState.PORT}/api/state"
-        } else {
-            "No LAN IPv4 address detected"
-        }
+        urlText.text = if (ip != null) "http://$ip:${RuntimeState.PORT}/api/state" else "No LAN IPv4 address detected"
 
         val battery = if (RuntimeState.batteryPercent >= 0) "${RuntimeState.batteryPercent}%" else "unknown"
         val movement = if (RuntimeState.movementId == 0L) {
             "none yet"
         } else {
             val age = ((SystemClock.elapsedRealtime() - RuntimeState.lastMovementElapsedMs).coerceAtLeast(0L) / 100) / 10.0
-            "#${RuntimeState.movementId}, ${age}s ago${if (RuntimeState.motionActive) " (active)" else ""}"
+            "#${RuntimeState.movementId}, ${age}s ago"
         }
+        val sensorAge = if (RuntimeState.lastSensorEventElapsedMs == 0L) "none" else "${SystemClock.elapsedRealtime() - RuntimeState.lastSensorEventElapsedMs} ms ago"
         val error = RuntimeState.lastError?.let { "\nError: $it" } ?: ""
-        statsText.text = "Battery: $battery${if (RuntimeState.charging) " (charging)" else ""}\n" +
+
+        statsText.text = "Battery: $battery\n" +
             "Last movement: $movement\n" +
-            "API poll target: ${RuntimeState.RECOMMENDED_POLL_MS} ms\n" +
-            "Client dead timeout: ${RuntimeState.DEAD_AFTER_MS / 1000}s$error"
+            "Accel callbacks: ${RuntimeState.accelEvents}\n" +
+            "Gyro callbacks: ${RuntimeState.gyroEvents}\n" +
+            "Last sensor callback: $sensorAge$error"
 
         val pm = getSystemService(PowerManager::class.java)
         batteryModeText.text = if (pm.isIgnoringBatteryOptimizations(packageName)) {
             "Battery optimization: unrestricted/exempt"
         } else {
-            "Battery optimization: Android may suspend or kill background work"
+            "Battery optimization: Android may suspend background work"
         }
     }
 
@@ -189,12 +175,7 @@ class MainActivity : Activity() {
         val pm = getSystemService(PowerManager::class.java)
         if (pm.isIgnoringBatteryOptimizations(packageName)) return
         try {
-            startActivity(
-                Intent(
-                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                    Uri.parse("package:$packageName")
-                )
-            )
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
         } catch (_: Exception) {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         }
