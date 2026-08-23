@@ -15,11 +15,13 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.BatteryManager
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.Process
 import android.os.SystemClock
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.sqrt
 
 class MotionService : Service(), SensorEventListener {
@@ -28,37 +30,32 @@ class MotionService : Service(), SensorEventListener {
         private const val NOTIFICATION_ID = 42061
         private const val SAMPLE_PERIOD_US = 20_000 // ~50 Hz
 
-        // Deliberately use the raw accelerometer and remove gravity ourselves.
-        // Some OEM TYPE_LINEAR_ACCELERATION implementations keep a small DC/noise
-        // offset that can leave a movement detector permanently "active".
-        private const val FAST_ACCEL_THRESHOLD = 0.16f
-        private const val FAST_GYRO_THRESHOLD = 0.15f
-        private const val SUBTLE_ACCEL_THRESHOLD = 0.075f
-        private const val SUBTLE_GYRO_THRESHOLD = 0.08f
-        private const val STRONG_ACCEL_THRESHOLD = 0.55f
-        private const val FAST_EVIDENCE_MS = 60f
-        private const val SUBTLE_EVIDENCE_MS = 180f
-
-        // Rearm only after a short genuinely quiet period.
-        private const val QUIET_ACCEL_THRESHOLD = 0.055f
-        private const val QUIET_GYRO_THRESHOLD = 0.055f
-        private const val REARM_QUIET_MS = 260L
+        // Event detector, not a latched "moving/still" state.
+        // A movement can therefore be reported without ever waiting for a re-arm transition.
+        private const val MIN_EVENT_INTERVAL_MS = 250L
+        private const val ACCEL_MIN_THRESHOLD = 0.028f       // m/s^2 sample-to-sample change
+        private const val GYRO_MIN_THRESHOLD = 0.025f        // rad/s (~1.4 deg/s)
+        private const val ACCEL_IMMEDIATE = 0.060f
+        private const val GYRO_IMMEDIATE = 0.050f
+        private const val EVIDENCE_TRIGGER = 0.070f
     }
 
     private lateinit var sensorManager: SensorManager
     private var accelSensor: Sensor? = null
     private var gyroSensor: Sensor? = null
+    private var sensorThread: HandlerThread? = null
+    private var sensorHandler: Handler? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var httpServer: LocalHttpServer? = null
 
-    private val gravity = FloatArray(3)
-    private var gravityInitialized = false
+    private val previousAccel = FloatArray(3)
+    private var havePreviousAccel = false
     private var latestGyroMagnitude = 0f
+    private var accelNoise = 0.004f
+    private var gyroNoise = 0.003f
+    private var evidence = 0f
     private var lastAccelTimestampNs = 0L
-    private var fastEvidenceMs = 0f
-    private var subtleEvidenceMs = 0f
-    private var armed = true
-    private var quietSinceElapsedMs = 0L
+    private var lastMovementElapsedMs = 0L
 
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -66,20 +63,13 @@ class MotionService : Service(), SensorEventListener {
             val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
             val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
             RuntimeState.batteryPercent = if (level >= 0 && scale > 0) ((level * 100f) / scale).toInt() else -1
-            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
-            RuntimeState.charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
-            val tempTenths = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
-            RuntimeState.batteryTempC = if (tempTenths == Int.MIN_VALUE) Float.NaN else tempTenths / 10f
             updateNotification()
         }
     }
 
     override fun onCreate() {
         super.onCreate()
-        RuntimeState.running = true
-        RuntimeState.startedElapsedMs = SystemClock.elapsedRealtime()
-        RuntimeState.lastError = null
-        RuntimeState.motionActive = false
+        RuntimeState.resetForServiceStart()
 
         createNotificationChannel()
         startForeground(
@@ -113,11 +103,13 @@ class MotionService : Service(), SensorEventListener {
 
     override fun onDestroy() {
         RuntimeState.running = false
-        RuntimeState.motionActive = false
         try { sensorManager.unregisterListener(this) } catch (_: Exception) {}
+        try { sensorThread?.quitSafely() } catch (_: Exception) {}
         try { unregisterReceiver(batteryReceiver) } catch (_: Exception) {}
         try { httpServer?.stop() } catch (_: Exception) {}
         try { wakeLock?.let { if (it.isHeld) it.release() } } catch (_: Exception) {}
+        sensorHandler = null
+        sensorThread = null
         httpServer = null
         wakeLock = null
         super.onDestroy()
@@ -130,108 +122,115 @@ class MotionService : Service(), SensorEventListener {
         accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
 
-        // maxReportLatencyUs = 0 asks Android not to batch events, minimizing latency.
-        accelSensor?.let { sensorManager.registerListener(this, it, SAMPLE_PERIOD_US, 0) }
-        gyroSensor?.let { sensorManager.registerListener(this, it, SAMPLE_PERIOD_US, 0) }
+        sensorThread = HandlerThread("motion-sensors", Process.THREAD_PRIORITY_MORE_FAVORABLE).apply { start() }
+        sensorHandler = Handler(sensorThread!!.looper)
 
-        if (accelSensor == null) {
-            RuntimeState.lastError = "No accelerometer available"
-        }
+        val accelOk = accelSensor?.let {
+            sensorManager.registerListener(this, it, SAMPLE_PERIOD_US, 0, sensorHandler)
+        } ?: false
+        val gyroOk = gyroSensor?.let {
+            sensorManager.registerListener(this, it, SAMPLE_PERIOD_US, 0, sensorHandler)
+        } ?: false
+
+        RuntimeState.accelRegistered = accelOk
+        RuntimeState.gyroRegistered = gyroOk
+        RuntimeState.accelSensorName = accelSensor?.name ?: "none"
+        RuntimeState.gyroSensorName = gyroSensor?.name ?: "none"
+
+        if (!accelOk) RuntimeState.lastError = "Accelerometer listener registration failed"
     }
 
     override fun onSensorChanged(event: SensorEvent) {
+        RuntimeState.lastSensorEventElapsedMs = SystemClock.elapsedRealtime()
+
         when (event.sensor.type) {
-            Sensor.TYPE_GYROSCOPE -> {
-                latestGyroMagnitude = magnitude(event.values[0], event.values[1], event.values[2])
-            }
-
-            Sensor.TYPE_ACCELEROMETER -> {
-                if (!gravityInitialized) {
-                    gravity[0] = event.values[0]
-                    gravity[1] = event.values[1]
-                    gravity[2] = event.values[2]
-                    gravityInitialized = true
-                    lastAccelTimestampNs = event.timestamp
-                    return
-                }
-
-                // Low-pass gravity estimate. Translational acceleration and orientation
-                // changes remain in the high-pass component and count as phone movement.
-                val alpha = 0.94f
-                val x = event.values[0] - gravity[0]
-                val y = event.values[1] - gravity[1]
-                val z = event.values[2] - gravity[2]
-
-                gravity[0] = alpha * gravity[0] + (1f - alpha) * event.values[0]
-                gravity[1] = alpha * gravity[1] + (1f - alpha) * event.values[1]
-                gravity[2] = alpha * gravity[2] + (1f - alpha) * event.values[2]
-
-                processAcceleration(magnitude(x, y, z), event.timestamp)
-            }
+            Sensor.TYPE_ACCELEROMETER -> processAccelerometer(event)
+            Sensor.TYPE_GYROSCOPE -> processGyroscope(event)
         }
+    }
+
+    private fun processAccelerometer(event: SensorEvent) {
+        RuntimeState.accelEvents += 1
+
+        val x = event.values[0]
+        val y = event.values[1]
+        val z = event.values[2]
+
+        if (!havePreviousAccel) {
+            previousAccel[0] = x
+            previousAccel[1] = y
+            previousAccel[2] = z
+            havePreviousAccel = true
+            lastAccelTimestampNs = event.timestamp
+            return
+        }
+
+        val dx = x - previousAccel[0]
+        val dy = y - previousAccel[1]
+        val dz = z - previousAccel[2]
+        previousAccel[0] = x
+        previousAccel[1] = y
+        previousAccel[2] = z
+
+        val delta = magnitude(dx, dy, dz)
+        val dtMs = ((event.timestamp - lastAccelTimestampNs) / 1_000_000f).coerceIn(5f, 80f)
+        lastAccelTimestampNs = event.timestamp
+
+        // Learn only the low-level floor. Actual movement should not inflate the threshold.
+        if (delta < 0.050f) accelNoise = accelNoise * 0.985f + delta * 0.015f
+        val accelThreshold = max(ACCEL_MIN_THRESHOLD, accelNoise * 5.0f)
+        val gyroThreshold = max(GYRO_MIN_THRESHOLD, gyroNoise * 6.0f)
+
+        // Rolling evidence catches a gentle start/stop spread across several samples.
+        val decay = if (dtMs <= 25f) 0.82f else 0.70f
+        evidence *= decay
+        if (delta > accelThreshold) evidence += (delta - accelThreshold)
+        if (latestGyroMagnitude > gyroThreshold) evidence += (latestGyroMagnitude - gyroThreshold) * 0.35f
+
+        RuntimeState.accelDelta = delta
+        RuntimeState.gyroMagnitude = latestGyroMagnitude
+        RuntimeState.accelThreshold = accelThreshold
+        RuntimeState.gyroThreshold = gyroThreshold
+        RuntimeState.motionEvidence = evidence
+
+        val trigger = delta >= max(ACCEL_IMMEDIATE, accelThreshold * 1.8f) ||
+            latestGyroMagnitude >= max(GYRO_IMMEDIATE, gyroThreshold * 1.6f) ||
+            evidence >= EVIDENCE_TRIGGER
+
+        if (trigger) recordEvent(max(delta, latestGyroMagnitude))
+    }
+
+    private fun processGyroscope(event: SensorEvent) {
+        RuntimeState.gyroEvents += 1
+        val gyro = magnitude(event.values[0], event.values[1], event.values[2])
+        latestGyroMagnitude = gyro
+
+        if (gyro < 0.040f) gyroNoise = gyroNoise * 0.985f + gyro * 0.015f
+        val gyroThreshold = max(GYRO_MIN_THRESHOLD, gyroNoise * 6.0f)
+        RuntimeState.gyroMagnitude = gyro
+        RuntimeState.gyroThreshold = gyroThreshold
+
+        if (gyro >= max(GYRO_IMMEDIATE, gyroThreshold * 1.6f)) {
+            recordEvent(gyro)
+        }
+    }
+
+    private fun recordEvent(strength: Float) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastMovementElapsedMs < MIN_EVENT_INTERVAL_MS) return
+        lastMovementElapsedMs = now
+        RuntimeState.recordMovement(strength)
+        evidence = 0f
+        RuntimeState.motionEvidence = 0f
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
 
-    private fun processAcceleration(accelMagnitude: Float, timestampNs: Long) {
-        val dtMs = if (lastAccelTimestampNs == 0L) {
-            20f
-        } else {
-            ((timestampNs - lastAccelTimestampNs) / 1_000_000f).coerceIn(5f, 60f)
-        }
-        lastAccelTimestampNs = timestampNs
-
-        val gyro = latestGyroMagnitude
-        val fast = accelMagnitude >= FAST_ACCEL_THRESHOLD || gyro >= FAST_GYRO_THRESHOLD
-        val subtle = accelMagnitude >= SUBTLE_ACCEL_THRESHOLD || gyro >= SUBTLE_GYRO_THRESHOLD
-        val quiet = accelMagnitude < QUIET_ACCEL_THRESHOLD && gyro < QUIET_GYRO_THRESHOLD
-        val now = SystemClock.elapsedRealtime()
-
-        fastEvidenceMs = if (fast) min(300f, fastEvidenceMs + dtMs) else max(0f, fastEvidenceMs - dtMs * 2.2f)
-        subtleEvidenceMs = if (subtle) min(500f, subtleEvidenceMs + dtMs) else max(0f, subtleEvidenceMs - dtMs * 1.6f)
-
-        val trigger = accelMagnitude >= STRONG_ACCEL_THRESHOLD ||
-            fastEvidenceMs >= FAST_EVIDENCE_MS ||
-            subtleEvidenceMs >= SUBTLE_EVIDENCE_MS
-
-        if (armed && trigger) {
-            armed = false
-            quietSinceElapsedMs = 0L
-            RuntimeState.motionActive = true
-            RuntimeState.recordMovement(max(accelMagnitude, gyro * 0.5f))
-
-            // Do not let accumulated evidence instantly retrigger after rearming.
-            fastEvidenceMs = 0f
-            subtleEvidenceMs = 0f
-            return
-        }
-
-        if (!armed) {
-            if (quiet) {
-                if (quietSinceElapsedMs == 0L) quietSinceElapsedMs = now
-                if (now - quietSinceElapsedMs >= REARM_QUIET_MS) {
-                    armed = true
-                    RuntimeState.motionActive = false
-                    quietSinceElapsedMs = 0L
-                    fastEvidenceMs = 0f
-                    subtleEvidenceMs = 0f
-                }
-            } else {
-                quietSinceElapsedMs = 0L
-            }
-        }
-    }
-
     private fun magnitude(x: Float, y: Float, z: Float): Float = sqrt(x * x + y * y + z * z)
 
     private fun createNotificationChannel() {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                "Motion server",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
+        getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "Motion server", NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Keeps the LAN motion API and motion sensors active"
                 setShowBadge(false)
             }
@@ -240,9 +239,7 @@ class MotionService : Service(), SensorEventListener {
 
     private fun buildNotification(): Notification {
         val openApp = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
+            this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val ip = NetworkUtil.lanIpv4(this) ?: "no LAN IP"
@@ -261,9 +258,7 @@ class MotionService : Service(), SensorEventListener {
     private fun updateNotification() {
         if (!RuntimeState.running) return
         try {
-            getSystemService(NotificationManager::class.java)
-                .notify(NOTIFICATION_ID, buildNotification())
-        } catch (_: Exception) {
-        }
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+        } catch (_: Exception) {}
     }
 }
