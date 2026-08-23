@@ -28,20 +28,26 @@ class MotionService : Service(), SensorEventListener {
         private const val NOTIFICATION_ID = 42061
         private const val SAMPLE_PERIOD_US = 20_000 // ~50 Hz
 
-        private const val FAST_ACCEL_THRESHOLD = 0.13f      // m/s^2 linear acceleration
-        private const val FAST_GYRO_THRESHOLD = 0.12f       // rad/s
-        private const val SUBTLE_ACCEL_THRESHOLD = 0.055f   // catches slow hand motion
-        private const val SUBTLE_GYRO_THRESHOLD = 0.05f
-        private const val STRONG_ACCEL_THRESHOLD = 0.45f
+        // Deliberately use the raw accelerometer and remove gravity ourselves.
+        // Some OEM TYPE_LINEAR_ACCELERATION implementations keep a small DC/noise
+        // offset that can leave a movement detector permanently "active".
+        private const val FAST_ACCEL_THRESHOLD = 0.16f
+        private const val FAST_GYRO_THRESHOLD = 0.15f
+        private const val SUBTLE_ACCEL_THRESHOLD = 0.075f
+        private const val SUBTLE_GYRO_THRESHOLD = 0.08f
+        private const val STRONG_ACCEL_THRESHOLD = 0.55f
         private const val FAST_EVIDENCE_MS = 60f
-        private const val SUBTLE_EVIDENCE_MS = 220f
-        private const val MOTION_RELEASE_MS = 500L
+        private const val SUBTLE_EVIDENCE_MS = 180f
+
+        // Rearm only after a short genuinely quiet period.
+        private const val QUIET_ACCEL_THRESHOLD = 0.055f
+        private const val QUIET_GYRO_THRESHOLD = 0.055f
+        private const val REARM_QUIET_MS = 260L
     }
 
     private lateinit var sensorManager: SensorManager
     private var accelSensor: Sensor? = null
     private var gyroSensor: Sensor? = null
-    private var usingLinearAcceleration = true
     private var wakeLock: PowerManager.WakeLock? = null
     private var httpServer: LocalHttpServer? = null
 
@@ -51,8 +57,8 @@ class MotionService : Service(), SensorEventListener {
     private var lastAccelTimestampNs = 0L
     private var fastEvidenceMs = 0f
     private var subtleEvidenceMs = 0f
-    private var inMotion = false
-    private var lastSubtleActivityElapsedMs = 0L
+    private var armed = true
+    private var quietSinceElapsedMs = 0L
 
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -73,6 +79,7 @@ class MotionService : Service(), SensorEventListener {
         RuntimeState.running = true
         RuntimeState.startedElapsedMs = SystemClock.elapsedRealtime()
         RuntimeState.lastError = null
+        RuntimeState.motionActive = false
 
         createNotificationChannel()
         startForeground(
@@ -120,19 +127,15 @@ class MotionService : Service(), SensorEventListener {
 
     private fun startSensors() {
         sensorManager = getSystemService(SensorManager::class.java)
-
-        accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
-        if (accelSensor == null) {
-            usingLinearAcceleration = false
-            accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        }
+        accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
 
-        accelSensor?.let { sensorManager.registerListener(this, it, SAMPLE_PERIOD_US) }
-        gyroSensor?.let { sensorManager.registerListener(this, it, SAMPLE_PERIOD_US) }
+        // maxReportLatencyUs = 0 asks Android not to batch events, minimizing latency.
+        accelSensor?.let { sensorManager.registerListener(this, it, SAMPLE_PERIOD_US, 0) }
+        gyroSensor?.let { sensorManager.registerListener(this, it, SAMPLE_PERIOD_US, 0) }
 
         if (accelSensor == null) {
-            RuntimeState.lastError = "No accelerometer/linear-acceleration sensor available"
+            RuntimeState.lastError = "No accelerometer available"
         }
     }
 
@@ -142,29 +145,27 @@ class MotionService : Service(), SensorEventListener {
                 latestGyroMagnitude = magnitude(event.values[0], event.values[1], event.values[2])
             }
 
-            Sensor.TYPE_LINEAR_ACCELERATION -> {
-                processAcceleration(
-                    magnitude(event.values[0], event.values[1], event.values[2]),
-                    event.timestamp
-                )
-            }
-
             Sensor.TYPE_ACCELEROMETER -> {
-                if (usingLinearAcceleration) return
                 if (!gravityInitialized) {
                     gravity[0] = event.values[0]
                     gravity[1] = event.values[1]
                     gravity[2] = event.values[2]
                     gravityInitialized = true
+                    lastAccelTimestampNs = event.timestamp
                     return
                 }
 
-                // Low-pass gravity estimate; subtract it to approximate linear acceleration.
-                val alpha = 0.92f
-                for (i in 0..2) gravity[i] = alpha * gravity[i] + (1f - alpha) * event.values[i]
+                // Low-pass gravity estimate. Translational acceleration and orientation
+                // changes remain in the high-pass component and count as phone movement.
+                val alpha = 0.94f
                 val x = event.values[0] - gravity[0]
                 val y = event.values[1] - gravity[1]
                 val z = event.values[2] - gravity[2]
+
+                gravity[0] = alpha * gravity[0] + (1f - alpha) * event.values[0]
+                gravity[1] = alpha * gravity[1] + (1f - alpha) * event.values[1]
+                gravity[2] = alpha * gravity[2] + (1f - alpha) * event.values[2]
+
                 processAcceleration(magnitude(x, y, z), event.timestamp)
             }
         }
@@ -176,34 +177,48 @@ class MotionService : Service(), SensorEventListener {
         val dtMs = if (lastAccelTimestampNs == 0L) {
             20f
         } else {
-            ((timestampNs - lastAccelTimestampNs) / 1_000_000f).coerceIn(5f, 50f)
+            ((timestampNs - lastAccelTimestampNs) / 1_000_000f).coerceIn(5f, 60f)
         }
         lastAccelTimestampNs = timestampNs
 
-        val fast = accelMagnitude >= FAST_ACCEL_THRESHOLD || latestGyroMagnitude >= FAST_GYRO_THRESHOLD
-        val subtle = accelMagnitude >= SUBTLE_ACCEL_THRESHOLD || latestGyroMagnitude >= SUBTLE_GYRO_THRESHOLD
+        val gyro = latestGyroMagnitude
+        val fast = accelMagnitude >= FAST_ACCEL_THRESHOLD || gyro >= FAST_GYRO_THRESHOLD
+        val subtle = accelMagnitude >= SUBTLE_ACCEL_THRESHOLD || gyro >= SUBTLE_GYRO_THRESHOLD
+        val quiet = accelMagnitude < QUIET_ACCEL_THRESHOLD && gyro < QUIET_GYRO_THRESHOLD
         val now = SystemClock.elapsedRealtime()
 
-        fastEvidenceMs = if (fast) min(300f, fastEvidenceMs + dtMs) else max(0f, fastEvidenceMs - dtMs * 1.8f)
-        subtleEvidenceMs = if (subtle) min(500f, subtleEvidenceMs + dtMs) else max(0f, subtleEvidenceMs - dtMs * 1.3f)
-
-        if (subtle) lastSubtleActivityElapsedMs = now
+        fastEvidenceMs = if (fast) min(300f, fastEvidenceMs + dtMs) else max(0f, fastEvidenceMs - dtMs * 2.2f)
+        subtleEvidenceMs = if (subtle) min(500f, subtleEvidenceMs + dtMs) else max(0f, subtleEvidenceMs - dtMs * 1.6f)
 
         val trigger = accelMagnitude >= STRONG_ACCEL_THRESHOLD ||
             fastEvidenceMs >= FAST_EVIDENCE_MS ||
             subtleEvidenceMs >= SUBTLE_EVIDENCE_MS
 
-        if (!inMotion && trigger) {
-            inMotion = true
+        if (armed && trigger) {
+            armed = false
+            quietSinceElapsedMs = 0L
             RuntimeState.motionActive = true
-            RuntimeState.recordMovement(max(accelMagnitude, latestGyroMagnitude * 0.5f))
-        }
+            RuntimeState.recordMovement(max(accelMagnitude, gyro * 0.5f))
 
-        if (inMotion && now - lastSubtleActivityElapsedMs >= MOTION_RELEASE_MS) {
-            inMotion = false
-            RuntimeState.motionActive = false
+            // Do not let accumulated evidence instantly retrigger after rearming.
             fastEvidenceMs = 0f
             subtleEvidenceMs = 0f
+            return
+        }
+
+        if (!armed) {
+            if (quiet) {
+                if (quietSinceElapsedMs == 0L) quietSinceElapsedMs = now
+                if (now - quietSinceElapsedMs >= REARM_QUIET_MS) {
+                    armed = true
+                    RuntimeState.motionActive = false
+                    quietSinceElapsedMs = 0L
+                    fastEvidenceMs = 0f
+                    subtleEvidenceMs = 0f
+                }
+            } else {
+                quietSinceElapsedMs = 0L
+            }
         }
     }
 
