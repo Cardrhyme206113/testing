@@ -69,7 +69,6 @@ class LocalHttpServer(private val context: Context) {
                     respond(client, 204, "No Content", "")
                     return
                 }
-
                 if (method != "GET") {
                     respond(client, 405, "Method Not Allowed", "{\"error\":\"GET only\"}")
                     return
@@ -78,11 +77,13 @@ class LocalHttpServer(private val context: Context) {
                 when (path) {
                     "/", "/api/state", "/api/v1/state" ->
                         respond(client, 200, "OK", RuntimeState.stateJson(context))
+                    "/api/debug" ->
+                        respond(client, 200, "OK", RuntimeState.debugJson())
                     else ->
                         respond(client, 404, "Not Found", "{\"error\":\"not found\"}")
                 }
             } catch (_: Exception) {
-                // Short polling means clients disconnect frequently; per-request failures are non-fatal.
+                // Polling clients disconnect frequently; per-request failures are non-fatal.
             }
         }
     }
