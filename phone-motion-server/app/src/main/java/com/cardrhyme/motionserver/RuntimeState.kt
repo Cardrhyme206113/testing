@@ -5,15 +5,11 @@ import android.net.ConnectivityManager
 import android.os.SystemClock
 import java.net.Inet4Address
 import java.net.NetworkInterface
-import java.util.Locale
-import java.util.UUID
 
 object RuntimeState {
     const val PORT = 8765
     const val RECOMMENDED_POLL_MS = 200
     const val DEAD_AFTER_MS = 5_000
-
-    val bootId: String = UUID.randomUUID().toString()
 
     @Volatile var running = false
     @Volatile var startedElapsedMs = 0L
@@ -35,52 +31,8 @@ object RuntimeState {
         movementStrength = strength
     }
 
-    fun stateJson(context: Context): String {
-        val nowElapsed = SystemClock.elapsedRealtime()
-        val age = if (lastMovementElapsedMs == 0L) -1L else (nowElapsed - lastMovementElapsedMs).coerceAtLeast(0L)
-        val uptime = if (startedElapsedMs == 0L) 0L else (nowElapsed - startedElapsedMs).coerceAtLeast(0L)
-        val ip = NetworkUtil.lanIpv4(context) ?: ""
-        val temp = if (batteryTempC.isNaN()) "null" else String.format(Locale.US, "%.1f", batteryTempC)
-        val strength = String.format(Locale.US, "%.3f", movementStrength)
-        val error = lastError?.let { "\"${jsonEscape(it)}\"" } ?: "null"
-
-        return """{
-  "api_version": 1,
-  "alive": true,
-  "server_time_ms": ${System.currentTimeMillis()},
-  "service_uptime_ms": $uptime,
-  "boot_id": "$bootId",
-  "lan_ip": "$ip",
-  "port": $PORT,
-  "recommended_poll_ms": $RECOMMENDED_POLL_MS,
-  "dead_after_ms": $DEAD_AFTER_MS,
-  "battery": {
-    "percent": $batteryPercent,
-    "charging": $charging,
-    "temperature_c": $temp
-  },
-  "movement": {
-    "id": $movementId,
-    "active": $motionActive,
-    "detected_at_ms": $lastMovementWallMs,
-    "age_ms": $age,
-    "strength": $strength
-  },
-  "error": $error
-}"""
-    }
-
-    private fun jsonEscape(value: String): String = buildString(value.length + 8) {
-        for (c in value) {
-            when (c) {
-                '\\' -> append("\\\\")
-                '"' -> append("\\\"")
-                '\n' -> append("\\n")
-                '\r' -> append("\\r")
-                '\t' -> append("\\t")
-                else -> append(c)
-            }
-        }
+    fun stateJson(@Suppress("UNUSED_PARAMETER") context: Context): String {
+        return "{\"alive\":true,\"battery\":$batteryPercent,\"movement_id\":$movementId}"
     }
 }
 
