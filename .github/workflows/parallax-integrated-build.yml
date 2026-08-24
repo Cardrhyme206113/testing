@@ -1,0 +1,47 @@
+name: Build Integrated Parallax Capture
+
+on:
+  push:
+    branches: [parallax-integrated-stock-v052-v57]
+    paths:
+      - 'parallax-integrated-stock/**'
+      - '.github/workflows/parallax-integrated-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Reconstruct integration source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat parallax-integrated-stock/project.tgz.b64.part* | base64 -d > /tmp/parallax-project.tgz
+          mkdir -p /tmp/parallax-src
+          tar -xzf /tmp/parallax-project.tgz -C /tmp/parallax-src
+      - name: Build Fabric mod
+        working-directory: /tmp/parallax-src/parallax-capture
+        run: gradle build --stacktrace
+      - name: Inspect bundled resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR=$(find /tmp/parallax-src/parallax-capture/build/libs -maxdepth 1 -name 'parallax-capture-*.jar' ! -name '*-sources.jar' | head -1)
+          test -n "$JAR"
+          unzip -l "$JAR" | grep -F 'assets/parallaxcapture/backend/parallax-backend-v57-native-integrated.zip'
+          unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Iris-LinearDepth-Exporter-DH-Normal-Blocks.zip'
+          unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Parallax-Surface-ViewZ24-v2.zip'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parallax-capture-integrated-v57-fabric-1.20.1
+          path: |
+            /tmp/parallax-src/parallax-capture/build/libs/parallax-capture-*.jar
+            !/tmp/parallax-src/parallax-capture/build/libs/*-sources.jar
