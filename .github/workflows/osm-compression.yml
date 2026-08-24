@@ -1,0 +1,257 @@
+name: Turkey OSM compression lab
+
+on:
+  push:
+    branches: [osm-compression-lab]
+    paths:
+      - 'osm-compression/**'
+      - '.github/workflows/osm-compression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: osm-compression-lab
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install osmium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osmium-tool
+
+      - name: Download latest Turkey OSM extract
+        run: |
+          curl -fL --retry 6 --retry-delay 5 \
+            -o turkey.osm.pbf \
+            https://download.geofabrik.de/europe/turkey-latest.osm.pbf
+          ls -lh turkey.osm.pbf
+          osmium fileinfo -e turkey.osm.pbf | tee source-info.txt
+
+      - name: Extract dense Istanbul test region
+        run: |
+          # Broad enough to include both sides of the Bosphorus and dense central districts.
+          osmium extract --strategy=smart \
+            -b 28.75,40.80,29.35,41.25 \
+            turkey.osm.pbf -o istanbul.osm.pbf
+          ls -lh istanbul.osm.pbf
+          osmium fileinfo -e istanbul.osm.pbf | tee istanbul-info.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-pbf
+          path: |
+            turkey.osm.pbf
+            istanbul.osm.pbf
+            source-info.txt
+            istanbul-info.txt
+          compression-level: 0
+          retention-days: 1
+
+  candidate:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [compact, lean, balanced]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-pbf
+          path: .
+
+      - name: Generate profile files
+        shell: bash
+        run: |
+          PROFILE='${{ matrix.profile }}'
+          python3 osm-compression/make_config.py "$PROFILE" > config.json
+          if [ "$PROFILE" = balanced ]; then BMODE=named; else BMODE=none; fi
+          sed -e "s/__PROFILE__/$PROFILE/g" \
+              -e "s/__BUILDING_MODE__/$BMODE/g" \
+              osm-compression/process-template.lua > process.lua
+          python3 -m json.tool config.json >/dev/null
+          mkdir -p store
+
+      - name: Build whole-Turkey MBTiles
+        run: |
+          docker pull ghcr.io/systemed/tilemaker:master
+          docker run --rm \
+            -v "$PWD:/data" -w /data \
+            ghcr.io/systemed/tilemaker:master \
+            --input /data/turkey.osm.pbf \
+            --output /data/${{ matrix.profile }}.mbtiles \
+            --config /data/config.json \
+            --process /data/process.lua \
+            --store /data/store \
+            --threads 0
+          ls -lh ${{ matrix.profile }}.mbtiles
+
+      - name: Render exact Istanbul z12 tiles and collect geometry stats
+        run: |
+          python3 -m pip install --disable-pip-version-check pillow mapbox-vector-tile
+          python3 osm-compression/render_preview.py \
+            ${{ matrix.profile }}.mbtiles \
+            preview-${{ matrix.profile }}.png \
+            stats-${{ matrix.profile }}.json \
+            --profile ${{ matrix.profile }} --zoom 12
+
+      - name: Convert MBTiles to PMTiles
+        run: |
+          docker pull protomaps/go-pmtiles:latest
+          docker run --rm -v "$PWD:/data" protomaps/go-pmtiles:latest \
+            convert /data/${{ matrix.profile }}.mbtiles /data/${{ matrix.profile }}.pmtiles
+          python3 - <<'PY'
+          import json, os
+          p='${{ matrix.profile }}'
+          fn=f'stats-{p}.json'
+          s=json.load(open(fn))
+          s['pmtiles_bytes']=os.path.getsize(f'{p}.pmtiles')
+          s['pmtiles_mib']=round(s['pmtiles_bytes']/1048576,2)
+          s['mbtiles_mib']=round(s['mbtiles_bytes']/1048576,2)
+          json.dump(s,open(fn,'w'),indent=2)
+          PY
+          ls -lh ${{ matrix.profile }}.pmtiles
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meta-${{ matrix.profile }}
+          path: |
+            preview-${{ matrix.profile }}.png
+            stats-${{ matrix.profile }}.json
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: map-${{ matrix.profile }}
+          path: ${{ matrix.profile }}.pmtiles
+          compression-level: 0
+          retention-days: 7
+
+  reference:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-pbf
+          path: .
+
+      - name: Generate high-detail Istanbul reference
+        run: |
+          python3 osm-compression/make_config.py reference > config.json
+          sed -e 's/__PROFILE__/reference/g' \
+              -e 's/__BUILDING_MODE__/all/g' \
+              osm-compression/process-template.lua > process.lua
+          mkdir -p store
+          docker pull ghcr.io/systemed/tilemaker:master
+          docker run --rm \
+            -v "$PWD:/data" -w /data \
+            ghcr.io/systemed/tilemaker:master \
+            --input /data/istanbul.osm.pbf \
+            --output /data/reference.mbtiles \
+            --config /data/config.json \
+            --process /data/process.lua \
+            --store /data/store \
+            --threads 0
+
+      - name: Render reference at same z12 viewport
+        run: |
+          python3 -m pip install --disable-pip-version-check pillow mapbox-vector-tile
+          python3 osm-compression/render_preview.py \
+            reference.mbtiles preview-reference.png stats-reference.json \
+            --profile reference --zoom 12
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meta-reference
+          path: |
+            preview-reference.png
+            stats-reference.json
+          retention-days: 7
+
+  summarize:
+    needs: [candidate, reference]
+    if: always() && needs.candidate.result == 'success' && needs.reference.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: osm-compression-lab
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: meta-*
+          path: collected
+          merge-multiple: true
+
+      - name: Build comparison report and contact sheet
+        run: |
+          python3 -m pip install --disable-pip-version-check pillow
+          python3 - <<'PY'
+          import glob, json, os
+          from PIL import Image, ImageDraw
+          os.makedirs('osm-compression/results', exist_ok=True)
+          stats={}
+          for fn in glob.glob('collected/stats-*.json'):
+              s=json.load(open(fn)); stats[s['profile']]=s
+          ref=stats.get('reference',{})
+          def lv(s, layer, key): return s.get('layers',{}).get(layer,{}).get(key,0)
+          rows=[]
+          for p in ['compact','lean','balanced']:
+              s=stats[p]
+              road_v=lv(s,'road','vertices'); ref_road=lv(ref,'road','vertices') or 1
+              road_pct=100*road_v/ref_road
+              addr=lv(s,'address','features')
+              rows.append((p,s.get('pmtiles_mib',0),s.get('mbtiles_mib',0),road_v,road_pct,addr,lv(s,'building','features')))
+          lines=[
+              '# Turkey OSM compression results','',
+              'All candidates are rendered from the exact generated vector tiles over the same 3×3 z12 viewport in central Istanbul. The reference is a z14-capable Istanbul-only build with all building polygons and very light simplification.','',
+              '| profile | PMTiles MiB | temp MBTiles MiB | Istanbul road vertices @z12 | vs ref | address points @z12 | building features @z12 |',
+              '|---|---:|---:|---:|---:|---:|---:|'
+          ]
+          for r in rows:
+              lines.append(f'| {r[0]} | {r[1]:.2f} | {r[2]:.2f} | {r[3]} | {r[4]:.1f}% | {r[5]} | {r[6]} |')
+          lines += ['', '## Notes', '',
+                    '- `compact`: strongest geometry simplification; drops foot/path network and building polygons.',
+                    '- `lean`: gentler z12 geometry, paths retained, building polygons dropped.',
+                    '- `balanced`: z13 detail with named/addressed building polygons; mildest simplification.',
+                    '- Address-bearing nodes/buildings are preserved as point features even when their building polygon is omitted.',
+                    '- PMTiles uses gzip-compressed MVT tiles; OSM IDs/edit metadata are intentionally omitted.']
+          open('osm-compression/results/report.md','w').write('\n'.join(lines)+'\n')
+          json.dump(stats,open('osm-compression/results/stats.json','w'),indent=2)
+
+          names=['reference','compact','lean','balanced']
+          ims=[]
+          for n in names:
+              im=Image.open(f'collected/preview-{n}.png').convert('RGB')
+              ims.append((n,im))
+          w=max(i.width for _,i in ims); h=max(i.height for _,i in ims)
+          sheet=Image.new('RGB',(w*2,h*2),(255,255,255))
+          for idx,(n,im) in enumerate(ims):
+              sheet.paste(im,((idx%2)*w,(idx//2)*h))
+          sheet.save('osm-compression/results/istanbul-comparison.png',optimize=True)
+          for n,im in ims:
+              im.save(f'osm-compression/results/istanbul-{n}.png',optimize=True)
+          PY
+
+      - name: Commit measured results to experiment branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add osm-compression/results
+          git diff --cached --quiet && exit 0
+          git commit -m 'Record OSM compression benchmark results'
+          git push origin HEAD:osm-compression-lab
