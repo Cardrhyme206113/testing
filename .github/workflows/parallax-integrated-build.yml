@@ -24,8 +24,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat parallax-integrated-stock/project.v2.b64.part* | base64 -d > /tmp/parallax-project.tgz
-          echo 'a87dce8a1798e6636aaf8be4beaf0a3810565234edd8516d48525ae4d46e9584  /tmp/parallax-project.tgz' | sha256sum -c -
+          cat parallax-integrated-stock/project.v4.b64.part* | base64 -d > /tmp/parallax-project.tgz
+          echo 'd302b0d509215113c190445f59a9395580e255718c7180dd963696b0d5672c6a  /tmp/parallax-project.tgz' | sha256sum -c -
           mkdir -p /tmp/parallax-src
           tar -xzf /tmp/parallax-project.tgz -C /tmp/parallax-src
       - name: Build Fabric mod

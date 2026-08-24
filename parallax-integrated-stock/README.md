@@ -13,4 +13,4 @@ Current test goals:
 - Raw capture screenshots are deleted only after successful scene conversion. Failed/cancelled captures are kept for recovery/debugging.
 - Default capture is 2560x1440, 3x3, 0.5-block offsets, JPEG quality 95.
 
-The temporary `project.tgz.b64.part*` files are the complete buildable source snapshot used by CI while this integration is being validated. GitHub Actions reconstructs it and publishes the Fabric JAR artifact.
+CI reconstructs the deterministic `project.v4.b64.part*` source snapshot, verifies SHA-256 `d302b0d509215113c190445f59a9395580e255718c7180dd963696b0d5672c6a`, builds the Fabric mod, and publishes the JAR artifact.
