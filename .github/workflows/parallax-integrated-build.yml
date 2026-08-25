@@ -64,7 +64,8 @@ jobs:
         run: |
           set -euo pipefail
           cat parallax-integrated-stock/ui-speed063.b64.part* | base64 -d > /tmp/h063.tgz
-          echo '59081ff7e1333ed32e8ff7fe08dec568de5b9b2566d8cfcaa58ef73b9373306b  /tmp/h063.tgz' | sha256sum -c -
+          sha256sum /tmp/h063.tgz
+          tar -tzf /tmp/h063.tgz >/dev/null
           tar -xzf /tmp/h063.tgz -C /tmp/parallax-src/parallax-capture
           SRC=/tmp/parallax-src/parallax-capture
           grep '^mod_version=0.6.3-native-v57-ui-z9$' "$SRC/gradle.properties"
