@@ -56,13 +56,31 @@ jobs:
           cp -a /tmp/native-overlay/src/main/. /tmp/parallax-src/parallax-capture/src/main/
           rm -f /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/PythonPathScreen.java
           rm -f /tmp/parallax-src/parallax-capture/src/main/resources/assets/parallaxcapture/backend/parallax-backend-v57-native-integrated.zip
-          sed -i 's/^mod_version=.*/mod_version=0.6.0-native-v57/' /tmp/parallax-src/parallax-capture/gradle.properties
+
+      - name: Apply v0.6.1 virtual-camera + LTW hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat parallax-integrated-stock/hotfix061.b64.part* | base64 -d > /tmp/parallax-hotfix061.tgz
+          echo '26b9168607cef5021c4621c0f4c1f285e5f3360aa2e4a59501d4645e7336033d  /tmp/parallax-hotfix061.tgz' | sha256sum -c -
+          tar -xzf /tmp/parallax-hotfix061.tgz -C /tmp/parallax-src/parallax-capture
+          grep '^mod_version=0.6.1-native-v57$' /tmp/parallax-src/parallax-capture/gradle.properties
+          grep -F 'VirtualCamera.set' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/CaptureSession.java
+          if grep -R -E 'sendChatCommand|tp @s' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/CaptureSession.java; then
+            echo 'CaptureSession still contains a server-side teleport/command path' >&2
+            exit 1
+          fi
+          test "$(grep -R -l 'vec4 color = texture2D(gtexture, texcoord) \* glcolor;' /tmp/parallax-src/parallax-capture/src/main/resources/assets/parallaxcapture/shaderpacks/Parallax-Surface-ViewZ24-v2-Compat120.zip 2>/dev/null | wc -l)" -eq 0 || true
+          if unzip -p /tmp/parallax-src/parallax-capture/src/main/resources/assets/parallaxcapture/shaderpacks/Parallax-Surface-ViewZ24-v2-Compat120.zip 'shaders/*.fsh' | grep -F 'gl_FragColor = texture2D(gtexture, texcoord) * glcolor;'; then
+            echo 'Compat120 surface pack still contains the LTW undeclared-color form' >&2
+            exit 1
+          fi
 
       - name: Upload reconstructed native source (temporary)
         if: matrix.arch == 'x64'
         uses: actions/upload-artifact@v4
         with:
-          name: parallax-native-060-source
+          name: parallax-native-061-source
           path: /tmp/parallax-src/parallax-capture
           if-no-files-found: error
 
@@ -88,6 +106,9 @@ jobs:
           unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/NativeSceneConverter.class'
           unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/RendererCompat.class'
           unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/IntegratedConverter.class'
+          unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/VirtualCamera.class'
+          unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/mixin/CameraMixin.class'
+          unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/mixin/GameRendererMixin.class'
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Iris-LinearDepth-Exporter-DH-Normal-Blocks.zip'
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Parallax-Surface-ViewZ24-v2.zip'
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Iris-LinearDepth-Exporter-DH-Normal-Blocks-Compat120.zip'
@@ -98,6 +119,10 @@ jobs:
           fi
           if unzip -l "$JAR" | grep -F 'parallax-backend-v57-native-integrated.zip'; then
             echo 'Python backend must not ship in native build' >&2
+            exit 1
+          fi
+          if unzip -p "$JAR" dev/card/parallaxcapture/CaptureSession.class | strings | grep -E 'sendChatCommand|tp @s'; then
+            echo 'Built CaptureSession contains teleport/command strings' >&2
             exit 1
           fi
 
@@ -123,7 +148,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: parallax-capture-0.6.0-native-v57-fabric-1.20.1-${{ matrix.arch }}
+          name: parallax-capture-0.6.1-native-v57-fabric-1.20.1-${{ matrix.arch }}
           path: |
             /tmp/parallax-src/parallax-capture/build/libs/parallax-capture-*.jar
             !/tmp/parallax-src/parallax-capture/build/libs/*-sources.jar
