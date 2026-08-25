@@ -82,10 +82,14 @@ jobs:
           cat parallax-integrated-stock/sizefix062.b64.part* | base64 -d > /tmp/parallax-sizefix062.tgz
           echo '39986ab0b22eeaa6607940b7a47add55ea0c00c3c8422269194edee4bf772fe6  /tmp/parallax-sizefix062.tgz' | sha256sum -c -
           tar -xzf /tmp/parallax-sizefix062.tgz -C /tmp/parallax-src/parallax-capture
+          python3 parallax-integrated-stock/finalize-sizefix062.py /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
           grep '^mod_version=0.6.2-native-v57-sizefix$' /tmp/parallax-src/parallax-capture/gradle.properties
           grep -F 'MESH_MIN_TILE = 4' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
-          grep -F 'MESH_GLOBAL_TRIANGLE_BUDGET = 1_200_000L' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
+          grep -F 'MESH_GLOBAL_TRIANGLE_BUDGET = 300_000L' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
+          grep -F 'MESH_CENTER_TRIANGLE_BUDGET = 150_000L' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
+          grep -F 'MESH_SECONDARY_TRIANGLE_BUDGET = 40_000L' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
           grep -F 'ZstdOutputStream' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
+          grep -F 'zstd_level\\\": 3' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
           if grep -F 'raw-block-frame' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java; then
             echo 'Raw-block pseudo-compression still present' >&2
             exit 1
