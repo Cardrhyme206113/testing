@@ -6,6 +6,11 @@ on:
     paths:
       - 'parallax-integrated-stock/**'
       - '.github/workflows/parallax-integrated-build.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'parallax-integrated-stock/**'
+      - '.github/workflows/parallax-integrated-build.yml'
   workflow_dispatch:
 
 jobs:
@@ -52,6 +57,14 @@ jobs:
           rm -f /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/PythonPathScreen.java
           rm -f /tmp/parallax-src/parallax-capture/src/main/resources/assets/parallaxcapture/backend/parallax-backend-v57-native-integrated.zip
           sed -i 's/^mod_version=.*/mod_version=0.6.0-native-v57/' /tmp/parallax-src/parallax-capture/gradle.properties
+
+      - name: Upload reconstructed native source (temporary)
+        if: matrix.arch == 'x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-native-060-source
+          path: /tmp/parallax-src/parallax-capture
+          if-no-files-found: error
 
       - name: Verify converter is JDK-only
         shell: bash
