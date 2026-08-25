@@ -1,4 +1,4 @@
-name: Build Integrated Parallax Capture
+name: Build Native Parallax Capture
 
 on:
   push:
@@ -10,17 +10,26 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-      - name: Reconstruct integration source
+
+      - name: Reconstruct validated v0.5.2 source
         shell: bash
         run: |
           set -euo pipefail
@@ -28,29 +37,81 @@ jobs:
           echo 'd302b0d509215113c190445f59a9395580e255718c7180dd963696b0d5672c6a  /tmp/parallax-project.tgz' | sha256sum -c -
           mkdir -p /tmp/parallax-src
           tar -xzf /tmp/parallax-project.tgz -C /tmp/parallax-src
-      - name: Apply integrated source overlay
+
+      - name: Reconstruct and apply pure-Java native overlay
         shell: bash
         run: |
           set -euo pipefail
-          patch -d /tmp/parallax-src/parallax-capture -p1 < parallax-integrated-stock/overlay/python-picker.patch
-          cp parallax-integrated-stock/overlay/src/main/java/dev/card/parallaxcapture/PythonPathScreen.java \
-            /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/PythonPathScreen.java
+          # part00 has one known connector-appended byte; trim it, then SHA-verify the whole archive.
+          head -c 14000 parallax-integrated-stock/native-overlay.b64.part00 > /tmp/native-overlay.b64
+          cat parallax-integrated-stock/native-overlay.b64.part01 >> /tmp/native-overlay.b64
+          base64 -d /tmp/native-overlay.b64 > /tmp/native-overlay.tgz
+          echo 'ac798eef19395b6f69964adc7d35944ded911c2ea99dbb9f871b5bc7531fd318  /tmp/native-overlay.tgz' | sha256sum -c -
+          mkdir -p /tmp/native-overlay
+          tar -xzf /tmp/native-overlay.tgz -C /tmp/native-overlay
+          cp -a /tmp/native-overlay/src/main/. /tmp/parallax-src/parallax-capture/src/main/
+          rm -f /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/PythonPathScreen.java
+          rm -f /tmp/parallax-src/parallax-capture/src/main/resources/assets/parallaxcapture/backend/parallax-backend-v57-native-integrated.zip
+          sed -i 's/^mod_version=.*/mod_version=0.6.0-native-v57/' /tmp/parallax-src/parallax-capture/gradle.properties
+
+      - name: Verify converter is JDK-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/native-javac
+          javac -encoding UTF-8 -d /tmp/native-javac /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
+          uname -m
+          java -version
+
       - name: Build Fabric mod
         working-directory: /tmp/parallax-src/parallax-capture
         run: gradle build --stacktrace
-      - name: Inspect bundled resources
+
+      - name: Inspect architecture-neutral JAR
         shell: bash
         run: |
           set -euo pipefail
           JAR=$(find /tmp/parallax-src/parallax-capture/build/libs -maxdepth 1 -name 'parallax-capture-*.jar' ! -name '*-sources.jar' | head -1)
           test -n "$JAR"
-          unzip -l "$JAR" | grep -F 'assets/parallaxcapture/backend/parallax-backend-v57-native-integrated.zip'
+          unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/NativeSceneConverter.class'
+          unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/RendererCompat.class'
+          unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/IntegratedConverter.class'
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Iris-LinearDepth-Exporter-DH-Normal-Blocks.zip'
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Parallax-Surface-ViewZ24-v2.zip'
-          unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/PythonPathScreen.class'
+          unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Iris-LinearDepth-Exporter-DH-Normal-Blocks-Compat120.zip'
+          unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Parallax-Surface-ViewZ24-v2-Compat120.zip'
+          if unzip -l "$JAR" | grep -E '\.(so|dll|dylib)$'; then
+            echo 'Unexpected architecture-specific native library in JAR' >&2
+            exit 1
+          fi
+          if unzip -l "$JAR" | grep -F 'parallax-backend-v57-native-integrated.zip'; then
+            echo 'Python backend must not ship in native build' >&2
+            exit 1
+          fi
+
+      - name: Minecraft client startup smoke
+        if: matrix.arch == 'x64'
+        shell: bash
+        working-directory: /tmp/parallax-src/parallax-capture
+        run: |
+          set -euo pipefail
+          if ! command -v xvfb-run >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y xvfb
+          fi
+          set +e
+          timeout 180s xvfb-run -a gradle runClient --no-daemon > /tmp/parallax-client.log 2>&1
+          rc=$?
+          set -e
+          grep -F 'Installed bundled Parallax standard + GLSL120 compatibility exporters' /tmp/parallax-client.log
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+            tail -200 /tmp/parallax-client.log
+            exit "$rc"
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
-          name: parallax-capture-integrated-v57-fabric-1.20.1
+          name: parallax-capture-0.6.0-native-v57-fabric-1.20.1-${{ matrix.arch }}
           path: |
             /tmp/parallax-src/parallax-capture/build/libs/parallax-capture-*.jar
             !/tmp/parallax-src/parallax-capture/build/libs/*-sources.jar
