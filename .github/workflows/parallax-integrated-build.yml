@@ -6,11 +6,6 @@ on:
     paths:
       - 'parallax-integrated-stock/**'
       - '.github/workflows/parallax-integrated-build.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'parallax-integrated-stock/**'
-      - '.github/workflows/parallax-integrated-build.yml'
   workflow_dispatch:
 
 jobs:
