@@ -6,6 +6,11 @@ on:
     paths:
       - 'parallax-integrated-stock/**'
       - '.github/workflows/parallax-integrated-build.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'parallax-integrated-stock/**'
+      - '.github/workflows/parallax-integrated-build.yml'
   workflow_dispatch:
 
 jobs:
@@ -42,7 +47,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # part00 has one known connector-appended byte; trim it, then SHA-verify the whole archive.
           head -c 14000 parallax-integrated-stock/native-overlay.b64.part00 > /tmp/native-overlay.b64
           cat parallax-integrated-stock/native-overlay.b64.part01 >> /tmp/native-overlay.b64
           base64 -d /tmp/native-overlay.b64 > /tmp/native-overlay.tgz
