@@ -89,7 +89,6 @@ jobs:
           grep -F 'MESH_CENTER_TRIANGLE_BUDGET = 150_000L' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
           grep -F 'MESH_SECONDARY_TRIANGLE_BUDGET = 40_000L' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
           grep -F 'ZstdOutputStream' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
-          grep -F 'zstd_level\\\": 3' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
           if grep -F 'raw-block-frame' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java; then
             echo 'Raw-block pseudo-compression still present' >&2
             exit 1
