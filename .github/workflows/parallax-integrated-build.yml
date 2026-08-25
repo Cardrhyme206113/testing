@@ -33,6 +33,13 @@ jobs:
           echo 'd302b0d509215113c190445f59a9395580e255718c7180dd963696b0d5672c6a  /tmp/parallax-project.tgz' | sha256sum -c -
           mkdir -p /tmp/parallax-src
           tar -xzf /tmp/parallax-project.tgz -C /tmp/parallax-src
+      - name: Apply integrated source overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch -d /tmp/parallax-src/parallax-capture -p1 < parallax-integrated-stock/overlay/python-picker.patch
+          cp parallax-integrated-stock/overlay/src/main/java/dev/card/parallaxcapture/PythonPathScreen.java \
+            /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/PythonPathScreen.java
       - name: Upload extracted source (temporary)
         uses: actions/upload-artifact@v4
         with:
@@ -50,6 +57,7 @@ jobs:
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/backend/parallax-backend-v57-native-integrated.zip'
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Iris-LinearDepth-Exporter-DH-Normal-Blocks.zip'
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Parallax-Surface-ViewZ24-v2.zip'
+          unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/PythonPathScreen.class'
       - uses: actions/upload-artifact@v4
         with:
           name: parallax-capture-integrated-v57-fabric-1.20.1
