@@ -6,6 +6,11 @@ on:
     paths:
       - 'parallax-integrated-stock/**'
       - '.github/workflows/parallax-integrated-build.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'parallax-integrated-stock/**'
+      - '.github/workflows/parallax-integrated-build.yml'
   workflow_dispatch:
 
 jobs:
@@ -28,6 +33,11 @@ jobs:
           echo 'd302b0d509215113c190445f59a9395580e255718c7180dd963696b0d5672c6a  /tmp/parallax-project.tgz' | sha256sum -c -
           mkdir -p /tmp/parallax-src
           tar -xzf /tmp/parallax-project.tgz -C /tmp/parallax-src
+      - name: Upload extracted source (temporary)
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallax-integrated-source-tree
+          path: /tmp/parallax-src/parallax-capture
       - name: Build Fabric mod
         working-directory: /tmp/parallax-src/parallax-capture
         run: gradle build --stacktrace
