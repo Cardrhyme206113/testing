@@ -70,12 +70,21 @@ jobs:
             exit 1
           fi
 
-      - name: Verify converter is JDK-only
+      - name: Apply v0.6.2 size fix
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/native-javac
-          javac -encoding UTF-8 -d /tmp/native-javac /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
+          cat parallax-integrated-stock/sizefix062.b64.part* | base64 -d > /tmp/parallax-sizefix062.tgz
+          echo '39986ab0b22eeaa6607940b7a47add55ea0c00c3c8422269194edee4bf772fe6  /tmp/parallax-sizefix062.tgz' | sha256sum -c -
+          tar -xzf /tmp/parallax-sizefix062.tgz -C /tmp/parallax-src/parallax-capture
+          grep '^mod_version=0.6.2-native-v57-sizefix$' /tmp/parallax-src/parallax-capture/gradle.properties
+          grep -F 'MESH_MIN_TILE = 4' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
+          grep -F 'MESH_GLOBAL_TRIANGLE_BUDGET = 1_200_000L' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
+          grep -F 'ZstdOutputStream' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
+          if grep -F 'raw-block-frame' /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java; then
+            echo 'Raw-block pseudo-compression still present' >&2
+            exit 1
+          fi
           uname -m
           java -version
 
@@ -83,7 +92,7 @@ jobs:
         working-directory: /tmp/parallax-src/parallax-capture
         run: gradle build --stacktrace
 
-      - name: Inspect architecture-neutral JAR
+      - name: Inspect architecture-neutral JAR and real Zstd
         shell: bash
         run: |
           set -euo pipefail
@@ -99,8 +108,17 @@ jobs:
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Parallax-Surface-ViewZ24-v2.zip'
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Iris-LinearDepth-Exporter-DH-Normal-Blocks-Compat120.zip'
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Parallax-Surface-ViewZ24-v2-Compat120.zip'
+          AIR=$(unzip -Z1 "$JAR" | grep -E '^META-INF/jars/aircompressor-2\.0\.3[^/]*\.jar$' | head -1)
+          test -n "$AIR"
+          unzip -p "$JAR" "$AIR" > /tmp/aircompressor.jar
+          unzip -l /tmp/aircompressor.jar | grep -F 'io/airlift/compress/zstd/ZstdOutputStream.class'
+          unzip -l /tmp/aircompressor.jar | grep -F 'io/airlift/compress/zstd/ZstdInputStream.class'
           if unzip -l "$JAR" | grep -E '\.(so|dll|dylib)$'; then
-            echo 'Unexpected architecture-specific native library in JAR' >&2
+            echo 'Unexpected architecture-specific native library in outer JAR' >&2
+            exit 1
+          fi
+          if unzip -l /tmp/aircompressor.jar | grep -E '\.(so|dll|dylib)$'; then
+            echo 'Unexpected native library in embedded Airlift compressor' >&2
             exit 1
           fi
           if unzip -l "$JAR" | grep -F 'parallax-backend-v57-native-integrated.zip'; then
@@ -111,6 +129,30 @@ jobs:
             echo 'Built CaptureSession contains teleport/command strings' >&2
             exit 1
           fi
+          cat > /tmp/ZstdSmoke.java <<'JAVA'
+          import io.airlift.compress.zstd.ZstdInputStream;
+          import io.airlift.compress.zstd.ZstdOutputStream;
+          import java.io.*;
+          import java.nio.file.*;
+          public class ZstdSmoke {
+            public static void main(String[] args) throws Exception {
+              Path z=Path.of("/tmp/zstd-smoke.zst");
+              byte[] block=new byte[1<<20];
+              try(OutputStream o=new ZstdOutputStream(new BufferedOutputStream(Files.newOutputStream(z)))) {
+                for(int i=0;i<16;i++) o.write(block);
+              }
+              if(Files.size(z) >= 1_000_000) throw new AssertionError("Zstd did not compress: "+Files.size(z));
+              long n=0; byte[] b=new byte[1<<16];
+              try(InputStream in=new ZstdInputStream(new BufferedInputStream(Files.newInputStream(z)))) {
+                for(int r;(r=in.read(b))>=0;) { for(int i=0;i<r;i++) if(b[i]!=0) throw new AssertionError("roundtrip mismatch"); n+=r; }
+              }
+              if(n != 16L*(1<<20)) throw new AssertionError("roundtrip size "+n);
+              System.out.println("Airlift Zstd roundtrip OK; 16 MiB -> "+Files.size(z)+" bytes");
+            }
+          }
+          JAVA
+          javac -cp /tmp/aircompressor.jar /tmp/ZstdSmoke.java
+          java -cp /tmp:/tmp/aircompressor.jar ZstdSmoke
 
       - name: Minecraft client startup smoke
         if: matrix.arch == 'x64'
@@ -134,7 +176,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: parallax-capture-0.6.1-native-v57-fabric-1.20.1-${{ matrix.arch }}
+          name: parallax-capture-0.6.2-native-v57-sizefix-fabric-1.20.1-${{ matrix.arch }}
           path: |
             /tmp/parallax-src/parallax-capture/build/libs/parallax-capture-*.jar
             !/tmp/parallax-src/parallax-capture/build/libs/*-sources.jar
