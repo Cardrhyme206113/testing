@@ -6,11 +6,6 @@ on:
     paths:
       - 'parallax-integrated-stock/**'
       - '.github/workflows/parallax-integrated-build.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'parallax-integrated-stock/**'
-      - '.github/workflows/parallax-integrated-build.yml'
   workflow_dispatch:
 
 jobs:
@@ -40,11 +35,6 @@ jobs:
           patch -d /tmp/parallax-src/parallax-capture -p1 < parallax-integrated-stock/overlay/python-picker.patch
           cp parallax-integrated-stock/overlay/src/main/java/dev/card/parallaxcapture/PythonPathScreen.java \
             /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/PythonPathScreen.java
-      - name: Upload extracted source (temporary)
-        uses: actions/upload-artifact@v4
-        with:
-          name: parallax-integrated-source-tree
-          path: /tmp/parallax-src/parallax-capture
       - name: Build Fabric mod
         working-directory: /tmp/parallax-src/parallax-capture
         run: gradle build --stacktrace
