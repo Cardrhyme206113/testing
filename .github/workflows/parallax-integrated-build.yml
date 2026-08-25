@@ -42,7 +42,6 @@ jobs:
           echo 'd302b0d509215113c190445f59a9395580e255718c7180dd963696b0d5672c6a  /tmp/base.tgz' | sha256sum -c -
           mkdir -p /tmp/parallax-src
           tar -xzf /tmp/base.tgz -C /tmp/parallax-src
-
           head -c 14000 parallax-integrated-stock/native-overlay.b64.part00 > /tmp/native.b64
           cat parallax-integrated-stock/native-overlay.b64.part01 >> /tmp/native.b64
           base64 -d /tmp/native.b64 > /tmp/native.tgz
@@ -52,11 +51,9 @@ jobs:
           cp -a /tmp/native/src/main/. /tmp/parallax-src/parallax-capture/src/main/
           rm -f /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/PythonPathScreen.java
           rm -f /tmp/parallax-src/parallax-capture/src/main/resources/assets/parallaxcapture/backend/parallax-backend-v57-native-integrated.zip
-
           cat parallax-integrated-stock/hotfix061.b64.part* | base64 -d > /tmp/h061.tgz
           echo '26b9168607cef5021c4621c0f4c1f285e5f3360aa2e4a59501d4645e7336033d  /tmp/h061.tgz' | sha256sum -c -
           tar -xzf /tmp/h061.tgz -C /tmp/parallax-src/parallax-capture
-
           cat parallax-integrated-stock/sizefix062.b64.part* | base64 -d > /tmp/h062.tgz
           echo '39986ab0b22eeaa6607940b7a47add55ea0c00c3c8422269194edee4bf772fe6  /tmp/h062.tgz' | sha256sum -c -
           tar -xzf /tmp/h062.tgz -C /tmp/parallax-src/parallax-capture
@@ -82,10 +79,7 @@ jobs:
           grep -F 'DURATIONS' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureConfigScreen.java"
           grep -F 'MESH_GLOBAL_TRIANGLE_BUDGET = 300_000L' "$SRC/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java"
           grep -F 'Keep the target-resolution framebuffer alive' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureSession.java"
-          if grep -R -E 'sendChatCommand|tp @s' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureSession.java"; then
-            echo 'server-side movement path reintroduced' >&2
-            exit 1
-          fi
+          if grep -R -E 'sendChatCommand|tp @s' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureSession.java"; then exit 1; fi
           uname -m
           java -version
 
@@ -113,7 +107,6 @@ jobs:
           unzip -l /tmp/aircompressor.jar | grep -F 'io/airlift/compress/zstd/ZstdInputStream.class'
           if unzip -l "$JAR" | grep -F 'parallax-backend-v57-native-integrated.zip'; then exit 1; fi
           if unzip -p "$JAR" dev/card/parallaxcapture/CaptureSession.class | strings | grep -E 'sendChatCommand|tp @s'; then exit 1; fi
-
           cat >/tmp/Zstd9Smoke.java <<'JAVA'
           import io.airlift.compress.zstd.ZstdInputStream;
           import java.io.*;
