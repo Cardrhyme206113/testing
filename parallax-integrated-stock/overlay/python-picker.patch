@@ -1,0 +1,188 @@
+--- a/src/main/java/dev/card/parallaxcapture/CaptureConfig.java
++++ b/src/main/java/dev/card/parallaxcapture/CaptureConfig.java
+@@ -49,6 +49,7 @@
+     public boolean autoConvert = true;
+     public boolean deleteRawAfterSuccess = true;
+     public int conversionJpegQuality = 95;
++    public String pythonExecutable = ""; // blank = auto-detect python3/python from PATH
+ 
+     private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve("parallax-capture.properties");
+ 
+@@ -88,6 +89,7 @@
+         c.autoConvert = autoConvert;
+         c.deleteRawAfterSuccess = deleteRawAfterSuccess;
+         c.conversionJpegQuality = conversionJpegQuality;
++        c.pythonExecutable = pythonExecutable;
+         return c;
+     }
+ 
+@@ -110,6 +112,7 @@
+         teleportTimeoutMs = clamp(teleportTimeoutMs, 500, 60000);
+         finalCaptureRenderFrames = clamp(finalCaptureRenderFrames, 1, 30);
+         conversionJpegQuality = clamp(conversionJpegQuality, 1, 100);
++        pythonExecutable = pythonExecutable == null ? "" : pythonExecutable.trim();
+         beautyShader = beautyShader == null || beautyShader.isBlank() ? "@current" : beautyShader.trim();
+         depthShader = BundledAssets.DEPTH_SHADER;
+         surfaceShader = BundledAssets.SURFACE_SHADER;
+@@ -166,6 +169,7 @@
+         c.autoConvert = parseBoolean(p, "auto_convert", c.autoConvert);
+         c.deleteRawAfterSuccess = parseBoolean(p, "delete_raw_after_success", c.deleteRawAfterSuccess);
+         c.conversionJpegQuality = parseInt(p, "conversion_jpeg_quality", c.conversionJpegQuality, 1, 100);
++        c.pythonExecutable = p.getProperty("python_executable", c.pythonExecutable).trim();
+         c.clamp();
+         c.save();
+         return c;
+@@ -204,6 +208,7 @@
+         p.setProperty("auto_convert", Boolean.toString(autoConvert));
+         p.setProperty("delete_raw_after_success", Boolean.toString(deleteRawAfterSuccess));
+         p.setProperty("conversion_jpeg_quality", Integer.toString(conversionJpegQuality));
++        p.setProperty("python_executable", pythonExecutable);
+ 
+         try {
+             Files.createDirectories(PATH.getParent());
+--- a/src/main/java/dev/card/parallaxcapture/CaptureConfigScreen.java
++++ b/src/main/java/dev/card/parallaxcapture/CaptureConfigScreen.java
+@@ -21,6 +21,7 @@
+     private TextFieldWidget offsetField;
+     private TextFieldWidget qualityField;
+     private TextFieldWidget beautyShaderField;
++    private TextFieldWidget pythonField;
+     private String error = "";
+ 
+     public CaptureConfigScreen(Screen parent) {
+@@ -40,7 +41,8 @@
+         heightField = addField("Capture height", Integer.toString(draft.captureHeight), x, y, fieldW); y += 32;
+         offsetField = addField("3x3 camera spacing (blocks)", fmt(draft.offsetStepBlocks), x, y, fieldW); y += 32;
+         qualityField = addField("Beauty JPEG quality after conversion", Integer.toString(draft.conversionJpegQuality), x, y, fieldW); y += 32;
+-        beautyShaderField = addField("Beauty shader (@current recommended)", draft.beautyShader, x, y, fieldW); y += 35;
++        beautyShaderField = addField("Beauty shader (@current recommended)", draft.beautyShader, x, y, fieldW); y += 32;
++        pythonField = addField("Python executable (blank = auto-detect)", draft.pythonExecutable, x, y, fieldW); y += 35;
+ 
+         addDrawableChild(ButtonWidget.builder(toggleText("Auto convert after capture", draft.autoConvert), b -> {
+             draft.autoConvert = !draft.autoConvert;
+@@ -82,6 +84,7 @@
+             c.offsetStepBlocks = parseDouble(offsetField, "Camera spacing");
+             c.conversionJpegQuality = parseInt(qualityField, "JPEG quality");
+             c.beautyShader = beautyShaderField.getText().trim();
++            c.pythonExecutable = pythonField.getText().trim();
+             c.gridRadius = 1; // stock v5.7 scene contract: 3x3
+             c.depthShader = BundledAssets.DEPTH_SHADER;
+             c.surfaceShader = BundledAssets.SURFACE_SHADER;
+--- a/src/main/java/dev/card/parallaxcapture/IntegratedConverter.java
++++ b/src/main/java/dev/card/parallaxcapture/IntegratedConverter.java
+@@ -2,6 +2,7 @@
+ 
+ import net.fabricmc.loader.api.FabricLoader;
+ import net.minecraft.client.MinecraftClient;
++import net.minecraft.client.gui.screen.Screen;
+ import net.minecraft.text.Text;
+ import net.minecraft.util.Formatting;
+ 
+@@ -20,6 +21,7 @@
+ import java.util.Comparator;
+ import java.util.List;
+ import java.util.Locale;
++import java.util.concurrent.CompletableFuture;
+ import java.util.concurrent.ExecutorService;
+ import java.util.concurrent.Executors;
+ import java.util.concurrent.TimeUnit;
+@@ -163,7 +165,7 @@
+         Path python = venvPython();
+         if (!Files.isRegularFile(python)) {
+             if (visibleStatus) CaptureStatus.preparing("Creating private Python environment");
+-            List<String> base = findSystemPython();
++            List<String> base = findSystemPython(visibleStatus);
+             List<String> cmd = new ArrayList<>(base);
+             cmd.add("-m"); cmd.add("venv"); cmd.add(VENV_DIR.toString());
+             run(cmd, ROOT, 5);
+@@ -185,14 +187,73 @@
+         return VENV_DIR.resolve(windows ? "Scripts/python.exe" : "bin/python");
+     }
+ 
+-    private static List<String> findSystemPython() throws Exception {
++    private static List<String> findSystemPython(boolean interactive) throws Exception {
++        CaptureConfig config = ParallaxCaptureClient.getConfig();
++        String saved = config.pythonExecutable == null ? "" : config.pythonExecutable.trim();
++        if (!saved.isBlank() && isPython3(saved)) return List.of(saved);
++
+         for (String candidate : List.of("python3", "python")) {
+-            try {
+-                Process p = new ProcessBuilder(candidate, "--version").redirectErrorStream(true).start();
+-                if (p.waitFor(10, TimeUnit.SECONDS) && p.exitValue() == 0) return List.of(candidate);
+-            } catch (IOException ignored) {}
++            if (isPython3(candidate)) return List.of(candidate);
++        }
++
++        if (!interactive) {
++            throw new IOException("Python 3 was not found in PATH");
++        }
++
++        String initial = saved;
++        String error = saved.isBlank() ? "" : "Saved Python path is no longer valid.";
++        while (true) {
++            CaptureStatus.preparing("Python 3 not found — select executable");
++            String chosen = requestPythonPath(initial, error);
++            if (chosen == null) throw new IOException("Python selection cancelled");
++
++            if (PythonPathScreen.RETRY_AUTO.equals(chosen)) {
++                for (String candidate : List.of("python3", "python")) {
++                    if (isPython3(candidate)) return List.of(candidate);
++                }
++                error = "Python 3 is still not available in PATH.";
++                continue;
++            }
++
++            chosen = chosen.trim();
++            if (isPython3(chosen)) {
++                CaptureConfig updated = ParallaxCaptureClient.getConfig().copy();
++                updated.pythonExecutable = chosen;
++                ParallaxCaptureClient.applyConfig(updated);
++                return List.of(chosen);
++            }
++
++            initial = chosen;
++            error = "That path is not a working Python 3 executable.";
+         }
+-        throw new IOException("Python 3 was not found. Install Python 3 once; the mod installs all Python libraries itself.");
++    }
++
++    private static boolean isPython3(String executable) {
++        if (executable == null || executable.isBlank()) return false;
++        try {
++            Process p = new ProcessBuilder(executable, "-c",
++                    "import sys; raise SystemExit(0 if sys.version_info[0] == 3 else 1)")
++                    .redirectErrorStream(true).start();
++            if (!p.waitFor(10, TimeUnit.SECONDS)) {
++                p.destroyForcibly();
++                return false;
++            }
++            return p.exitValue() == 0;
++        } catch (Throwable ignored) {
++            return false;
++        }
++    }
++
++    private static String requestPythonPath(String initial, String error) throws Exception {
++        MinecraftClient client = MinecraftClient.getInstance();
++        if (client == null) throw new IOException("Minecraft client unavailable while requesting Python path");
++
++        CompletableFuture<String> result = new CompletableFuture<>();
++        client.execute(() -> {
++            Screen parent = client.currentScreen;
++            client.setScreen(new PythonPathScreen(parent, initial, error, result));
++        });
++        return result.get();
+     }
+ 
+     private static void run(List<String> command, Path cwd, int timeoutMinutes) throws Exception {
+--- a/gradle.properties
++++ b/gradle.properties
+@@ -4,7 +4,7 @@
+ yarn_mappings=1.20.1+build.10
+ loader_version=0.15.11
+ fabric_version=0.92.2+1.20.1
+-mod_version=0.5.3-integrated-v57
++mod_version=0.5.4-integrated-v57
+ maven_group=dev.card
+ archives_base_name=parallax-capture
+ 
