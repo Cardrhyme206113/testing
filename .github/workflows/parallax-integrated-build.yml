@@ -58,9 +58,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat parallax-integrated-stock/p063-final.part* | base64 -d > /tmp/h063.tgz
-          tar -tzf /tmp/h063.tgz >/dev/null
-          tar -xzf /tmp/h063.tgz -C /tmp/parallax-src/parallax-capture
+          echo '667ebe6cc7edfd956b4f550a5e48dce6ded8a1a6ee1764791fea1f2d6eccdeab  parallax-integrated-stock/p063-overlay.tgz' | sha256sum -c -
+          tar -tzf parallax-integrated-stock/p063-overlay.tgz >/dev/null
+          tar -xzf parallax-integrated-stock/p063-overlay.tgz -C /tmp/parallax-src/parallax-capture
           SRC=/tmp/parallax-src/parallax-capture
           grep '^mod_version=0.6.3-native-v57-ui-z9$' "$SRC/gradle.properties"
           grep -F 'conversionJpegQuality = 85' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureConfig.java"
