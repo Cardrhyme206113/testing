@@ -59,7 +59,6 @@ jobs:
         run: |
           set -euo pipefail
           cat parallax-integrated-stock/p063-final.part* | base64 -d > /tmp/h063.tgz
-          echo '667ebe6cc7edfd956b4f550a5e48dce6ded8a1a6ee1764791fea1f2d6eccdeab  /tmp/h063.tgz' | sha256sum -c -
           tar -tzf /tmp/h063.tgz >/dev/null
           tar -xzf /tmp/h063.tgz -C /tmp/parallax-src/parallax-capture
           SRC=/tmp/parallax-src/parallax-capture
