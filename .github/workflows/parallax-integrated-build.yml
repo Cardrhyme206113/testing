@@ -6,11 +6,6 @@ on:
     paths:
       - 'parallax-integrated-stock/**'
       - '.github/workflows/parallax-integrated-build.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'parallax-integrated-stock/**'
-      - '.github/workflows/parallax-integrated-build.yml'
   workflow_dispatch:
 
 jobs:
@@ -59,12 +54,12 @@ jobs:
           tar -xzf /tmp/h062.tgz -C /tmp/parallax-src/parallax-capture
           python3 parallax-integrated-stock/finalize-sizefix062.py /tmp/parallax-src/parallax-capture/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java
 
-      - name: Apply v0.6.3 UI, timing and compression overlay
+      - name: Apply locally tested v0.6.3 overlay
         shell: bash
         run: |
           set -euo pipefail
-          cat parallax-integrated-stock/ui-speed063.b64.part* | base64 -d > /tmp/h063.tgz
-          sha256sum /tmp/h063.tgz
+          cat parallax-integrated-stock/p063-final.part* | base64 -d > /tmp/h063.tgz
+          echo '667ebe6cc7edfd956b4f550a5e48dce6ded8a1a6ee1764791fea1f2d6eccdeab  /tmp/h063.tgz' | sha256sum -c -
           tar -tzf /tmp/h063.tgz >/dev/null
           tar -xzf /tmp/h063.tgz -C /tmp/parallax-src/parallax-capture
           SRC=/tmp/parallax-src/parallax-capture
@@ -73,64 +68,65 @@ jobs:
           grep -F 'conversionZstdLevel = 9' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureConfig.java"
           grep -F 'warmupF2 = false' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureConfig.java"
           grep -F 'vanillaPreCaptureMs = 0' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureConfig.java"
+          grep -F 'vanillaPostCaptureMs = 0' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureConfig.java"
           grep -F 'interViewDelayMs = 0' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureConfig.java"
           grep -F 'GLFW.GLFW_KEY_F7' "$SRC/src/main/java/dev/card/parallaxcapture/ParallaxCaptureClient.java"
           grep -F 'enum Tab' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureConfigScreen.java"
           grep -F 'PROCESSING' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureConfigScreen.java"
           grep -F 'DURATIONS' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureConfigScreen.java"
+          grep -F 'CAPTURE' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureConfigScreen.java"
           grep -F 'MESH_GLOBAL_TRIANGLE_BUDGET = 300_000L' "$SRC/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java"
+          grep -F 'ConfigurableZstdOutputStream' "$SRC/src/main/java/dev/card/parallaxcapture/NativeSceneConverter.java"
           grep -F 'Keep the target-resolution framebuffer alive' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureSession.java"
           if grep -R -E 'sendChatCommand|tp @s' "$SRC/src/main/java/dev/card/parallaxcapture/CaptureSession.java"; then exit 1; fi
-          uname -m
-          java -version
 
       - name: Build Fabric mod
         working-directory: /tmp/parallax-src/parallax-capture
         run: gradle build --stacktrace
 
-      - name: Inspect JAR and test Zstd level 9
+      - name: Inspect portable JAR and Zstd roundtrip
         shell: bash
         run: |
           set -euo pipefail
           JAR=$(find /tmp/parallax-src/parallax-capture/build/libs -maxdepth 1 -name 'parallax-capture-*.jar' ! -name '*-sources.jar' | head -1)
           test -n "$JAR"
+          unzip -t "$JAR" >/dev/null
           unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/NativeSceneConverter.class'
           unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/CaptureConfigScreen.class'
           unzip -l "$JAR" | grep -F 'dev/card/parallaxcapture/VirtualCamera.class'
+          unzip -l "$JAR" | grep -F 'io/airlift/compress/zstd/ConfigurableZstdOutputStream.class'
           unzip -l "$JAR" | grep -F 'assets/parallaxcapture/shaderpacks/Parallax-Surface-ViewZ24-v2-Compat120.zip'
           AIR=$(unzip -Z1 "$JAR" | grep -E '^META-INF/jars/aircompressor-2\.0\.3[^/]*\.jar$' | head -1)
-          ZJNI=$(unzip -Z1 "$JAR" | grep -E '^META-INF/jars/zstd-jni-1\.5\.7-15[^/]*\.jar$' | head -1)
-          test -n "$AIR" && test -n "$ZJNI"
+          test -n "$AIR"
           unzip -p "$JAR" "$AIR" > /tmp/aircompressor.jar
-          unzip -p "$JAR" "$ZJNI" > /tmp/zstd-jni.jar
-          unzip -l /tmp/zstd-jni.jar | grep -E 'linux/(amd64|x86_64)/.*libzstd-jni|linux/aarch64/.*libzstd-jni' >/tmp/zjni-linux.txt
-          cat /tmp/zjni-linux.txt
-          unzip -l /tmp/aircompressor.jar | grep -F 'io/airlift/compress/zstd/ZstdInputStream.class'
+          if unzip -l "$JAR" | grep -E '\.(so|dll|dylib)$'; then echo 'native library in outer JAR' >&2; exit 1; fi
+          if unzip -l /tmp/aircompressor.jar | grep -E '\.(so|dll|dylib)$'; then echo 'native library in Airlift JAR' >&2; exit 1; fi
           if unzip -l "$JAR" | grep -F 'parallax-backend-v57-native-integrated.zip'; then exit 1; fi
           if unzip -p "$JAR" dev/card/parallaxcapture/CaptureSession.class | strings | grep -E 'sendChatCommand|tp @s'; then exit 1; fi
-          cat >/tmp/Zstd9Smoke.java <<'JAVA'
+          cat >/tmp/ZstdPortableSmoke.java <<'JAVA'
+          import io.airlift.compress.zstd.ConfigurableZstdOutputStream;
           import io.airlift.compress.zstd.ZstdInputStream;
           import java.io.*;
-          import java.nio.file.*;
-          public class Zstd9Smoke {
+          public class ZstdPortableSmoke {
             public static void main(String[] args) throws Exception {
-              Path z=Path.of("/tmp/zstd9.zst");
-              byte[] block=new byte[1<<20];
+              byte[] block = new byte[1 << 20];
               for (int i=0;i<block.length;i++) block[i]=(byte)(i*31);
-              try(OutputStream o=new com.github.luben.zstd.ZstdOutputStream(new BufferedOutputStream(Files.newOutputStream(z)),9)) {
-                for(int i=0;i<16;i++) o.write(block);
+              ByteArrayOutputStream packed = new ByteArrayOutputStream();
+              try (OutputStream o = new ConfigurableZstdOutputStream(packed, 9)) {
+                for (int i=0;i<16;i++) o.write(block);
               }
-              long n=0; byte[] b=new byte[1<<16];
-              try(InputStream in=new ZstdInputStream(new BufferedInputStream(Files.newInputStream(z)))) {
-                for(int r;(r=in.read(b))>=0;) n+=r;
+              long n=0; byte[] tmp=new byte[1<<16];
+              try (InputStream in = new ZstdInputStream(new ByteArrayInputStream(packed.toByteArray()))) {
+                for (int r; (r=in.read(tmp)) >= 0;) n += r;
               }
-              if(n != 16L*(1<<20)) throw new AssertionError("roundtrip size="+n);
-              System.out.println("Zstd level 9 roundtrip OK: 16 MiB -> "+Files.size(z)+" bytes on "+System.getProperty("os.arch"));
+              if (n != 16L*(1<<20)) throw new AssertionError("roundtrip size="+n);
+              if (ConfigurableZstdOutputStream.effectiveLevel(9) != 4) throw new AssertionError("portable effective level changed");
+              System.out.println("Portable Zstd request=9 effective=4 roundtrip OK, bytes="+packed.size());
             }
           }
           JAVA
-          javac -cp /tmp/aircompressor.jar:/tmp/zstd-jni.jar /tmp/Zstd9Smoke.java
-          java -cp /tmp:/tmp/aircompressor.jar:/tmp/zstd-jni.jar Zstd9Smoke
+          javac -cp "$JAR:/tmp/aircompressor.jar" /tmp/ZstdPortableSmoke.java
+          java -cp "/tmp:$JAR:/tmp/aircompressor.jar" ZstdPortableSmoke
 
       - name: Minecraft client startup smoke
         if: matrix.arch == 'x64'
@@ -138,23 +134,17 @@ jobs:
         working-directory: /tmp/parallax-src/parallax-capture
         run: |
           set -euo pipefail
-          if ! command -v xvfb-run >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y xvfb
-          fi
+          if ! command -v xvfb-run >/dev/null; then sudo apt-get update && sudo apt-get install -y xvfb; fi
           set +e
           timeout 180s xvfb-run -a gradle runClient --no-daemon > /tmp/parallax-client.log 2>&1
           rc=$?
           set -e
           grep -F 'Installed bundled Parallax standard + GLSL120 compatibility exporters' /tmp/parallax-client.log
-          if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
-            tail -200 /tmp/parallax-client.log
-            exit "$rc"
-          fi
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then tail -200 /tmp/parallax-client.log; exit "$rc"; fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: parallax-capture-0.6.3-native-v57-ui-z9-fabric-1.20.1-${{ matrix.arch }}
+          name: parallax-capture-0.6.3-native-v57-ui-fast-fabric-1.20.1-${{ matrix.arch }}
           path: |
             /tmp/parallax-src/parallax-capture/build/libs/parallax-capture-*.jar
             !/tmp/parallax-src/parallax-capture/build/libs/*-sources.jar
