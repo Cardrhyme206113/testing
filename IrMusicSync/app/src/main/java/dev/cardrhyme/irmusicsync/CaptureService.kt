@@ -1,0 +1,349 @@
+package dev.cardrhyme.irmusicsync
+
+import android.app.*
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.hardware.ConsumerIrManager
+import android.media.*
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
+import android.os.IBinder
+import android.os.SystemClock
+import kotlin.concurrent.thread
+import kotlin.math.*
+
+class CaptureService : Service() {
+    companion object {
+        const val ACTION_START = "dev.cardrhyme.irmusicsync.START"
+        const val ACTION_STOP = "dev.cardrhyme.irmusicsync.STOP"
+        const val ACTION_BEAT_DETECTED = "dev.cardrhyme.irmusicsync.BEAT_DETECTED"
+        const val ACTION_BEAT_SENT = "dev.cardrhyme.irmusicsync.BEAT_SENT"
+        const val ACTION_TIMING_UPDATED = "dev.cardrhyme.irmusicsync.TIMING_UPDATED"
+        const val EXTRA_COLOR_RGB = "color_rgb"
+        const val EXTRA_AUTO_COOLDOWN_MS = "auto_cooldown_ms"
+        const val EXTRA_RESULT_CODE = "result_code"
+        const val EXTRA_RESULT_DATA = "result_data"
+        const val EXTRA_SENSITIVITY = "sensitivity"
+        const val EXTRA_FADE_LEVELS = "fade_levels"
+        const val EXTRA_COMMAND_GAP = "command_gap"
+        const val EXTRA_COLOR_DELAY = "color_delay"
+        const val EXTRA_FADE_OUT_ENABLED = "fade_out_enabled"
+        const val EXTRA_FADE_IN_ENABLED = "fade_in_enabled"
+        private const val CHANNEL_ID = "ir_music_capture"
+        private const val NOTIFICATION_ID = 4201
+
+        private const val BRIGHTNESS_DOWN = 0xF7807FL
+        private const val BRIGHTNESS_UP = 0xF700FFL
+        private const val POWER_OFF = 0xF740BFL
+        private const val POWER_ON = 0xF7C03FL
+    }
+
+    private var projection: MediaProjection? = null
+    private var recorder: AudioRecord? = null
+    private var worker: Thread? = null
+    private var animationWorker: Thread? = null
+    @Volatile private var running = false
+    @Volatile private var animating = false
+    @Volatile private var nextBeatAllowedAt = 0L
+    private var sensitivity = 55
+    private var fadeLevels = 2
+    private var commandGapMs = 12L
+    private var colorHoldMs = 75L
+    private var fadeOutEnabled = true
+    private var fadeInEnabled = true
+    private var previousEnergy = DoubleArray(8)
+    private var previousBand = -1
+    private var lastColorIndex = -1
+    private lateinit var ir: ConsumerIrManager
+
+    private val colorCodes = longArrayOf(
+        0xF720DFL,
+        0xF710EFL,
+        0xF730CFL,
+        0xF708F7L,
+        0xF728D7L,
+        0xF7A05FL,
+        0xF748B7L,
+        0xF76897L,
+        0xF7E01FL
+    )
+
+    private val colorRgb = intArrayOf(
+        0xFF0000,
+        0xFF4000,
+        0xFF7000,
+        0xFFAA00,
+        0xFFFF00,
+        0x00FF00,
+        0x7030A0,
+        0xA040FF,
+        0xFFFFFF
+    )
+
+    override fun onCreate() {
+        super.onCreate()
+        ir = getSystemService(Context.CONSUMER_IR_SERVICE) as ConsumerIrManager
+        createNotificationChannel()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP -> stopEverything()
+            ACTION_START -> startFromPermission(intent)
+        }
+        return START_NOT_STICKY
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startFromPermission(intent: Intent) {
+        if (running) return
+        val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
+        val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
+        if (resultCode != Activity.RESULT_OK || resultData == null) {
+            stopSelf()
+            return
+        }
+
+        sensitivity = intent.getIntExtra(EXTRA_SENSITIVITY, 55).coerceIn(0, 100)
+        fadeLevels = intent.getIntExtra(EXTRA_FADE_LEVELS, 2).coerceIn(0, 6)
+        commandGapMs = intent.getIntExtra(EXTRA_COMMAND_GAP, 12).coerceIn(5, 50).toLong()
+        colorHoldMs = intent.getIntExtra(EXTRA_COLOR_DELAY, 75).coerceIn(25, 300).toLong()
+        fadeOutEnabled = intent.getBooleanExtra(EXTRA_FADE_OUT_ENABLED, true)
+        fadeInEnabled = intent.getBooleanExtra(EXTRA_FADE_IN_ENABLED, true)
+        nextBeatAllowedAt = 0L
+
+        startForeground(
+            NOTIFICATION_ID,
+            buildNotification("Starting playback capture…"),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        )
+
+        try {
+            val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            projection = manager.getMediaProjection(resultCode, resultData).also {
+                it.registerCallback(object : MediaProjection.Callback() {
+                    override fun onStop() = stopEverything()
+                }, null)
+            }
+            startAudioRecord()
+        } catch (t: Throwable) {
+            updateNotification("Capture failed: ${t.message ?: t.javaClass.simpleName}")
+            stopEverything()
+        }
+    }
+
+    private fun startAudioRecord() {
+        val mediaProjection = projection ?: return
+        val sampleRate = 44_100
+        val format = AudioFormat.Builder()
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setSampleRate(sampleRate)
+            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+            .build()
+        val config = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
+            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+            .addMatchingUsage(AudioAttributes.USAGE_GAME)
+            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+            .build()
+        val minimum = AudioRecord.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+        recorder = AudioRecord.Builder()
+            .setAudioFormat(format)
+            .setBufferSizeInBytes(max(8192, minimum * 2))
+            .setAudioPlaybackCaptureConfig(config)
+            .build()
+        recorder?.startRecording()
+        running = true
+        updateNotification(
+            "Auto cooldown · fade out ${if (fadeOutEnabled) "ON" else "OFF"} · fade in ${if (fadeInEnabled) "ON" else "OFF"}"
+        )
+
+        worker = thread(name = "ir-playback-analyzer") {
+            val pcm = ShortArray(2048)
+            while (running) {
+                val count = recorder?.read(pcm, 0, pcm.size, AudioRecord.READ_BLOCKING) ?: break
+                if (count > 512) analyze(pcm, count, sampleRate)
+            }
+        }
+    }
+
+    private fun analyze(samples: ShortArray, count: Int, sampleRate: Int) {
+        val frequencies = doubleArrayOf(60.0, 110.0, 220.0, 440.0, 900.0, 1800.0, 3600.0, 7200.0)
+        val energies = DoubleArray(frequencies.size)
+        val limit = min(count, 1024)
+
+        var rmsSum = 0.0
+        for (i in 0 until limit) {
+            val v = samples[i] / 32768.0
+            rmsSum += v * v
+        }
+        val rms = sqrt(rmsSum / limit)
+        val silenceThreshold = (0.040 - sensitivity * 0.00034).coerceAtLeast(0.004)
+        if (rms < silenceThreshold) return
+
+        for (band in frequencies.indices) {
+            val omega = 2.0 * Math.PI * frequencies[band] / sampleRate
+            var real = 0.0
+            var imaginary = 0.0
+            for (i in 0 until limit) {
+                val window = 0.5 - 0.5 * cos(2.0 * Math.PI * i / (limit - 1))
+                val sample = samples[i] * window
+                real += sample * cos(omega * i)
+                imaginary -= sample * sin(omega * i)
+            }
+            energies[band] = real * real + imaginary * imaginary
+        }
+
+        val total = energies.sum().coerceAtLeast(1.0)
+        val normalized = DoubleArray(energies.size) { energies[it] / total }
+        var flux = 0.0
+        for (i in normalized.indices) {
+            flux += max(0.0, normalized[i] - previousEnergy[i])
+        }
+        val dominantBand = normalized.indices.maxByOrNull { normalized[it] } ?: return
+        val bandChanged = previousBand >= 0 && abs(dominantBand - previousBand) >= 1
+        val fluxThreshold = 0.24 - sensitivity * 0.0015
+        val actualChange = bandChanged && flux >= fluxThreshold.coerceAtLeast(0.07)
+
+        previousEnergy = normalized
+        previousBand = dominantBand
+        if (!actualChange || animating) return
+
+        val now = SystemClock.elapsedRealtime()
+        if (now < nextBeatAllowedAt) return
+
+        val centroid = frequencies.indices.sumOf { frequencies[it] * normalized[it] }
+        val position = (ln(centroid / 55.0) / ln(8000.0 / 55.0)).coerceIn(0.0, 0.999)
+        var colorIndex = (position * colorCodes.size).toInt().coerceIn(0, colorCodes.lastIndex)
+        if (colorIndex == lastColorIndex) {
+            colorIndex = (colorIndex + 1) % colorCodes.size
+        }
+        lastColorIndex = colorIndex
+
+        sendUiEvent(ACTION_BEAT_DETECTED, colorRgb[colorIndex])
+        animateBeat(colorCodes[colorIndex], colorRgb[colorIndex])
+    }
+
+    private fun animateBeat(colorCode: Long, rgb: Int) {
+        animating = true
+        animationWorker = thread(name = "ir-fade-animation") {
+            val sequenceStartedAt = SystemClock.elapsedRealtime()
+            try {
+                if (fadeOutEnabled) {
+                    repeat(fadeLevels) {
+                        sendCode(BRIGHTNESS_DOWN)
+                        Thread.sleep(commandGapMs)
+                    }
+                }
+
+                // The color is always selected while the strip is still ON.
+                sendCode(colorCode)
+                Thread.sleep(colorHoldMs)
+
+                sendCode(POWER_OFF)
+                Thread.sleep(commandGapMs)
+                sendCode(POWER_ON)
+
+                if (fadeInEnabled) {
+                    Thread.sleep(commandGapMs)
+                    repeat(fadeLevels) { index ->
+                        sendCode(BRIGHTNESS_UP)
+                        if (index < fadeLevels - 1) {
+                            Thread.sleep(commandGapMs)
+                        }
+                    }
+                }
+
+                sendUiEvent(ACTION_BEAT_SENT, rgb)
+            } catch (_: InterruptedException) {
+            } finally {
+                val sequenceDurationMs = (SystemClock.elapsedRealtime() - sequenceStartedAt).coerceAtLeast(1L)
+                val autoCooldownMs = sequenceDurationMs + 5L
+
+                // The sequence itself blocks beats. After it finishes, only a 5 ms guard remains.
+                nextBeatAllowedAt = sequenceStartedAt + autoCooldownMs
+                sendTimingEvent(autoCooldownMs)
+                updateNotification(
+                    "Auto cooldown ${autoCooldownMs} ms · fade out ${if (fadeOutEnabled) "ON" else "OFF"} · fade in ${if (fadeInEnabled) "ON" else "OFF"}"
+                )
+                animating = false
+            }
+        }
+    }
+
+    private fun sendUiEvent(action: String, rgb: Int) {
+        sendBroadcast(
+            Intent(action)
+                .setPackage(packageName)
+                .putExtra(EXTRA_COLOR_RGB, rgb)
+        )
+    }
+
+    private fun sendTimingEvent(autoCooldownMs: Long) {
+        sendBroadcast(
+            Intent(ACTION_TIMING_UPDATED)
+                .setPackage(packageName)
+                .putExtra(EXTRA_AUTO_COOLDOWN_MS, autoCooldownMs)
+        )
+    }
+
+    private fun sendCode(code: Long) {
+        if (!running || !ir.hasIrEmitter()) return
+        val prefs = getSharedPreferences("ir_profile", MODE_PRIVATE)
+        val carrier = prefs.getInt("carrier", 38_000)
+        val mode = prefs.getInt("mode", 0)
+        val repeats = prefs.getInt("repeats", 1).coerceIn(1, 3)
+        try {
+            repeat(repeats) {
+                ir.transmit(carrier, IrProtocol.necPattern(code, mode))
+                if (repeats > 1) Thread.sleep(35)
+            }
+        } catch (_: Throwable) {}
+    }
+
+    private fun stopEverything() {
+        running = false
+        worker?.interrupt()
+        animationWorker?.interrupt()
+        try { recorder?.stop() } catch (_: Throwable) {}
+        recorder?.release()
+        recorder = null
+        try { projection?.stop() } catch (_: Throwable) {}
+        projection = null
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    override fun onDestroy() {
+        running = false
+        worker?.interrupt()
+        animationWorker?.interrupt()
+        try { recorder?.stop() } catch (_: Throwable) {}
+        recorder?.release()
+        recorder = null
+        super.onDestroy()
+    }
+
+    private fun createNotificationChannel() {
+        getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "IR music capture", NotificationManager.IMPORTANCE_LOW)
+        )
+    }
+
+    private fun buildNotification(message: String): Notification = Notification.Builder(this, CHANNEL_ID)
+        .setSmallIcon(android.R.drawable.ic_media_play)
+        .setContentTitle("IR Music Sync")
+        .setContentText(message)
+        .setOngoing(true)
+        .build()
+
+    private fun updateNotification(message: String) {
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(message))
+    }
+}
