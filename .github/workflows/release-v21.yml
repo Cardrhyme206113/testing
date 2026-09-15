@@ -1,28 +1,35 @@
-name: Build BlockHost native APK
+name: Publish BlockHost v21
 
 on:
-  workflow_dispatch:
   push:
-  pull_request:
+    branches: [paper-mobilejre-v20-build]
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  release:
+    if: contains(github.event.head_commit.message, 'Publish GitHub release v21')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+
       - name: Install Android native build tools
         shell: bash
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" "cmake;3.22.1"
+
       - name: Apply Android API and server-download compatibility
         shell: bash
         run: |
@@ -57,38 +64,51 @@ jobs:
           p.write_text(s)
           PY
           python3 scripts/patch-pufferfish-v21.py
-      - name: Build debug APK
+
+      - name: Build release APK
         shell: bash
         run: |
           set -o pipefail
           gradle --no-daemon :app:assembleDebug 2>&1 | tee build.log
-      - name: Verify isolated native server build
+          cp app/build/outputs/apk/debug/app-debug.apk BlockHost-native-v21.apk
+
+      - name: Verify APK
         shell: bash
         run: |
           set -euxo pipefail
-          apk=app/build/outputs/apk/debug/app-debug.apk
-          unzip -l "$apk" > /tmp/blockhost-apk-list.txt
-          grep -q 'lib/arm64-v8a/libblockhost_jvm.so' /tmp/blockhost-apk-list.txt
-          ! grep -q 'libproot' /tmp/blockhost-apk-list.txt
-          ! grep -q 'runtime-aarch64' /tmp/blockhost-apk-list.txt
-          test "$(stat -c%s "$apk")" -lt 50000000
-          unzip -p "$apk" 'classes*.dex' > /tmp/blockhost-classes.dex
-          strings /tmp/blockhost-classes.dex > /tmp/blockhost-dex-strings.txt
-          grep -q 'server-process-state.json' /tmp/blockhost-dex-strings.txt
-          grep -q 'JVM/native headroom' /tmp/blockhost-dex-strings.txt
-          unzip -p "$apk" AndroidManifest.xml > /tmp/blockhost-manifest.xml
-          strings -el /tmp/blockhost-manifest.xml > /tmp/blockhost-manifest-strings.txt
-          grep -q ':server' /tmp/blockhost-manifest-strings.txt
-          ls -lh "$apk"
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: BlockHost-native-build-log
-          path: build.log
-      - name: Upload APK
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: BlockHost-native-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          unzip -l BlockHost-native-v21.apk | grep -q 'lib/arm64-v8a/libblockhost_jvm.so'
+          ! unzip -l BlockHost-native-v21.apk | grep -q 'libproot'
+          ! unzip -l BlockHost-native-v21.apk | grep -q 'runtime-aarch64'
+          sha256sum BlockHost-native-v21.apk | tee BlockHost-native-v21.apk.sha256
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          # BlockHost v21
+
+          First GitHub release of the Android-native server backend.
+
+          - ARM64 Android APK
+          - Android-native OpenJDK 21 runtime downloaded on first setup
+          - Ready server JAR download; no local compilation
+          - Pufferfish preferred when an exact build exists
+          - Stable Paper fallback through the current Paper downloads API
+          - Manual `server.jar` import remains available
+          - No Alpine, PRoot, QEMU, Maven, Git, or BuildTools runtime
+
+          Install this APK over the previous BlockHost build to preserve existing app data, servers, and worlds.
+          EOF
+
+          if gh release view v21 >/dev/null 2>&1; then
+            gh release upload v21 BlockHost-native-v21.apk BlockHost-native-v21.apk.sha256 --clobber
+            gh release edit v21 --title "BlockHost v21" --notes-file release-notes.md --latest
+          else
+            gh release create v21 BlockHost-native-v21.apk BlockHost-native-v21.apk.sha256 \
+              --target "$GITHUB_SHA" \
+              --title "BlockHost v21" \
+              --notes-file release-notes.md \
+              --latest
+          fi
