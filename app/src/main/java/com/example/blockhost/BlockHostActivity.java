@@ -25,6 +25,7 @@ public final class BlockHostActivity extends Activity {
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        RuntimeRepairInvoker.run(this);
         backend = new BlockHostBackend(this);
         webView = new WebView(this);
         setContentView(webView);
@@ -95,6 +96,6 @@ public final class BlockHostActivity extends Activity {
     }
 
     @Override public void onBackPressed() {
-        webView.evaluateJavascript("(function(){const m=document.querySelector('.modalShade.open');if(m){m.classList.remove('open');return 'handled'}const v=document.querySelector('.view.active');if(v&&v.dataset.view!=='home'){document.querySelector('[data-nav=home]').click();return 'handled'}return 'exit'})()", value -> { if ("\"exit\"".equals(value)) BlockHostActivity.super.onBackPressed(); });
+        webView.evaluateJavascript("(function(){const m=document.querySelector('.modalShade.open');if(m){m.classList.remove('open');return 'handled'}const v=document.querySelector('.view.active');if(v&&v.dataset.view!='home'){document.querySelector('[data-nav=home]').click();return 'handled'}return 'exit'})()", value -> { if ("\"exit\"".equals(value)) BlockHostActivity.super.onBackPressed(); });
     }
 }
