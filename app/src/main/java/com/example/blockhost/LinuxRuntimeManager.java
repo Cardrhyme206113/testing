@@ -2,284 +2,124 @@ package com.example.blockhost;
 
 import android.content.Context;
 import android.os.Build;
-import android.system.ErrnoException;
 import android.system.Os;
 
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
-import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
+import org.apache.commons.compress.compressors.xz.XZCompressorInputStream;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.nio.file.StandardCopyOption;
+import java.util.*;
 
-/**
- * Creates an app-private Alpine Linux environment and executes it through the bundled Termux PRoot binary.
- * The rootfs and all Minecraft data live under Context.getFilesDir(), so Android removes them on uninstall.
- */
+/** Downloads an Android-native OpenJDK 21 runtime; no Alpine or PRoot. */
 public final class LinuxRuntimeManager {
-    public interface ProgressListener {
-        void onProgress(String phase, int percent, String message);
-    }
+    public interface ProgressListener { void onProgress(String phase, int percent, String message); }
 
-    private static final String ALPINE_RELEASES_URL = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/latest-releases.yaml";
-    private static final String ALPINE_RELEASES_BASE = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/aarch64/";
-
+    private static final String RUNTIME_URL = "https://github.com/AngelAuraMC/angelauramc-openjdk-build/releases/download/download_jre21/jre21-android-arm64.tar.xz";
     private final Context context;
     private final File runtimeDir;
-    private final File rootfsDir;
-    private final File readyMarker;
+    private final File javaHome;
+    private final File archive;
 
     public LinuxRuntimeManager(Context context, ServerRepository repository) {
         this.context = context.getApplicationContext();
         runtimeDir = repository.getRuntimeDir();
-        rootfsDir = new File(runtimeDir, "alpine");
-        readyMarker = new File(runtimeDir, ".ready-v2");
+        javaHome = new File(runtimeDir, "mobile-jre21");
+        archive = new File(runtimeDir, "jre21-android-arm64.tar.xz");
     }
 
-    public boolean isReady() {
-        return readyMarker.isFile() && new File(rootfsDir, "usr/bin/java").exists();
-    }
-
-    public synchronized void ensureReady(ProgressListener listener) throws Exception {
-        if (isReady()) {
-            listener.onProgress("runtime", 100, "Linux Java runtime ready");
-            return;
-        }
-        verifyArchitecture();
+    public synchronized Layout ensureReady(ProgressListener listener) throws Exception {
+        verifyArm64();
+        Layout layout = inspect();
+        if (layout != null) return layout;
         runtimeDir.mkdirs();
-        if (!new File(rootfsDir, "bin/sh").exists()) {
-            listener.onProgress("runtime-download", 1, "Finding the current Alpine ARM64 image");
-            String archiveName = discoverAlpineArchive();
-            File archive = new File(runtimeDir, archiveName);
-            download(ALPINE_RELEASES_BASE + archiveName, archive, "runtime-download", listener);
-            listener.onProgress("runtime-extract", 45, "Extracting Linux runtime");
-            deleteRecursively(rootfsDir);
-            rootfsDir.mkdirs();
-            extractTarGz(archive, rootfsDir, listener);
-            archive.delete();
-            writeRuntimeConfiguration();
+        if (!archive.isFile() || archive.length() < 10_000_000L) download(listener);
+        delete(javaHome); javaHome.mkdirs();
+        listener.onProgress("java-extract", 60, "Extracting Android Java 21");
+        try (InputStream file = new BufferedInputStream(new FileInputStream(archive));
+             XZCompressorInputStream xz = new XZCompressorInputStream(file);
+             TarArchiveInputStream tar = new TarArchiveInputStream(xz)) {
+            extract(tar, javaHome, listener);
         }
-        listener.onProgress("runtime-packages", 70, "Installing Java, Git and build tools (first install only)");
-        String installCommand = "apk update && " +
-                "apk add --no-cache bash curl ca-certificates git maven openjdk21-jdk openjdk17-jdk || " +
-                "apk add --no-cache bash curl ca-certificates git maven openjdk21-jdk";
-        Process process = startShell(null, installCommand);
-        String output = ProcessIo.consume(process, line -> listener.onProgress("runtime-packages", 80, line));
-        int exit = process.waitFor();
-        if (exit != 0) throw new IOException("Runtime package installation failed (exit " + exit + "): " + tail(output, 1200));
-        FileIo.writeUtf8(readyMarker, "ready\n");
-        listener.onProgress("runtime", 100, "Linux Java runtime ready");
-    }
-
-    public Process startShell(File serverDir, String shellCommand) throws IOException {
-        List<String> command = baseProotCommand(serverDir);
-        command.add("/usr/bin/env");
-        command.add("-i");
-        command.add("HOME=/root");
-        command.add("USER=root");
-        command.add("LANG=C.UTF-8");
-        command.add("TERM=xterm-256color");
-        command.add("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-        command.add("SHELL=/bin/bash");
-        command.add("/bin/bash");
-        command.add("-lc");
-        command.add(shellCommand);
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.redirectErrorStream(true);
-        Map<String, String> env = builder.environment();
-        String nativeDir = context.getApplicationInfo().nativeLibraryDir;
-        env.put("LD_LIBRARY_PATH", nativeDir);
-        env.put("PROOT_LOADER", new File(nativeDir, "libproot_loader.so").getAbsolutePath());
-        File loader32 = new File(nativeDir, "libproot_loader32.so");
-        if (loader32.exists()) env.put("PROOT_LOADER_32", loader32.getAbsolutePath());
-        File tmp = new File(context.getCacheDir(), "proot-tmp");
-        tmp.mkdirs();
-        env.put("PROOT_TMP_DIR", tmp.getAbsolutePath());
-        return builder.start();
-    }
-
-    public String javaCommandForVersion(String version) {
-        int major = SpigotVersionProvider.requiredJavaMajor(version);
-        if (major >= 21) return "/usr/lib/jvm/java-21-openjdk/bin/java";
-        if (major >= 17 && new File(rootfsDir, "usr/lib/jvm/java-17-openjdk/bin/java").exists()) {
-            return "/usr/lib/jvm/java-17-openjdk/bin/java";
+        File[] top = javaHome.listFiles();
+        if (top != null && top.length == 1 && top[0].isDirectory() && new File(top[0], "release").isFile()) {
+            File promoted = new File(runtimeDir, "mobile-jre21-promoted");
+            delete(promoted);
+            if (!top[0].renameTo(promoted)) Files.move(top[0].toPath(), promoted.toPath());
+            delete(javaHome);
+            if (!promoted.renameTo(javaHome)) Files.move(promoted.toPath(), javaHome.toPath());
         }
-        if (major < 17) return "/usr/lib/jvm/java-17-openjdk/bin/java";
-        return "/usr/bin/java";
+        layout = inspect();
+        if (layout == null) throw new IOException("Android Java runtime is incomplete");
+        archive.delete();
+        deleteQuietly(new File(runtimeDir, "alpine"));
+        deleteQuietly(new File(runtimeDir, "alpine-bundled-v1"));
+        deleteQuietly(new File(runtimeDir, "alpine-download-v1"));
+        listener.onProgress("java-ready", 100, "Android Java 21 ready");
+        return layout;
     }
 
-    private List<String> baseProotCommand(File serverDir) throws IOException {
-        File nativeDir = new File(context.getApplicationInfo().nativeLibraryDir);
-        File proot = new File(nativeDir, "libproot_exec.so");
-        if (!proot.isFile()) throw new IOException("Bundled PRoot executable is missing for this CPU architecture");
-        if (!rootfsDir.isDirectory()) throw new IOException("Linux runtime has not been installed");
-        List<String> args = new ArrayList<>();
-        args.add(proot.getAbsolutePath());
-        args.add("--kill-on-exit");
-        args.add("-0");
-        args.add("-r");
-        args.add(rootfsDir.getAbsolutePath());
-        args.add("-b"); args.add("/dev");
-        args.add("-b"); args.add("/proc");
-        args.add("-b"); args.add("/sys");
-        args.add("-b"); args.add("/sdcard");
-        if (serverDir != null) {
-            serverDir.mkdirs();
-            args.add("-b"); args.add(serverDir.getAbsolutePath() + ":/server");
-            args.add("-w"); args.add("/server");
-        } else {
-            args.add("-w"); args.add("/root");
-        }
-        return args;
+    public Layout inspect() {
+        if (!new File(javaHome, "release").isFile()) return null;
+        File jli = find(javaHome, "libjli.so"), jvm = find(javaHome, "libjvm.so");
+        if (jli == null || jvm == null) return null;
+        List<File> libs = new ArrayList<>(); collect(javaHome, libs);
+        libs.sort(Comparator.comparingInt(f -> rank(f.getName())));
+        LinkedHashSet<String> dirs = new LinkedHashSet<>();
+        dirs.add(jvm.getParent()); dirs.add(jli.getParent());
+        for (File lib : libs) dirs.add(lib.getParent());
+        dirs.add(context.getApplicationInfo().nativeLibraryDir);
+        dirs.add("/system/lib64"); dirs.add("/vendor/lib64");
+        return new Layout(javaHome, jli, libs.toArray(new File[0]), String.join(":", dirs));
     }
 
-    private void verifyArchitecture() {
-        boolean arm64 = false;
-        for (String abi : Build.SUPPORTED_ABIS) if ("arm64-v8a".equals(abi)) arm64 = true;
-        if (!arm64) throw new IllegalStateException("This experimental backend currently supports ARM64 Android devices only");
-    }
-
-    private String discoverAlpineArchive() throws Exception {
-        String yaml = httpGet(ALPINE_RELEASES_URL);
-        String fallback = null;
-        for (String line : yaml.split("\\r?\\n")) {
-            String trimmed = line.trim();
-            if (!trimmed.startsWith("file:")) continue;
-            String value = trimmed.substring(5).trim().replace("\"", "").replace("'", "");
-            if (value.contains("alpine-minirootfs") && value.endsWith("-aarch64.tar.gz")) {
-                if (fallback == null) fallback = value;
-                if (!value.contains("-rc")) return value;
+    private void download(ProgressListener listener) throws Exception {
+        File part = new File(archive.getPath() + ".part"); part.delete();
+        HttpURLConnection c = (HttpURLConnection) new URL(RUNTIME_URL).openConnection();
+        c.setConnectTimeout(30_000); c.setReadTimeout(120_000); c.setInstanceFollowRedirects(true);
+        c.setRequestProperty("User-Agent", "BlockHost-Android/0.4");
+        if (c.getResponseCode() / 100 != 2) throw new IOException("Java download HTTP " + c.getResponseCode());
+        long total = c.getContentLengthLong(), done = 0; int last = -1;
+        try (InputStream in = new BufferedInputStream(c.getInputStream()); OutputStream out = new BufferedOutputStream(new FileOutputStream(part))) {
+            byte[] buf = new byte[262144]; int n;
+            while ((n = in.read(buf)) >= 0) {
+                out.write(buf, 0, n); done += n;
+                int p = total > 0 ? 2 + (int)Math.min(56, done * 56 / total) : 20;
+                if (p != last) { last = p; listener.onProgress("java-download", p, "Downloading Android Java: " + human(done) + (total > 0 ? " / " + human(total) : "")); }
             }
-        }
-        if (fallback != null) return fallback;
-        throw new IOException("Unable to find an Alpine ARM64 minirootfs");
+        } finally { c.disconnect(); }
+        if (!part.renameTo(archive)) Files.move(part.toPath(), archive.toPath(), StandardCopyOption.REPLACE_EXISTING);
     }
 
-    private String httpGet(String url) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-        connection.setConnectTimeout(20_000);
-        connection.setReadTimeout(40_000);
-        connection.setRequestProperty("User-Agent", "BlockHost-Android/0.2");
-        int code = connection.getResponseCode();
-        if (code < 200 || code >= 300) throw new IOException("HTTP " + code + " from " + url);
-        try (InputStream input = new BufferedInputStream(connection.getInputStream())) {
-            return FileIo.readUtf8(input);
-        } finally {
-            connection.disconnect();
-        }
-    }
-
-    private void download(String url, File output, String phase, ProgressListener listener) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
-        connection.setConnectTimeout(30_000);
-        connection.setReadTimeout(60_000);
-        connection.setRequestProperty("User-Agent", "BlockHost-Android/0.2");
-        connection.setInstanceFollowRedirects(true);
-        int code = connection.getResponseCode();
-        if (code < 200 || code >= 300) throw new IOException("Download failed with HTTP " + code);
-        long total = connection.getContentLengthLong();
-        output.getParentFile().mkdirs();
-        File partial = new File(output.getParentFile(), output.getName() + ".part");
-        byte[] buffer = new byte[128 * 1024];
-        long done = 0;
-        try (InputStream input = new BufferedInputStream(connection.getInputStream());
-             BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(partial))) {
-            int read;
-            while ((read = input.read(buffer)) >= 0) {
-                out.write(buffer, 0, read);
-                done += read;
-                int percent = total > 0 ? (int) Math.min(44, 2 + done * 42 / total) : 10;
-                listener.onProgress(phase, percent, "Downloading Linux runtime: " + humanBytes(done) + (total > 0 ? " / " + humanBytes(total) : ""));
-            }
-        } finally {
-            connection.disconnect();
-        }
-        if (!partial.renameTo(output)) {
-            Files.move(partial.toPath(), output.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    private static void extract(TarArchiveInputStream tar, File root, ProgressListener listener) throws Exception {
+        String rootPath = root.getCanonicalPath(); long count = 0; TarArchiveEntry entry;
+        while ((entry = tar.getNextTarEntry()) != null) {
+            String name = entry.getName().replace('\\', '/'); while (name.startsWith("./")) name = name.substring(2);
+            File out = new File(root, name).getCanonicalFile();
+            if (!out.getPath().equals(rootPath) && !out.getPath().startsWith(rootPath + File.separator)) throw new SecurityException("Unsafe Java archive path");
+            File parent = out.getParentFile(); if (parent != null) parent.mkdirs();
+            if (entry.isDirectory()) out.mkdirs();
+            else if (entry.isSymbolicLink()) { Files.deleteIfExists(out.toPath()); Os.symlink(entry.getLinkName(), out.getAbsolutePath()); }
+            else if (entry.isFile()) try (OutputStream file = new BufferedOutputStream(new FileOutputStream(out))) { byte[] buf = new byte[131072]; int n; while ((n = tar.read(buf)) >= 0) file.write(buf, 0, n); }
+            if (!entry.isSymbolicLink()) try { Os.chmod(out.getAbsolutePath(), entry.getMode()); } catch (Exception ignored) {}
+            if (++count % 300 == 0) listener.onProgress("java-extract", Math.min(96, 60 + (int)(count / 70)), "Extracting Android Java… " + count + " files");
         }
     }
 
-    private void extractTarGz(File archive, File destination, ProgressListener listener) throws Exception {
-        long processed = 0;
-        try (InputStream fileInput = new BufferedInputStream(new FileInputStream(archive));
-             GzipCompressorInputStream gzip = new GzipCompressorInputStream(fileInput);
-             TarArchiveInputStream tar = new TarArchiveInputStream(gzip)) {
-            TarArchiveEntry entry;
-            while ((entry = tar.getNextTarEntry()) != null) {
-                String name = entry.getName();
-                File target = new File(destination, name).getCanonicalFile();
-                String destinationPath = destination.getCanonicalPath();
-                if (!target.getPath().startsWith(destinationPath + File.separator) && !target.equals(destination)) {
-                    throw new SecurityException("Unsafe archive path: " + name);
-                }
-                if (entry.isDirectory()) {
-                    target.mkdirs();
-                } else if (entry.isSymbolicLink()) {
-                    File parent = target.getParentFile();
-                    if (parent != null) parent.mkdirs();
-                    try { Os.symlink(entry.getLinkName(), target.getAbsolutePath()); }
-                    catch (ErrnoException ignored) {}
-                } else if (entry.isLink()) {
-                    File linked = new File(destination, entry.getLinkName()).getCanonicalFile();
-                    File parent = target.getParentFile();
-                    if (parent != null) parent.mkdirs();
-                    try { Os.link(linked.getAbsolutePath(), target.getAbsolutePath()); }
-                    catch (ErrnoException ignored) {}
-                } else {
-                    File parent = target.getParentFile();
-                    if (parent != null) parent.mkdirs();
-                    try (BufferedOutputStream outputStream = new BufferedOutputStream(new FileOutputStream(target))) {
-                        byte[] buffer = new byte[64 * 1024];
-                        int read;
-                        while ((read = tar.read(buffer)) >= 0) outputStream.write(buffer, 0, read);
-                    }
-                }
-                try { Os.chmod(target.getAbsolutePath(), entry.getMode()); }
-                catch (Exception ignored) {}
-                processed++;
-                if (processed % 200 == 0) listener.onProgress("runtime-extract", 45 + (int) Math.min(20, processed / 250), "Extracting Linux runtime…");
-            }
-        }
-    }
+    private static File find(File root, String name) { File[] fs = root.listFiles(); if (fs == null) return null; for (File f : fs) { if (f.isFile() && f.getName().equals(name)) return f; if (f.isDirectory()) { File x = find(f, name); if (x != null) return x; } } return null; }
+    private static void collect(File root, List<File> out) { File[] fs = root.listFiles(); if (fs == null) return; for (File f : fs) { if (f.isDirectory()) collect(f, out); else if (f.getName().endsWith(".so")) out.add(f); } }
+    private static int rank(String n) { if (n.equals("libjli.so")) return 0; if (n.equals("libjvm.so")) return 1; if (n.equals("libverify.so")) return 2; if (n.equals("libjava.so")) return 3; return 100; }
+    private static void deleteQuietly(File f) { try { delete(f); } catch (Exception ignored) {} }
+    private static void delete(File f) throws IOException { if (f == null || !f.exists()) return; if (f.isDirectory() && !Files.isSymbolicLink(f.toPath())) { File[] fs=f.listFiles(); if(fs!=null) for(File x:fs) delete(x); } Files.deleteIfExists(f.toPath()); }
+    private static void verifyArm64() { for(String abi:Build.SUPPORTED_ABIS) if("arm64-v8a".equals(abi)) return; throw new IllegalStateException("ARM64 Android is required"); }
+    private static String human(long b) { double v=b; String[] u={"B","KB","MB","GB"}; int i=0; while(v>=1024&&i<u.length-1){v/=1024;i++;} return String.format(Locale.US,i==0?"%.0f %s":"%.1f %s",v,u[i]); }
 
-    private void writeRuntimeConfiguration() throws Exception {
-        File etc = new File(rootfsDir, "etc");
-        etc.mkdirs();
-        FileIo.writeUtf8(new File(etc, "resolv.conf"), "nameserver 1.1.1.1\nnameserver 8.8.8.8\n");
-        FileIo.writeUtf8(new File(etc, "hosts"), "127.0.0.1 localhost\n::1 localhost\n");
-    }
-
-    private static String humanBytes(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        double value = bytes;
-        String[] units = {"KB", "MB", "GB"};
-        int unit = -1;
-        do { value /= 1024.0; unit++; } while (value >= 1024 && unit < units.length - 1);
-        return String.format(java.util.Locale.US, "%.1f %s", value, units[unit]);
-    }
-
-    private static String tail(String text, int max) {
-        if (text == null) return "";
-        return text.length() <= max ? text : text.substring(text.length() - max);
-    }
-
-    private static void deleteRecursively(File file) throws IOException {
-        if (file == null || !file.exists()) return;
-        if (file.isDirectory() && !Files.isSymbolicLink(file.toPath())) {
-            File[] children = file.listFiles();
-            if (children != null) for (File child : children) deleteRecursively(child);
-        }
-        if (!file.delete() && file.exists()) throw new IOException("Unable to delete " + file);
+    public static final class Layout {
+        public final File javaHome, libjli; public final File[] preloadLibraries; public final String libraryPath;
+        Layout(File h, File j, File[] p, String l) { javaHome=h; libjli=j; preloadLibraries=p; libraryPath=l; }
     }
 }
