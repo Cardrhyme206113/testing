@@ -10,6 +10,7 @@
     listSpigotVersions: forceRefresh => call('listSpigotVersions',{forceRefresh:!!forceRefresh}),
     selectServer: id => call('selectServer',{id}),
     createServer: input => call('createServer',input),
+    acceptEula: id => call('acceptEula',{id}),
     deleteServer: id => call('deleteServer',{id}),
     installServer: (id,startAfterInstall=false) => call('installServer',{id,startAfterInstall}),
     startServer: id => call('startServer',{id}),
