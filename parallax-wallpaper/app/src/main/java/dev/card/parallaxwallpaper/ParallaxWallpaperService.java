@@ -74,8 +74,32 @@ public class ParallaxWallpaperService extends WallpaperService {
 
         private void initEgl(){
             display=EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY); int[] ver=new int[2]; if(!EGL14.eglInitialize(display,ver,0,ver,1))throw new RuntimeException("eglInitialize failed");
-            int[] attrs={EGL14.EGL_RENDERABLE_TYPE,0x40,EGL14.EGL_RED_SIZE,8,EGL14.EGL_GREEN_SIZE,8,EGL14.EGL_BLUE_SIZE,8,EGL14.EGL_DEPTH_SIZE,24,EGL14.EGL_NONE};
-            EGLConfig[] cfg=new EGLConfig[1]; int[] n=new int[1]; if(!EGL14.eglChooseConfig(display,attrs,0,cfg,0,1,n,0)||n[0]==0)throw new RuntimeException("No GLES3 config");
+
+            // Prefer a 4x multisampled default framebuffer. This smooths mesh/polygon
+            // edges before they ever reach the wallpaper surface. If the device/driver
+            // cannot expose a 4x GLES3 window config, fall back to the old non-MSAA path.
+            int[] msaaAttrs={
+                    EGL14.EGL_RENDERABLE_TYPE,0x40,
+                    EGL14.EGL_RED_SIZE,8,EGL14.EGL_GREEN_SIZE,8,EGL14.EGL_BLUE_SIZE,8,
+                    EGL14.EGL_DEPTH_SIZE,24,
+                    EGL14.EGL_SAMPLE_BUFFERS,1,
+                    EGL14.EGL_SAMPLES,4,
+                    EGL14.EGL_NONE
+            };
+            int[] fallbackAttrs={
+                    EGL14.EGL_RENDERABLE_TYPE,0x40,
+                    EGL14.EGL_RED_SIZE,8,EGL14.EGL_GREEN_SIZE,8,EGL14.EGL_BLUE_SIZE,8,
+                    EGL14.EGL_DEPTH_SIZE,24,
+                    EGL14.EGL_NONE
+            };
+            EGLConfig[] cfg=new EGLConfig[1]; int[] n=new int[1];
+            boolean found=EGL14.eglChooseConfig(display,msaaAttrs,0,cfg,0,1,n,0)&&n[0]>0;
+            if(!found){
+                n[0]=0;
+                if(!EGL14.eglChooseConfig(display,fallbackAttrs,0,cfg,0,1,n,0)||n[0]==0)
+                    throw new RuntimeException("No GLES3 config");
+            }
+
             int[] ca={EGL14.EGL_CONTEXT_CLIENT_VERSION,3,EGL14.EGL_NONE}; context=EGL14.eglCreateContext(display,cfg[0],EGL14.EGL_NO_CONTEXT,ca,0);
             int[] sa={EGL14.EGL_NONE}; surface=EGL14.eglCreateWindowSurface(display,cfg[0],holder,sa,0);
             if(context==EGL14.EGL_NO_CONTEXT||surface==EGL14.EGL_NO_SURFACE||!EGL14.eglMakeCurrent(display,surface,surface,context))throw new RuntimeException("Could not create EGL surface/context");
