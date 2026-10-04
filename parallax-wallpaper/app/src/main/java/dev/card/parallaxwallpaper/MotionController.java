@@ -142,10 +142,10 @@ public final class MotionController implements SensorEventListener {
             }
 
             // Horizontal parallax comes from rotation around screen Y; vertical parallax
-            // comes from rotation around screen X. Both signs are intentionally reversed
-            // versus the previous build, as requested.
+            // comes from rotation around screen X. Horizontal keeps the current direction;
+            // vertical is flipped relative to the previous build.
             targetX=clamp(-screenRotY/FULL_TILT_RAD,-1f,1f);
-            targetY=clamp(-screenRotX/FULL_TILT_RAD,-1f,1f);
+            targetY=clamp(screenRotX/FULL_TILT_RAD,-1f,1f);
         } else {
             // Fallback for hardware without a rotation-vector sensor.
             float gx=e.values[0], gy=e.values[1], gz=e.values[2];
@@ -191,9 +191,9 @@ public final class MotionController implements SensorEventListener {
             float verticalAngle=wrapPi((float)Math.atan2(nz,sy)-
                     (float)Math.atan2(baseScreenZ,baseScreenY));
 
-            // Reversed on both axes versus the previous build.
+            // Horizontal keeps the current direction; vertical is flipped.
             targetX=clamp(horizontalAngle/FULL_TILT_RAD,-1f,1f);
-            targetY=clamp(-verticalAngle/FULL_TILT_RAD,-1f,1f);
+            targetY=clamp(verticalAngle/FULL_TILT_RAD,-1f,1f);
         }
 
         // Fast, nearly direct tracking. Tiny changes are held to suppress sensor shimmer;
