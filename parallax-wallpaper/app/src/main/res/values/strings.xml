@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Parallax Wallpaper</string>
+    <string name="wallpaper_description">3D parallax wallpaper rendered from ParallaxPack scenes.</string>
+</resources>
