@@ -1,7 +1,6 @@
 package dev.cardrhyme.equirectshot;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
@@ -35,7 +34,7 @@ public final class CaptureManager {
     private int oldWindowHeight;
     private int oldTargetWidth;
     private int oldTargetHeight;
-    private boolean hudChanged;
+    private boolean oldHideGui;
 
     private CaptureManager() {}
 
@@ -49,7 +48,7 @@ public final class CaptureManager {
             EquirectShotClient.overlay(client, "EquirectShot: enter a world first");
             return;
         }
-        if (client.gui.screen() != null) {
+        if (client.screen != null) {
             EquirectShotClient.overlay(client, "EquirectShot: close menus before capturing");
             return;
         }
@@ -67,18 +66,16 @@ public final class CaptureManager {
         originalXRotO = cameraEntity.xRotO;
         originalYRotO = cameraEntity.yRotO;
 
-        RenderTarget target = client.gameRenderer.mainRenderTarget();
+        RenderTarget target = client.getMainRenderTarget();
         oldWindowWidth = client.getWindow().getWidth();
         oldWindowHeight = client.getWindow().getHeight();
         oldTargetWidth = target.width;
         oldTargetHeight = target.height;
+        oldHideGui = client.options.hideGui;
 
-        hudChanged = !client.gui.hud.isHidden();
-        if (hudChanged) client.gui.hud.toggle();
-
+        client.options.hideGui = true;
         client.gameRenderer.setRenderBlockOutline(false);
-        Camera camera = client.gameRenderer.mainCamera();
-        camera.enablePanoramicMode();
+        client.gameRenderer.setPanoramicMode(true);
         client.getWindow().setWidth(faceSize);
         client.getWindow().setHeight(faceSize);
         target.resize(faceSize, faceSize);
@@ -100,17 +97,12 @@ public final class CaptureManager {
         }
     }
 
-    /**
-     * Called around GameRenderer.update(). Sequential mode temporarily rotates
-     * the camera entity so Minecraft updates its real Camera for one cube face.
-     * Same-frame mode performs its own six updates in the burst instead.
-     */
-    public void beforeExtract(Minecraft client) {
+    public void beforeRenderLevel(Minecraft client) {
         if (!active || parallelFaces || cameraEntity == null) return;
         applyFaceRotation(face);
     }
 
-    public void afterExtract(Minecraft client) {
+    public void afterRenderLevel(Minecraft client) {
         if (!active || parallelFaces || cameraEntity == null) return;
         restoreEntityRotation();
     }
@@ -129,7 +121,7 @@ public final class CaptureManager {
 
         waitingForReadback = true;
         int capturedFace = face;
-        Screenshot.takeScreenshot(client.gameRenderer.mainRenderTarget(), image -> {
+        Screenshot.takeScreenshot(client.getMainRenderTarget(), image -> {
             try {
                 int w = image.getWidth();
                 int h = image.getHeight();
@@ -167,25 +159,17 @@ public final class CaptureManager {
         }
     }
 
-    /**
-     * Renders a face immediately without advancing the world simulation.
-     * All six calls happen inside one outer rendered frame, so game-time based
-     * clouds/weather/animations see effectively the same time sample.
-     */
     private void renderFaceNow(Minecraft client, int faceIndex) {
         applyFaceRotation(faceIndex);
         try {
-            client.gameRenderer.update(DeltaTracker.ONE);
+            client.gameRenderer.renderLevel(DeltaTracker.ONE);
         } finally {
             restoreEntityRotation();
         }
-
-        client.gameRenderer.extract(DeltaTracker.ONE, true);
-        client.gameRenderer.renderLevel(DeltaTracker.ONE);
     }
 
     private void queueParallelReadback(Minecraft client, int capturedFace) {
-        Screenshot.takeScreenshot(client.gameRenderer.mainRenderTarget(), image -> {
+        Screenshot.takeScreenshot(client.getMainRenderTarget(), image -> {
             try {
                 int w = image.getWidth();
                 int h = image.getHeight();
@@ -208,9 +192,7 @@ public final class CaptureManager {
 
         faces[capturedFace] = pixels;
         parallelReadbacks++;
-        if (parallelReadbacks == 6) {
-            finishCapture(client);
-        }
+        if (parallelReadbacks == 6) finishCapture(client);
     }
 
     private void faceReady(Minecraft client, int capturedFace, int[] pixels) {
@@ -267,15 +249,14 @@ public final class CaptureManager {
         waitingForReadback = false;
         if (cameraEntity != null) restoreEntityRotation();
         try {
-            client.gameRenderer.mainCamera().disablePanoramicMode();
+            client.gameRenderer.setPanoramicMode(false);
             client.gameRenderer.setRenderBlockOutline(true);
             client.getWindow().setWidth(oldWindowWidth);
             client.getWindow().setHeight(oldWindowHeight);
-            client.gameRenderer.mainRenderTarget().resize(oldTargetWidth, oldTargetHeight);
-            if (hudChanged && client.gui.hud.isHidden()) client.gui.hud.toggle();
+            client.getMainRenderTarget().resize(oldTargetWidth, oldTargetHeight);
+            client.options.hideGui = oldHideGui;
         } finally {
             cameraEntity = null;
-            hudChanged = false;
             parallelFaces = false;
             parallelReadbacks = 0;
         }
@@ -299,6 +280,7 @@ public final class CaptureManager {
     }
 
     private void restoreEntityRotation() {
+        if (cameraEntity == null) return;
         cameraEntity.setXRot(originalXRot);
         cameraEntity.setYRot(originalYRot);
         cameraEntity.xRotO = originalXRotO;
