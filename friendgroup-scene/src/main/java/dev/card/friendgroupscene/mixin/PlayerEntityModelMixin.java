@@ -2,6 +2,7 @@ package dev.card.friendgroupscene.mixin;
 
 import dev.card.friendgroupscene.Rot;
 import dev.card.friendgroupscene.SceneManager;
+import dev.card.friendgroupscene.SceneModelPoseReset;
 import dev.card.friendgroupscene.ScenePose;
 import net.minecraft.client.model.ModelPart;
 import net.minecraft.client.render.entity.model.PlayerEntityModel;
@@ -13,10 +14,16 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(PlayerEntityModel.class)
 public abstract class PlayerEntityModelMixin {
+    @Inject(method = "setAngles(Lnet/minecraft/client/render/entity/state/PlayerEntityRenderState;)V", at = @At("HEAD"))
+    private void friendgroup$restoreSharedPlayerModel(PlayerEntityRenderState state, CallbackInfo ci) {
+        SceneModelPoseReset.restoreOrCapture((PlayerEntityModel) (Object) this);
+    }
+
     @Inject(method = "setAngles(Lnet/minecraft/client/render/entity/state/PlayerEntityRenderState;)V", at = @At("TAIL"))
     private void friendgroup$applyHardcodedPose(PlayerEntityRenderState state, CallbackInfo ci) {
         ScenePose pose = SceneManager.poseForEntityId(state.id);
         if (pose == null) return;
+
         PlayerEntityModel model = (PlayerEntityModel) (Object) this;
         apply(model.head, pose.head());
         apply(model.body, pose.body());
@@ -24,6 +31,7 @@ public abstract class PlayerEntityModelMixin {
         apply(model.rightArm, pose.rightArm());
         apply(model.leftLeg, pose.leftLeg());
         apply(model.rightLeg, pose.rightLeg());
+
         copy(model.hat, model.head);
         copy(model.jacket, model.body);
         copy(model.leftSleeve, model.leftArm);
