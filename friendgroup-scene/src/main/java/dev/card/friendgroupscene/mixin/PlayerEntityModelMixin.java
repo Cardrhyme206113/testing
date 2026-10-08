@@ -11,22 +11,20 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(PlayerEntityModel.class)
+/*
+ * 1.21.9 model hierarchy note:
+ * hat is a CHILD of head;
+ * jacket is a CHILD of body;
+ * sleeves are CHILDREN of arms;
+ * pants are CHILDREN of legs.
+ *
+ * Therefore only pose the six parent body parts. The second-skin layers inherit
+ * the transform automatically. Copying the parent transform onto the child
+ * applies the rotation twice and produces the detached/spiky layers seen in the
+ * previous build.
+ */
+@Mixin(value = PlayerEntityModel.class, priority = 100)
 public abstract class PlayerEntityModelMixin {
-    @Inject(method = "setAngles(Lnet/minecraft/client/render/entity/state/PlayerEntityRenderState;)V", at = @At("HEAD"))
-    private void friendgroup$clearPreviousScenePose(PlayerEntityRenderState state, CallbackInfo ci) {
-        // Player renderers reuse their model instance between entities. Our
-        // scene sets yaw/roll fields vanilla doesn't always overwrite, so zero
-        // those staged rotations before vanilla computes the next entity.
-        PlayerEntityModel model = (PlayerEntityModel) (Object) this;
-        zero(model.head); zero(model.body);
-        zero(model.leftArm); zero(model.rightArm);
-        zero(model.leftLeg); zero(model.rightLeg);
-        zero(model.hat); zero(model.jacket);
-        zero(model.leftSleeve); zero(model.rightSleeve);
-        zero(model.leftPants); zero(model.rightPants);
-    }
-
     @Inject(method = "setAngles(Lnet/minecraft/client/render/entity/state/PlayerEntityRenderState;)V", at = @At("TAIL"))
     private void friendgroup$applyHardcodedPose(PlayerEntityRenderState state, CallbackInfo ci) {
         ScenePose pose = SceneManager.poseForEntityId(state.id);
@@ -40,45 +38,17 @@ public abstract class PlayerEntityModelMixin {
         applySkinviewRotation(model.leftLeg, pose.leftLeg());
         applySkinviewRotation(model.rightLeg, pose.rightLeg());
 
-        copy(model.hat, model.head);
-        copy(model.jacket, model.body);
-        copy(model.leftSleeve, model.leftArm);
-        copy(model.rightSleeve, model.rightArm);
-        copy(model.leftPants, model.leftLeg);
-        copy(model.rightPants, model.rightLeg);
+        // Do NOT touch hat/jacket/sleeves/pants here on 1.21.9.
+        // They are child ModelParts and follow these parents automatically.
     }
 
     /*
-     * skinview3d and Minecraft both use XYZ-style Euler components, but the
-     * player render basis differs by (x, -y, -z). Therefore:
-     *   pitch = +x, yaw = -y, roll = -z
-     * The previous build forgot the roll sign, which is why the arms/legs
-     * appeared corkscrewed and the seated poses were visibly wrong.
+     * skinview3d -> Minecraft 1.21.9 model basis:
+     * pitch = +x, yaw = -y, roll = -z.
      */
     private static void applySkinviewRotation(ModelPart part, Rot rot) {
         part.pitch = rot.x();
         part.yaw = -rot.y();
         part.roll = -rot.z();
-    }
-
-    private static void zero(ModelPart part) {
-        part.pitch = 0.0f;
-        part.yaw = 0.0f;
-        part.roll = 0.0f;
-        part.xScale = 1.0f;
-        part.yScale = 1.0f;
-        part.zScale = 1.0f;
-    }
-
-    private static void copy(ModelPart dst, ModelPart src) {
-        dst.originX = src.originX;
-        dst.originY = src.originY;
-        dst.originZ = src.originZ;
-        dst.pitch = src.pitch;
-        dst.yaw = src.yaw;
-        dst.roll = src.roll;
-        dst.xScale = src.xScale;
-        dst.yScale = src.yScale;
-        dst.zScale = src.zScale;
     }
 }
