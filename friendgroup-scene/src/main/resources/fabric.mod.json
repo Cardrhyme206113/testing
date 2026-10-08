@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "friendgroup_scene",
+  "version": "${version}",
+  "name": "Friend Group Scene",
+  "description": "Client-only hardcoded 21-player screenshot scene. /add places/replaces it; /remove clears it.",
+  "authors": ["Card"],
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.card.friendgroupscene.FriendGroupClient"]
+  },
+  "mixins": ["friendgroup_scene.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.17.2",
+    "minecraft": "1.21.9",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
