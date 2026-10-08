@@ -58,6 +58,7 @@ public final class ScenePlayerEntity extends OtherClientPlayerEntity {
         if (!frozen) return;
 
         setPosition(frozenX, frozenY, frozenZ);
+        setLastPositionAndAngles(new Vec3d(frozenX, frozenY, frozenZ), frozenYaw, 0.0f);
         setVelocity(Vec3d.ZERO);
         setYaw(frozenYaw);
         setPitch(0.0f);
@@ -65,12 +66,12 @@ public final class ScenePlayerEntity extends OtherClientPlayerEntity {
         // Keep current and previous render rotations identical. This prevents
         // the partial-tick interpolation from sweeping from an old angle to
         // the staged angle on every tick.
-        this.prevYaw = frozenYaw;
-        this.prevPitch = 0.0f;
+        this.lastYaw = frozenYaw;
+        this.lastPitch = 0.0f;
         this.bodyYaw = frozenYaw;
-        this.prevBodyYaw = frozenYaw;
+        this.lastBodyYaw = frozenYaw;
         this.headYaw = frozenYaw;
-        this.prevHeadYaw = frozenYaw;
+        this.lastHeadYaw = frozenYaw;
     }
 
     @Override
