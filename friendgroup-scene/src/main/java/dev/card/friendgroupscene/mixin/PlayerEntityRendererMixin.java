@@ -38,7 +38,7 @@ public abstract class PlayerEntityRendererMixin {
     @Inject(method = "renderRightArm", at = @At("HEAD"))
     private void friendgroup$resetBeforeRightHand(MatrixStack matrices, OrderedRenderCommandQueue queue, int light,
                                                    Identifier skinTexture, boolean sleeveVisible, CallbackInfo ci) {
-        PlayerEntityModel model = ((PlayerEntityRenderer) (Object) this).getModel();
+        PlayerEntityModel model = (PlayerEntityModel) ((PlayerEntityRenderer) (Object) this).getModel();
         neutralArm(model.rightArm);
         neutralArm(model.rightSleeve);
     }
@@ -46,7 +46,7 @@ public abstract class PlayerEntityRendererMixin {
     @Inject(method = "renderLeftArm", at = @At("HEAD"))
     private void friendgroup$resetBeforeLeftHand(MatrixStack matrices, OrderedRenderCommandQueue queue, int light,
                                                   Identifier skinTexture, boolean sleeveVisible, CallbackInfo ci) {
-        PlayerEntityModel model = ((PlayerEntityRenderer) (Object) this).getModel();
+        PlayerEntityModel model = (PlayerEntityModel) ((PlayerEntityRenderer) (Object) this).getModel();
         neutralArm(model.leftArm);
         neutralArm(model.leftSleeve);
     }
