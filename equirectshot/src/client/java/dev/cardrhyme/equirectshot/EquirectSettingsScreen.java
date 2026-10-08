@@ -15,26 +15,26 @@ public final class EquirectSettingsScreen extends Screen {
 
     @Override
     protected void init() {
-        int width = Math.min(310, this.width - 40);
-        int x = (this.width - width) / 2;
+        int controlWidth = Math.min(310, this.width - 40);
+        int x = (this.width - controlWidth) / 2;
         int y = this.height / 2 - 74;
 
-        this.addRenderableWidget(new ResolutionSlider(x, y, width));
-        this.addRenderableWidget(new DelaySlider(x, y + 26, width));
+        this.addRenderableWidget(new ResolutionSlider(x, y, controlWidth));
+        this.addRenderableWidget(new DelaySlider(x, y + 26, controlWidth));
         this.addRenderableWidget(Button.builder(parallelLabel(), button -> {
                     EquirectShotClient.CONFIG.parallelFaces = !EquirectShotClient.CONFIG.parallelFaces;
                     button.setMessage(parallelLabel());
                 })
-                .bounds(x, y + 52, width, 20)
+                .bounds(x, y + 52, controlWidth, 20)
                 .build());
         this.addRenderableWidget(Button.builder(selfLabel(), button -> {
                     EquirectShotClient.CONFIG.renderSelf = !EquirectShotClient.CONFIG.renderSelf;
                     button.setMessage(selfLabel());
                 })
-                .bounds(x, y + 78, width, 20)
+                .bounds(x, y + 78, controlWidth, 20)
                 .build());
         this.addRenderableWidget(Button.builder(Component.literal("Done"), button -> closeAndSave())
-                .bounds(x, y + 108, width, 20)
+                .bounds(x, y + 108, controlWidth, 20)
                 .build());
     }
 
@@ -44,12 +44,13 @@ public final class EquirectSettingsScreen extends Screen {
     }
 
     private static Component selfLabel() {
-        return Component.literal("Render own player: " + (EquirectShotClient.CONFIG.renderSelf ? "ON" : "OFF"));
+        return Component.literal("Render own player: " +
+                (EquirectShotClient.CONFIG.renderSelf ? "ON" : "OFF"));
     }
 
     private void closeAndSave() {
         EquirectShotClient.CONFIG.save();
-        if (this.minecraft != null) this.minecraft.gui.setScreen(parent);
+        if (this.minecraft != null) this.minecraft.setScreen(parent);
     }
 
     @Override
