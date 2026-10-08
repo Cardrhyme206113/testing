@@ -49,7 +49,10 @@ public final class SceneManager {
             double lz = actor.z() / SceneData.UNITS_PER_BLOCK;
             double rx = lx * cos - lz * sin;
             double rz = lx * sin + lz * cos;
-            float actorYaw = anchorYaw - (float) Math.toDegrees(actor.pose().all().y());
+            // Keep vanilla entity yaw for the scene's global facing only.
+            // The actor's own full XYZ "all" rotation is applied exactly in
+            // PlayerEntityTransformsMixin, matching skinview3d's rotation order.
+            float actorYaw = anchorYaw;
 
             UUID uuid = UUID.nameUUIDFromBytes((MOD_ID + ":actor:" + i).getBytes(StandardCharsets.UTF_8));
             GameProfile profile = new GameProfile(uuid, "FG" + String.format("%02d", i + 1));
