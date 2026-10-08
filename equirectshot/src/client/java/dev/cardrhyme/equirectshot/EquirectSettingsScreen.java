@@ -1,0 +1,104 @@
+package dev.cardrhyme.equirectshot;
+
+import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
+
+public final class EquirectSettingsScreen extends Screen {
+    private final Screen parent;
+
+    public EquirectSettingsScreen(Screen parent) {
+        super(Component.literal("EquirectShot"));
+        this.parent = parent;
+    }
+
+    @Override
+    protected void init() {
+        int controlWidth = Math.min(310, this.width - 40);
+        int x = (this.width - controlWidth) / 2;
+        int y = this.height / 2 - 74;
+
+        this.addRenderableWidget(new ResolutionSlider(x, y, controlWidth));
+        this.addRenderableWidget(new DelaySlider(x, y + 26, controlWidth));
+        this.addRenderableWidget(Button.builder(parallelLabel(), button -> {
+                    EquirectShotClient.CONFIG.parallelFaces = !EquirectShotClient.CONFIG.parallelFaces;
+                    button.setMessage(parallelLabel());
+                })
+                .bounds(x, y + 52, controlWidth, 20)
+                .build());
+        this.addRenderableWidget(Button.builder(selfLabel(), button -> {
+                    EquirectShotClient.CONFIG.renderSelf = !EquirectShotClient.CONFIG.renderSelf;
+                    button.setMessage(selfLabel());
+                })
+                .bounds(x, y + 78, controlWidth, 20)
+                .build());
+        this.addRenderableWidget(Button.builder(Component.literal("Done"), button -> closeAndSave())
+                .bounds(x, y + 108, controlWidth, 20)
+                .build());
+    }
+
+    private static Component parallelLabel() {
+        return Component.literal("Parallel / same-frame faces: " +
+                (EquirectShotClient.CONFIG.parallelFaces ? "ON" : "OFF"));
+    }
+
+    private static Component selfLabel() {
+        return Component.literal("Render own player: " +
+                (EquirectShotClient.CONFIG.renderSelf ? "ON" : "OFF"));
+    }
+
+    private void closeAndSave() {
+        EquirectShotClient.CONFIG.save();
+        if (this.minecraft != null) this.minecraft.setScreen(parent);
+    }
+
+    @Override
+    public void onClose() {
+        closeAndSave();
+    }
+
+    private static final class ResolutionSlider extends AbstractSliderButton {
+        ResolutionSlider(int x, int y, int width) {
+            super(x, y, width, 20, Component.empty(),
+                    (double) EquirectShotClient.CONFIG.resolutionIndex / (EquirectConfig.WIDTHS.length - 1));
+            updateMessage();
+        }
+
+        @Override
+        protected void updateMessage() {
+            int w = EquirectShotClient.CONFIG.outputWidth();
+            setMessage(Component.literal("Resolution: " + w + " × " + (w / 2)));
+        }
+
+        @Override
+        protected void applyValue() {
+            int last = EquirectConfig.WIDTHS.length - 1;
+            int index = (int) Math.round(this.value * last);
+            EquirectShotClient.CONFIG.resolutionIndex = Math.max(0, Math.min(last, index));
+            this.value = (double) EquirectShotClient.CONFIG.resolutionIndex / last;
+            updateMessage();
+        }
+    }
+
+    private static final class DelaySlider extends AbstractSliderButton {
+        DelaySlider(int x, int y, int width) {
+            super(x, y, width, 20, Component.empty(), EquirectShotClient.CONFIG.settleSeconds / 5.0);
+            updateMessage();
+        }
+
+        @Override
+        protected void updateMessage() {
+            setMessage(Component.literal(String.format(java.util.Locale.ROOT,
+                    "Shader settle / pre-capture wait: %.1f s", EquirectShotClient.CONFIG.settleSeconds)));
+        }
+
+        @Override
+        protected void applyValue() {
+            double seconds = Math.round(this.value * 50.0) / 10.0;
+            EquirectShotClient.CONFIG.settleSeconds = Math.max(0.0, Math.min(5.0, seconds));
+            this.value = EquirectShotClient.CONFIG.settleSeconds / 5.0;
+            updateMessage();
+        }
+    }
+}
