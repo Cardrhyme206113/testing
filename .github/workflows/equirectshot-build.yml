@@ -1,8 +1,8 @@
-name: Build EquirectShot 26.2
+name: Build EquirectShot 1.21.9
 
 on:
   push:
-    branches: [ equirectshot-26.2 ]
+    branches: [ equirectshot-1.21.9-build ]
     paths:
       - 'equirectshot/**'
       - '.github/workflows/equirectshot-build.yml'
@@ -18,16 +18,16 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.5.1'
+          gradle-version: '8.14.3'
       - name: Build
         run: gradle build --stacktrace
-      - name: Upload JAR
+      - name: Upload JARs
         uses: actions/upload-artifact@v4
         with:
-          name: EquirectShot-26.2
+          name: EquirectShot-1.21.9
           path: |
-            equirectshot/build/libs/equirectshot-26.2-1.0.0.jar
+            equirectshot/build/libs/*.jar
           if-no-files-found: error
