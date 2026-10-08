@@ -7,7 +7,7 @@ import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,7 +23,7 @@ public final class EquirectShotClient implements ClientModInitializer {
         CONFIG = EquirectConfig.load();
 
         KeyMapping.Category category = KeyMapping.Category.register(
-                Identifier.fromNamespaceAndPath("equirectshot", "main"));
+                ResourceLocation.fromNamespaceAndPath("equirectshot", "main"));
 
         captureKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.equirectshot.capture", InputConstants.Type.KEYSYM, InputConstants.KEY_F8, category));
@@ -41,15 +41,15 @@ public final class EquirectShotClient implements ClientModInitializer {
 
             while (settingsKey.consumeClick()) {
                 if (!CaptureManager.INSTANCE.isActive()) {
-                    client.gui.setScreen(new EquirectSettingsScreen(client.gui.screen()));
+                    client.setScreen(new EquirectSettingsScreen(client.screen));
                 }
             }
         });
     }
 
     public static void overlay(Minecraft client, String text) {
-        if (client.gui != null && client.gui.hud != null) {
-            client.gui.hud.setOverlayMessage(Component.literal(text), false);
+        if (client.gui != null) {
+            client.gui.setOverlayMessage(Component.literal(text), false);
         }
     }
 }
