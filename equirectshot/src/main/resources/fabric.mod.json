@@ -3,7 +3,7 @@
   "id": "equirectshot",
   "version": "${version}",
   "name": "EquirectShot",
-  "description": "Shader-friendly equirectangular screenshots captured over real rendered frames.",
+  "description": "Shader-friendly equirectangular screenshots captured from real rendered Minecraft frames.",
   "authors": ["Cardrhyme206113", "OpenAI"],
   "license": "MIT",
   "environment": "client",
@@ -14,9 +14,9 @@
     {"config": "equirectshot.client.mixins.json", "environment": "client"}
   ],
   "depends": {
-    "fabricloader": ">=0.19.3",
-    "minecraft": "~26.2",
-    "java": ">=25",
+    "fabricloader": ">=0.17.2",
+    "minecraft": "~1.21.9",
+    "java": ">=21",
     "fabric-api": "*"
   }
 }
