@@ -35,7 +35,7 @@ public final class SceneManager {
 
         ClientWorld world = client.world;
         sceneWorld = world;
-        Vec3d origin = client.player.getPos();
+        Vec3d origin = client.player.getEntityPos();
         float anchorYaw = client.player.getYaw();
         double yawRad = Math.toRadians(anchorYaw);
         double cos = Math.cos(yawRad);
