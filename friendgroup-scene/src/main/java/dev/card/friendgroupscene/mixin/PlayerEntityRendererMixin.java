@@ -1,7 +1,7 @@
 package dev.card.friendgroupscene.mixin;
 
-import dev.card.friendgroupscene.SceneModelPoseReset;
 import dev.card.friendgroupscene.ScenePlayerEntity;
+import net.minecraft.client.model.ModelPart;
 import net.minecraft.client.render.command.OrderedRenderCommandQueue;
 import net.minecraft.client.render.entity.PlayerEntityRenderer;
 import net.minecraft.client.render.entity.model.PlayerEntityModel;
@@ -32,21 +32,31 @@ public abstract class PlayerEntityRendererMixin {
         state.glidingTicks = 0.0f;
     }
 
-    /*
-     * PlayerEntityRenderer uses shared PlayerEntityModel instances. 1.21.9's
-     * first-person arm path does not necessarily reset every yaw/roll/scale
-     * modified by a previous third-person render, so restore the construction
-     * pose before either hand is drawn.
-     */
+    // Scene actors and the local first-person arm use the same renderer/model
+    // instances. Vanilla's arm-only path doesn't reset every yaw/roll field,
+    // so explicitly neutralize those fields before drawing the real hand.
     @Inject(method = "renderRightArm", at = @At("HEAD"))
     private void friendgroup$resetBeforeRightHand(MatrixStack matrices, OrderedRenderCommandQueue queue, int light,
                                                    Identifier skinTexture, boolean sleeveVisible, CallbackInfo ci) {
-        SceneModelPoseReset.restoreOrCapture(((PlayerEntityRenderer) (Object) this).getModel());
+        PlayerEntityModel model = ((PlayerEntityRenderer) (Object) this).getModel();
+        neutralArm(model.rightArm);
+        neutralArm(model.rightSleeve);
     }
 
     @Inject(method = "renderLeftArm", at = @At("HEAD"))
     private void friendgroup$resetBeforeLeftHand(MatrixStack matrices, OrderedRenderCommandQueue queue, int light,
                                                   Identifier skinTexture, boolean sleeveVisible, CallbackInfo ci) {
-        SceneModelPoseReset.restoreOrCapture(((PlayerEntityRenderer) (Object) this).getModel());
+        PlayerEntityModel model = ((PlayerEntityRenderer) (Object) this).getModel();
+        neutralArm(model.leftArm);
+        neutralArm(model.leftSleeve);
+    }
+
+    private static void neutralArm(ModelPart part) {
+        part.pitch = 0.0f;
+        part.yaw = 0.0f;
+        part.roll = 0.0f;
+        part.xScale = 1.0f;
+        part.yScale = 1.0f;
+        part.zScale = 1.0f;
     }
 }
