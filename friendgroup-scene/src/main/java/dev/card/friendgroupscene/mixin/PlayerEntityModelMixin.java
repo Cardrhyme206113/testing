@@ -24,17 +24,29 @@ public abstract class PlayerEntityModelMixin {
         apply(model.rightArm, pose.rightArm());
         apply(model.leftLeg, pose.leftLeg());
         apply(model.rightLeg, pose.rightLeg());
-        model.hat.copyTransform(model.head);
-        model.jacket.copyTransform(model.body);
-        model.leftSleeve.copyTransform(model.leftArm);
-        model.rightSleeve.copyTransform(model.rightArm);
-        model.leftPants.copyTransform(model.leftLeg);
-        model.rightPants.copyTransform(model.rightLeg);
+        copy(model.hat, model.head);
+        copy(model.jacket, model.body);
+        copy(model.leftSleeve, model.leftArm);
+        copy(model.rightSleeve, model.rightArm);
+        copy(model.leftPants, model.leftLeg);
+        copy(model.rightPants, model.rightLeg);
     }
 
     private static void apply(ModelPart part, Rot rot) {
         part.pitch = rot.x();
         part.yaw = -rot.y();
         part.roll = rot.z();
+    }
+
+    private static void copy(ModelPart dst, ModelPart src) {
+        dst.originX = src.originX;
+        dst.originY = src.originY;
+        dst.originZ = src.originZ;
+        dst.pitch = src.pitch;
+        dst.yaw = src.yaw;
+        dst.roll = src.roll;
+        dst.xScale = src.xScale;
+        dst.yScale = src.yScale;
+        dst.zScale = src.zScale;
     }
 }
