@@ -18,7 +18,9 @@ public abstract class PlayerEntityTransformsMixin {
         ScenePose pose = SceneManager.poseForEntityId(state.id);
         if (pose == null) return;
         float x = pose.all().x();
-        float z = pose.all().z();
+        // Same skinview3d -> Minecraft basis conversion as the limb model:
+        // x stays x, z changes sign.
+        float z = -pose.all().z();
         if (Math.abs(x) < 1.0e-6f && Math.abs(z) < 1.0e-6f) return;
         matrices.translate(0.0f, 1.0f, 0.0f);
         if (x != 0.0f) matrices.multiply(new Quaternionf().rotationX(x));
