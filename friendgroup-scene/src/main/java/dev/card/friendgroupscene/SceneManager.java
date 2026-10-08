@@ -58,10 +58,7 @@ public final class SceneManager {
 
             entity.setId(entityId);
             entity.refreshPositionAndAngles(origin.x + rx, origin.y + ly, origin.z + rz, actorYaw, 0.0f);
-            entity.setYaw(actorYaw);
-            entity.setBodyYaw(actorYaw);
-            entity.setHeadYaw(actorYaw);
-            entity.setVelocity(Vec3d.ZERO);
+            entity.friendgroup$freezeAt(origin.x + rx, origin.y + ly, origin.z + rz, actorYaw);
 
             POSES_BY_ENTITY_ID.put(entityId, actor.pose());
             world.addEntity(entity);
@@ -90,7 +87,8 @@ public final class SceneManager {
             sceneWorld = null;
             return;
         }
-        for (ScenePlayerEntity entity : SPAWNED) entity.setVelocity(Vec3d.ZERO);
+        // Each ScenePlayerEntity snaps its current + previous transforms back
+        // to the staged values in tick(), preventing partial-tick yaw jitter.
     }
 
     public static Text addMessage(int count) {
