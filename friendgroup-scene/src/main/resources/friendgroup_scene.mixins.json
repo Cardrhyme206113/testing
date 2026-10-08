@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "dev.card.friendgroupscene.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "PlayerEntityRendererMixin",
+    "PlayerEntityModelMixin",
+    "PlayerEntityTransformsMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
