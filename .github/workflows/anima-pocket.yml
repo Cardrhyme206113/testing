@@ -31,6 +31,7 @@ jobs:
           mkdir -p anima-pocket/app/src/main/cpp/vulkan-headers
           cp -a /usr/include/vulkan anima-pocket/app/src/main/cpp/vulkan-headers/
           if [ -d /usr/include/vk_video ]; then cp -a /usr/include/vk_video anima-pocket/app/src/main/cpp/vulkan-headers/; fi
+          cp -a /usr/include/spirv anima-pocket/app/src/main/cpp/vulkan-headers/
       - name: Build ARM64 APK
         run: cd anima-pocket && gradle --no-daemon --max-workers=2 assembleDebug
       - uses: actions/upload-artifact@v4
