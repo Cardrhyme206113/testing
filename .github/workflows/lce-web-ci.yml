@@ -50,6 +50,33 @@ jobs:
           path: smoke/
           if-no-files-found: error
           retention-days: 7
+      - name: Fetch verified one-time fix63 source bundle
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import concurrent.futures, hashlib, pathlib, urllib.request
+          urls = ["https://sdmntprnortheu.oaiusercontent.com/files/00000000-acb8-81f4-adc3-463c7cd357f4/raw?se=2026-10-14T15%3A13%3A16Z&sp=r&sv=2026-02-06&sr=b&scid=b9148d91-bbdc-5fef-87bb-e345d75ff2f4&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A44%3A29Z&ske=2026-10-15T05%3A44%3A29Z&sks=b&skv=2026-02-06&sig=x8Q4U5bzEbXGffBqeeS3KRmyEk1cf1Vli/agXAuBZlw%3D","https://sdmntprindiasocentral.oaiusercontent.com/files/00000000-d2d4-8211-a38e-a2dcf4988834/raw?se=2026-10-14T15%3A13%3A04Z&sp=r&sv=2026-02-06&sr=b&scid=30fe3497-077b-5913-91d9-bd777e013f5e&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A09%3A39Z&ske=2026-10-15T05%3A09%3A39Z&sks=b&skv=2026-02-06&sig=SvpVAQH2j5xCdnekaO%2BQE9mGkyPt9vTnZuI6RrJnPYk%3D","https://sdmntprindiasocentral.oaiusercontent.com/files/00000000-2324-8211-9619-bfdf397c2eff/raw?se=2026-10-14T15%3A12%3A59Z&sp=r&sv=2026-02-06&sr=b&scid=487fea0f-6dce-5daa-b128-b9348c4e3529&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T07%3A08%3A38Z&ske=2026-10-15T07%3A08%3A38Z&sks=b&skv=2026-02-06&sig=x6phBe3SiqcEJyMKp0vFs/3VZGQIFur8FGZXHwrarxg%3D","https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-2e94-820e-b245-49d051c8b73c/raw?se=2026-10-14T15%3A13%3A24Z&sp=r&sv=2026-02-06&sr=b&scid=30f1c3c5-ddc9-537a-a17a-7bfaa14baa60&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T06%3A17%3A27Z&ske=2026-10-15T06%3A17%3A27Z&sks=b&skv=2026-02-06&sig=O1qg3FfE8M62z78lQ57GmpYEkYCbCWgW3J9/SLFopUI%3D","https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-b430-820e-976d-a253adb92636/raw?se=2026-10-14T15%3A13%3A47Z&sp=r&sv=2026-02-06&sr=b&scid=df681e6f-75d4-55c6-a053-0d6413067605&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T13%3A54%3A34Z&ske=2026-10-15T13%3A54%3A34Z&sks=b&skv=2026-02-06&sig=ne2VpK2HIeTny79X/ZeuS9oUYKJgvTKt3beH1VXw0Nk%3D","https://sdmntprdenmarkeast.oaiusercontent.com/files/00000000-8250-8210-98a2-3520825791ab/raw?se=2026-10-14T15%3A13%3A28Z&sp=r&sv=2026-02-06&sr=b&scid=6a5f2d02-a9f0-585c-a5e4-67102e91535d&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T13%3A55%3A24Z&ske=2026-10-15T13%3A55%3A24Z&sks=b&skv=2026-02-06&sig=NGJiAH132dCabAODkuM9COwY9u71co1uXk3KaM%2BeaLk%3D","https://sdmntprbrazilsouth.oaiusercontent.com/files/00000000-0cbc-820e-9ca0-6d30f1354c87/raw?se=2026-10-14T15%3A13%3A42Z&sp=r&sv=2026-02-06&sr=b&scid=aace7495-ac5a-5f86-bd1d-080c467bc5a6&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A21%3A26Z&ske=2026-10-15T05%3A21%3A26Z&sks=b&skv=2026-02-06&sig=VWkUfBmyG9w77iHSQ6jsuT/uoJDKoQk5xWlMkhofyfI%3D","https://sdmntprindiasocentral.oaiusercontent.com/files/00000000-02fc-8211-8223-84e7a987ced5/raw?se=2026-10-14T15%3A13%3A33Z&sp=r&sv=2026-02-06&sr=b&scid=080d62ac-031c-52c0-8fe2-51f4b8b8c3ba&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T12%3A56%3A29Z&ske=2026-10-15T12%3A56%3A29Z&sks=b&skv=2026-02-06&sig=0l7DvL4Tsrk4W3RLHM9QwmT9u1wv0inrcerzl9rTA8k%3D","https://sdmntpraustraliaeast.oaiusercontent.com/files/00000000-81d8-81fa-8fc9-c43e787e0b60/raw?se=2026-10-14T15%3A14%3A01Z&sp=r&sv=2026-02-06&sr=b&scid=a352cd88-ffcf-551f-9322-217ce6221373&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A08%3A31Z&ske=2026-10-15T05%3A08%3A31Z&sks=b&skv=2026-02-06&sig=H5g7DAihxCZgkv8i7KWRlZfsY7KdvLvgY8vbjgDczzM%3D","https://sdmntpreastus2.oaiusercontent.com/files/00000000-6fc4-81f6-9f60-8e4ad0a34f3e/raw?se=2026-10-14T15%3A13%3A54Z&sp=r&sv=2026-02-06&sr=b&scid=25d31a42-d97d-56a1-add0-d0d750af519c&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T04%3A11%3A38Z&ske=2026-10-15T04%3A11%3A38Z&sks=b&skv=2026-02-06&sig=PYVk1LzO8rj5OQ1xraQmT/h7fiJyM9FOPOENNivsst8%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-bc38-820a-bad3-a389efd3e137/raw?se=2026-10-14T15%3A14%3A05Z&sp=r&sv=2026-02-06&sr=b&scid=de260ffd-41f1-5534-aef0-dce9e4f2e715&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T06%3A36%3A33Z&ske=2026-10-15T06%3A36%3A33Z&sks=b&skv=2026-02-06&sig=MT2O2y37vjFbqP3P73jxyNZqh/5rDBeQIwi0aC0wxvg%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-f784-81f4-9e11-20fb099988f0/raw?se=2026-10-14T15%3A13%3A51Z&sp=r&sv=2026-02-06&sr=b&scid=f201c41b-f44f-5399-811b-324719c4b041&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T06%3A42%3A47Z&ske=2026-10-15T06%3A42%3A47Z&sks=b&skv=2026-02-06&sig=PBX/MKsI8kbIixOOb4jTSq5YfKOcVJctZ/giIJjTn/Q%3D","https://sdmntprcentralus.oaiusercontent.com/files/00000000-a4d8-81f5-ac0e-4296f3ac6906/raw?se=2026-10-14T15%3A14%3A12Z&sp=r&sv=2026-02-06&sr=b&scid=f2755f3a-3a99-5f52-bc0c-a9b821fbad00&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T08%3A40%3A31Z&ske=2026-10-15T08%3A40%3A31Z&sks=b&skv=2026-02-06&sig=PzLw67%2BxtdRrVPn8sgCiJNVcmqfPGo8bWgWgfwmNuG0%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-2f6c-81f4-b718-9b4cfe1dfcaf/raw?se=2026-10-14T15%3A14%3A16Z&sp=r&sv=2026-02-06&sr=b&scid=05d11b53-4d78-5a81-a41e-89e8f981f05f&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T12%3A56%3A30Z&ske=2026-10-15T12%3A56%3A30Z&sks=b&skv=2026-02-06&sig=fi8OLeLGilYPsSVnyA3KokQaCiIisK%2BWXwPDcftYUKY%3D"]
+          folder=pathlib.Path("incoming/parts"); folder.mkdir(parents=True,exist_ok=True)
+          def fetch(i):
+              req=urllib.request.Request(urls[i],headers={"User-Agent":"LCE-Web-CI/1.0"})
+              with urllib.request.urlopen(req,timeout=180) as r:
+                  data=r.read()
+              if i<13 and len(data)!=15728640: raise RuntimeError(f"Chunk {i}: {len(data)} bytes")
+              (folder/f"part{i:02d}").write_bytes(data)
+              return len(data)
+          with concurrent.futures.ThreadPoolExecutor(max_workers=7) as pool:
+              sizes=list(pool.map(fetch,range(len(urls))))
+          print("Fetched",len(sizes),"chunks totaling",sum(sizes),"bytes")
+          target=pathlib.Path("incoming/source.zip")
+          with target.open("wb") as dst:
+              for p in sorted(folder.glob("part*")):
+                  with p.open("rb") as src:
+                      while data:=src.read(1048576): dst.write(data)
+          digest=hashlib.sha256(target.read_bytes()).hexdigest()
+          expected="416949e18d2ace16c1d3df434d76b6651618cb13dc655741a4ce1f87af19a70c"
+          if digest!=expected: raise SystemExit(f"SHA-256 mismatch: {digest}")
+          print("Source archive SHA-256 VERIFIED:",digest)
+          PY
       - name: Get optional LCE source archive
         id: source
         shell: bash
@@ -57,7 +84,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p incoming
-          if [ -n "$SOURCE_URL" ]; then
+          if [ -f incoming/source.zip ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$SOURCE_URL" ]; then
             case "$SOURCE_URL" in https://*) ;; *) echo "::error::Source URL must use HTTPS"; exit 1 ;; esac
             curl --fail --location --retry 3 --output incoming/source.zip "$SOURCE_URL"
             echo "available=true" >> "$GITHUB_OUTPUT"
