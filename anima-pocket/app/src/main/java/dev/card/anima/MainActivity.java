@@ -117,6 +117,7 @@ public class MainActivity extends Activity {
         }
         add(root,text("Decoder mode",13,hint),10);
         decoderType=spinner(new String[]{"TAEW2.1 (recommended)","Full Qwen VAE"},0);add(root,decoderType,2);
+        add(root,button("Inspect model headers (no ADB)",this::inspectModelFiles),12);
         add(root,text("GENERATION",17,accent),22);
         prompt=new EditText(this);prompt.setTextColor(Color.WHITE);prompt.setTextSize(15);prompt.setMinLines(3);
         prompt.setGravity(android.view.Gravity.TOP);prompt.setText(preferences.getString("prompt","anime illustration of a city at night"));
@@ -209,6 +210,7 @@ public class MainActivity extends Activity {
         });
     }
     String copyModel(Uri uri,int index)throws Exception{
+        byte[] originalHeader=sourcePrefix(uri,index);
         File dir=new File(getFilesDir(),"weights");if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create cache");
         long size=-1;try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){if(c!=null&&c.moveToFirst()&&!c.isNull(0))size=c.getLong(0);}
         byte[] hash=MessageDigest.getInstance("SHA-256").digest((uri.toString()+":"+size).getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -216,8 +218,14 @@ public class MainActivity extends Activity {
         String suffix=fileName(uri).toLowerCase(Locale.ROOT).endsWith(".gguf")?".gguf":".safetensors";
         File to=new File(dir,"m"+index+"-"+key+suffix);
         if(to.exists()&&to.length()>0&&(size<0||to.length()==size)){
-            validateWeights(to,index);
-            return to.getAbsolutePath();
+            byte[] cachedHeader;
+            try(FileInputStream input=new FileInputStream(to)){cachedHeader=prefix(input);}
+            if(java.util.Arrays.equals(cachedHeader,originalHeader)){
+                validateWeights(to,index);
+                return to.getAbsolutePath();
+            }
+            logOnUi("Cache "+index+" header differs from the selected original: deleting stale working copy.");
+            if(!to.delete())throw new IOException("Failed to remove stale cached model "+index);
         }
         if(size>0&&dir.getUsableSpace()<size+100*1048576L)throw new IOException("Not enough disk for local model cache");
         File tmp=new File(dir,to.getName()+".part");long bytes=0;
@@ -232,19 +240,76 @@ public class MainActivity extends Activity {
         validateWeights(to,index);
         return to.getAbsolutePath();
     }
-    void validateWeights(File file,int index)throws IOException{
-        if(file.length()<256)throw new IOException("Model file "+index+" is unusually small ("+file.length()+" bytes)");
-        byte[] hdr=new byte[16];
-        try(FileInputStream f=new FileInputStream(file)){
-            if(f.read(hdr)!=hdr.length)throw new IOException("Unable to read model header");
+    // Read only 32 bytes: inspecting a 1.24 GB model must be immediate.
+    byte[] prefix(InputStream stream)throws IOException{
+        byte[] b=new byte[32];
+        int pos=0;
+        while(pos<b.length){
+            int n=stream.read(b,pos,b.length-pos);
+            if(n<0)break;
+            if(n==0)break;
+            pos+=n;
         }
-        boolean gguf=hdr[0]=='G'&&hdr[1]=='G'&&hdr[2]=='U'&&hdr[3]=='F';
-        long jsonSize=0;for(int n=0;n<8;n++)jsonSize|=(long)(hdr[n]&255)<<(8*n);
-        boolean safetensors=jsonSize>2&&jsonSize<100000000&&jsonSize+8<file.length()&&hdr[8]=='{';
-        if(!gguf&&!safetensors)throw new IOException("File "+index+" isn't GGUF or safetensors. Check download completed correctly.");
-        final String kind=gguf?"GGUF":"safetensors";
-        final String detail="Verified file "+index+": "+kind+" · "+(file.length()/1048576)+" MiB";
-        runOnUiThread(()->appendDiagnostic(detail));
+        return java.util.Arrays.copyOf(b,pos);
+    }
+    String bytesInfo(byte[] b){
+        StringBuilder h=new StringBuilder(),ascii=new StringBuilder();
+        for(byte value:b){
+            int v=value&0xff;
+            h.append(String.format(Locale.US,"%02X ",v));
+            ascii.append(v>=32&&v<127?(char)v:'.');
+        }
+        return "hex=["+h.toString().trim()+"] ascii=["+ascii+"]";
+    }
+    boolean isValidHeader(byte[] hdr,long size){
+        boolean gguf=hdr.length>=4&&hdr[0]=='G'&&hdr[1]=='G'&&hdr[2]=='U'&&hdr[3]=='F';
+        long jsonSize=0;
+        if(hdr.length>=9)for(int n=0;n<8;n++)jsonSize|=(long)(hdr[n]&255)<<(8*n);
+        boolean safetensors=hdr.length>=9&&jsonSize>2&&jsonSize<100000000L&&jsonSize+8<size&&hdr[8]=='{';
+        return gguf||safetensors;
+    }
+    void logOnUi(String value){runOnUiThread(()->appendDiagnostic(value));}
+    byte[] sourcePrefix(Uri uri,int index)throws IOException{
+        long declared=-1;
+        try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){
+            if(c!=null&&c.moveToFirst()&&!c.isNull(0))declared=c.getLong(0);
+        }catch(Exception e){logOnUi("Source size unavailable: "+e);}
+        byte[] hdr;
+        try(InputStream in=getContentResolver().openInputStream(uri)){
+            if(in==null)throw new IOException("Android file picker could not open file "+index);
+            hdr=prefix(in);
+        }
+        logOnUi("Source "+index+" · "+fileName(uri)+" · provider size="+declared+" bytes · "+bytesInfo(hdr));
+        return hdr;
+    }
+    void inspectModelFiles(){
+        if(running)return;
+        for(int i=0;i<3;i++)if(preferences.getString(KEYS[i],null)==null){
+            Toast.makeText(this,"Select all three files first",Toast.LENGTH_LONG).show();return;
+        }
+        diagnostics.setLength(0);
+        appendDiagnostic("Model header inspection (no copying and no inference)");
+        executor.execute(()->{
+            for(int i=0;i<3;i++){
+                try{
+                    Uri uri=Uri.parse(preferences.getString(KEYS[i],""));
+                    byte[] header=sourcePrefix(uri,i);
+                    logOnUi("Source "+i+" signature valid: "+isValidHeader(header,Long.MAX_VALUE));
+                }catch(Exception e){logOnUi("Source "+i+" ERROR: "+e);}
+            }
+            runOnUiThread(this::showDiagnostics);
+        });
+    }
+    void validateWeights(File file,int index)throws IOException{
+        byte[] hdr;
+        try(FileInputStream f=new FileInputStream(file)){hdr=prefix(f);}
+        logOnUi("Cached "+index+" · "+file.length()+" bytes · "+bytesInfo(hdr));
+        if(!isValidHeader(hdr,file.length())){
+            throw new IOException("File "+index+" signature differs from GGUF/safetensors. "+
+                "Cached header: "+bytesInfo(hdr)+". Check Source header in diagnostics.");
+        }
+        logOnUi("Validated "+index+" ("+
+            (hdr[0]=='G'?"GGUF":"safetensors")+") · "+(file.length()/1048576)+" MiB");
     }
     Uri save(Bitmap bmp,long id)throws IOException{
         ContentValues cv=new ContentValues();
