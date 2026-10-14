@@ -64,7 +64,7 @@ public class MainActivity extends Activity {
         runOnUiThread(()->appendDiagnostic("ENGINE/"+level+"  "+message));
     }
     void appendDiagnostic(String message){
-        if(!message.endsWith("\\n"))message+="\\n";
+        if(!message.endsWith("\n"))message+="\n";
         diagnostics.append(message);
         if(diagnostics.length()>220000)diagnostics.delete(0,diagnostics.length()-160000);
         if(logView!=null){
