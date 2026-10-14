@@ -1,0 +1,152 @@
+name: LCE Web / Automated browser playtest
+on:
+  push:
+    branches: [lce-web-ci-20261014]
+    paths: ['.github/workflows/lce-web-playtest.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  chromium-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout automation
+        uses: actions/checkout@v4
+      - name: Download compiled fix63 browser artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lce-web-fix63-browser
+          repository: Cardrhyme206113/testing
+          run-id: 38586839326
+          github-token: ${{ github.token }}
+          path: site
+      - name: Verify runtime files
+        shell: bash
+        run: |
+          du -sh site
+          find site -maxdepth 3 -type f | head -65
+          test -f site/lce_web_demo.html
+          test -f site/lce_web_demo.js
+          test -f site/lce_web_demo.wasm
+          test -f site/lce_web_demo.data
+      - name: Install Playwright Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Run instrumented browser interaction
+        shell: bash
+        run: |
+          mkdir -p playtest-results
+          cat > playtest_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class Handler(SimpleHTTPRequestHandler):
+              def end_headers(self):
+                  self.send_header('Cross-Origin-Opener-Policy','same-origin')
+                  self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+                  self.send_header('Cross-Origin-Resource-Policy','same-origin')
+                  self.send_header('Cache-Control','no-store')
+                  super().end_headers()
+              def guess_type(self, path):
+                  if path.endswith('.wasm'): return 'application/wasm'
+                  if path.endswith('.data'): return 'application/octet-stream'
+                  if path.endswith('.js'): return 'application/javascript'
+                  return super().guess_type(path)
+          ThreadingHTTPServer(('127.0.0.1',8000),Handler).serve_forever()
+          PY
+          ( cd site; python3 ../playtest_server.py > ../playtest-results/server.log 2>&1 ) &
+          echo "SERVER_PID=$!" >> "$GITHUB_ENV"
+          sleep 2
+          curl -sSI http://127.0.0.1:8000/lce_web_demo.html
+          cat > playtest.cjs <<'JS'
+          const fs = require('fs');
+          const {chromium} = require('playwright');
+          const report = {started:new Date().toISOString(),browser:'Playwright Chromium',events:[],errors:[],failedRequests:[],steps:[],runtime:{},screenshots:[]};
+          const out='playtest-results';
+          const record=(name, data={})=>report.steps.push({time:new Date().toISOString(),name,...data});
+          const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+          async function main(){
+            const browser=await chromium.launch({headless:true,args:[
+              '--use-gl=angle', '--use-angle=swiftshader',
+              '--enable-unsafe-swiftshader','--enable-webgl',
+              '--disable-dev-shm-usage','--no-sandbox',
+              '--autoplay-policy=no-user-gesture-required'
+            ]});
+            const context=await browser.newContext({viewport:{width:1280,height:720},deviceScaleFactor:1,acceptDownloads:false,hasTouch:false});
+            const page=await context.newPage();
+            page.on('console',m=>{
+              if(report.events.length<500)report.events.push({type:m.type(),message:m.text().slice(0,1200)});
+            });
+            page.on('pageerror',e=>report.errors.push(String(e.stack||e).slice(0,4000)));
+            page.on('crash',()=>report.errors.push('Chromium page crashed'));
+            page.on('requestfailed',r=>{if(report.failedRequests.length<80)report.failedRequests.push({url:r.url(),reason:r.failure()?.errorText})});
+            page.on('dialog',async d=>{record('native-js-dialog',{type:d.type(),message:d.message()});await d.dismiss();});
+            page.on('response',r=>{if(r.status()>=400&&report.failedRequests.length<80)report.failedRequests.push({status:r.status(),url:r.url()})});
+            async function snap(name){
+              const p=out+'/'+name+'.png';
+              await page.screenshot({path:p,fullPage:false,timeout:25000});
+              report.screenshots.push(name+'.png');
+              const info=await page.evaluate(()=>{
+                const canvas=[...document.querySelectorAll('canvas')].map(x=>({id:x.id,width:x.width,height:x.height,bounds:Math.round(x.getBoundingClientRect().width)+'x'+Math.round(x.getBoundingClientRect().height)}));
+                const body=(document.body?.innerText||'').slice(0,3000);
+                const gl=(()=>{
+                  try{
+                    let c=document.createElement('canvas'),g=c.getContext('webgl2');
+                    return g?{version:g.getParameter(g.VERSION),renderer:g.getParameter(g.RENDERER)}:null;
+                  }catch(e){return {error:String(e)}}
+                })();
+                return {title:document.title,readyState:document.readyState,text:body,canvases:canvas.slice(0,30),crossOriginIsolated:crossOriginIsolated,webgl2:gl};
+              });
+              record('snapshot '+name,info);
+            }
+            const url='http://127.0.0.1:8000/lce_web_demo.html';
+            record('navigation-start',{url});
+            await page.goto(url,{waitUntil:'domcontentloaded',timeout:120000});
+            await snap('01-page-loaded');
+            await wait(20000);
+            await snap('02-boot-20s');
+            await wait(25000);
+            await snap('03-boot-45s');
+            // Try starting the original menu through both keyboard and the center canvas.
+            await page.keyboard.press('Enter');
+            await wait(4500);
+            await snap('04-after-enter');
+            await page.keyboard.press('Escape');
+            await wait(2000);
+            await snap('05-after-escape');
+            await page.mouse.click(640,370);
+            await wait(5000);
+            await snap('06-after-center-click');
+            report.runtime=await page.evaluate(()=>({
+              href:location.href,
+              isolation:crossOriginIsolated,
+              sw:typeof SharedArrayBuffer,
+              documentTitle:document.title,
+              text:(document.body?.innerText||'').slice(0,6000),
+              images:document.images.length,
+              loading:document.readyState
+            }));
+            await browser.close();
+          }
+          main().catch(e=>{report.errors.push('TEST_HARNESS: '+String(e.stack||e));process.exitCode=2}).finally(()=>{
+            report.finished=new Date().toISOString();
+            fs.writeFileSync(out+'/report.json',JSON.stringify(report,null,2));
+            fs.writeFileSync(out+'/summary.txt',JSON.stringify({steps:report.steps,errors:report.errors,failedRequests:report.failedRequests,events:report.events.filter(x=>/error|warn|LCE-Web|Ruffle|Runtime/i.test(x.message)).slice(-100)},null,2));
+            console.log('=== PLAYTEST SUMMARY ===');
+            console.log('screenshots:',report.screenshots);
+            console.log('steps:',report.steps.map(x=>({name:x.name,title:x.title,text:x.text?.slice(0,250),canvases:x.canvases?.length,crossOriginIsolated:x.crossOriginIsolated})));
+            console.log('page errors:',report.errors);
+            console.log('failed requests:',report.failedRequests.slice(0,25));
+            console.log('last meaningful console messages:',report.events.filter(x=>/error|warn|LCE-Web|Ruffle|Runtime|World/i.test(x.message)).slice(-35));
+          });
+          JS
+          timeout 270s node playtest.cjs 2>&1 | tee playtest-results/runner.log
+      - name: Upload playable screenshots and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-web-fix63-playtest
+          path: playtest-results/
+          retention-days: 14
+          if-no-files-found: warn
