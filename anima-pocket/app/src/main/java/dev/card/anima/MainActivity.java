@@ -40,7 +40,10 @@ public class MainActivity extends Activity {
     };
     SharedPreferences preferences;
     final TextView[] files = new TextView[3];
-    TextView status, outputs, devices;
+    TextView status, outputs, devices, logView;
+    final StringBuilder diagnostics=new StringBuilder();
+    long lastLogRefresh=0;
+    boolean logDirty=false;
     EditText prompt, seed;
     Spinner decoderType, resolution, steps, backend;
     CheckBox flash;
@@ -57,6 +60,41 @@ public class MainActivity extends Activity {
     Spinner spinner(String[] values,int index){Spinner s=new Spinner(this);ArrayAdapter<String> a=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,values);s.setAdapter(a);s.setSelection(index);s.setBackground(shape(panel));s.setPadding(dp(12),dp(10),dp(8),dp(10));return s;}
     void notifyStatus(String s){runOnUiThread(()->status.setText(s));}
     @SuppressWarnings("unused") public void onNativeStatus(String s){notifyStatus(s);}
+    @SuppressWarnings("unused") public void onNativeLog(int level,String message){
+        runOnUiThread(()->appendDiagnostic("ENGINE/"+level+"  "+message));
+    }
+    void appendDiagnostic(String message){
+        if(!message.endsWith("\\n"))message+="\\n";
+        diagnostics.append(message);
+        if(diagnostics.length()>220000)diagnostics.delete(0,diagnostics.length()-160000);
+        if(logView!=null){
+            long now=android.os.SystemClock.uptimeMillis();
+            if(now-lastLogRefresh>350 || message.startsWith("ENGINE/4")){
+                lastLogRefresh=now;
+                String recent=diagnostics.toString();
+                if(recent.length()>16000)recent=recent.substring(recent.length()-16000);
+                logView.setText(recent);
+            }
+        }
+    }
+    void showDiagnostics(){
+        if(logView!=null){String lines=diagnostics.toString();
+            if(lines.length()>16000)lines=lines.substring(lines.length()-16000);
+            logView.setText(lines.isEmpty()?"No logs captured yet.":lines);
+        }
+    }
+    void copyDiagnostics(){
+        showDiagnostics();
+        android.content.ClipboardManager cb=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+        cb.setPrimaryClip(android.content.ClipData.newPlainText("Anima Pocket engine log",diagnostics.toString()));
+        Toast.makeText(this,"Diagnostic log copied",Toast.LENGTH_SHORT).show();
+    }
+    void shareDiagnostics(){
+        showDiagnostics();
+        Intent i=new Intent(Intent.ACTION_SEND);i.setType("text/plain");
+        i.putExtra(Intent.EXTRA_TEXT,diagnostics.toString());
+        startActivity(Intent.createChooser(i,"Share Anima Pocket diagnostics"));
+    }
     void link(String s){startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(s)));}
 
     @Override public void onCreate(Bundle b){
@@ -96,7 +134,19 @@ public class MainActivity extends Activity {
         go=button("Generate",this::start);go.setBackground(shape(accent));add(root,go,16);
         stop=button("Cancel",()->{cancelNative();notifyStatus("Cancel requested…");});stop.setEnabled(false);add(root,stop,7);
         status=text("Ready. Select three files.",13,hint);add(root,status,12);
-        devices=text("Detecting backends…",11,hint);add(root,devices,4);
+        add(root,text("ENGINE DIAGNOSTICS · no ADB required",15,accent),16);
+        LinearLayout diagnosticActions=new LinearLayout(this);
+        diagnosticActions.addView(button("Copy log",this::copyDiagnostics),new LinearLayout.LayoutParams(0,dp(44),1));
+        LinearLayout.LayoutParams shareParams=new LinearLayout.LayoutParams(0,dp(44),1);shareParams.leftMargin=dp(8);
+        diagnosticActions.addView(button("Share log",this::shareDiagnostics),shareParams);
+        add(root,diagnosticActions,4);
+        logView=text("No logs captured yet.",11,hint);
+        logView.setTextIsSelectable(true);
+        logView.setTypeface(Typeface.MONOSPACE);
+        logView.setPadding(dp(12),dp(10),dp(12),dp(10));
+        logView.setBackground(shape(panel));
+        add(root,logView,6);
+        devices=text("Detecting backends…",11,hint);add(root,devices,9);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
         try{devices.setText("Backends: "+devices().replace('\t',' '));}catch(Throwable e){devices.setText("Backend detection error: "+e.getMessage());}
@@ -132,7 +182,12 @@ public class MainActivity extends Activity {
         boolean tae=decoderType.getSelectedItemPosition()==0, fa=flash.isChecked();
         long rand;try{rand=Long.parseLong(seed.getText().toString());}catch(NumberFormatException e){rand=-1;}
         if(rand<0)rand=new SecureRandom().nextLong()&Long.MAX_VALUE;
-        final long id=rand;preferences.edit().putString("prompt",p).apply();busy(true);
+        final long id=rand;preferences.edit().putString("prompt",p).apply();
+        diagnostics.setLength(0);
+        appendDiagnostic("Anima Pocket diagnostics, native init");
+        appendDiagnostic("Backend "+(target.isEmpty()?"auto":target)+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa);
+        for(int n=0;n<3;n++)appendDiagnostic("Selected file "+n+": "+preferences.getString(KEYS[n]+"_name","?"));
+        busy(true);
         executor.execute(()->{
             try{
                 String[] paths=new String[3];
@@ -143,7 +198,13 @@ public class MainActivity extends Activity {
                 Bitmap bmp=Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888);
                 Uri saved=save(bmp,id);long seconds=(System.nanoTime()-began)/1000000000L;
                 runOnUiThread(()->{image.setImageBitmap(bmp);status.setText("Complete in "+seconds+"s · seed "+id);outputs.setText("Saved "+saved);});
-            }catch(Throwable e){notifyStatus("Error: "+e.getMessage());}
+            }catch(Throwable e){
+                runOnUiThread(()->{
+                    appendDiagnostic("ERROR "+e.toString());
+                    showDiagnostics();
+                    status.setText("Error: "+e.getMessage()+" — tap Copy log below.");
+                });
+            }
             finally{busy(false);}
         });
     }
@@ -152,8 +213,12 @@ public class MainActivity extends Activity {
         long size=-1;try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){if(c!=null&&c.moveToFirst()&&!c.isNull(0))size=c.getLong(0);}
         byte[] hash=MessageDigest.getInstance("SHA-256").digest((uri.toString()+":"+size).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         StringBuilder key=new StringBuilder();for(int n=0;n<12;n++)key.append(String.format(Locale.US,"%02x",hash[n]));
-        File to=new File(dir,"m"+index+"-"+key+(index==0?".gguf":".safetensors"));
-        if(to.exists()&&to.length()>0&&(size<0||to.length()==size))return to.getAbsolutePath();
+        String suffix=fileName(uri).toLowerCase(Locale.ROOT).endsWith(".gguf")?".gguf":".safetensors";
+        File to=new File(dir,"m"+index+"-"+key+suffix);
+        if(to.exists()&&to.length()>0&&(size<0||to.length()==size)){
+            validateWeights(to,index);
+            return to.getAbsolutePath();
+        }
         if(size>0&&dir.getUsableSpace()<size+100*1048576L)throw new IOException("Not enough disk for local model cache");
         File tmp=new File(dir,to.getName()+".part");long bytes=0;
         notifyStatus("Importing "+fileName(uri)+"…");
@@ -164,7 +229,22 @@ public class MainActivity extends Activity {
         }catch(Exception e){tmp.delete();throw e;}
         if(size>=0&&bytes!=size){tmp.delete();throw new IOException("Incomplete model copy");}
         if(!tmp.renameTo(to)){tmp.delete();throw new IOException("Could not finish cache");}
+        validateWeights(to,index);
         return to.getAbsolutePath();
+    }
+    void validateWeights(File file,int index)throws IOException{
+        if(file.length()<256)throw new IOException("Model file "+index+" is unusually small ("+file.length()+" bytes)");
+        byte[] hdr=new byte[16];
+        try(FileInputStream f=new FileInputStream(file)){
+            if(f.read(hdr)!=hdr.length)throw new IOException("Unable to read model header");
+        }
+        boolean gguf=hdr[0]=='G'&&hdr[1]=='G'&&hdr[2]=='U'&&hdr[3]=='F';
+        long jsonSize=0;for(int n=0;n<8;n++)jsonSize|=(long)(hdr[n]&255)<<(8*n);
+        boolean safetensors=jsonSize>2&&jsonSize<100000000&&jsonSize+8<file.length()&&hdr[8]=='{';
+        if(!gguf&&!safetensors)throw new IOException("File "+index+" isn't GGUF or safetensors. Check download completed correctly.");
+        final String kind=gguf?"GGUF":"safetensors";
+        final String detail="Verified file "+index+": "+kind+" · "+(file.length()/1048576)+" MiB";
+        runOnUiThread(()->appendDiagnostic(detail));
     }
     Uri save(Bitmap bmp,long id)throws IOException{
         ContentValues cv=new ContentValues();
