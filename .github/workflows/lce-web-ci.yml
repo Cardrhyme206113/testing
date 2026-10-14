@@ -1,0 +1,129 @@
+name: LCE Web / Emscripten CI
+
+on:
+  push:
+    branches: [lce-web-ci-20261014]
+    paths:
+      - ".github/workflows/lce-web-ci.yml"
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "Optional direct HTTPS URL to the complete fix63 rooted project ZIP"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  web-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      SOURCE_URL: ${{ inputs.source_url || vars.LCE_SOURCE_URL || '' }}
+    steps:
+      - name: Checkout CI branch
+        uses: actions/checkout@v4
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 'latest'
+          actions-cache-folder: emsdk-cache
+      - name: Show tool versions
+        run: |
+          emcc --version | head -3
+          cmake --version | head -1
+          ninja --version
+          rustc --version
+          node --version
+      - name: Compile WebAssembly smoke test
+        shell: bash
+        run: |
+          mkdir -p smoke
+          printf '#include <stdio.h>\nint main(void){puts("Emscripten CI works!");return 0;}\n' > smoke/main.c
+          emcc smoke/main.c -O2 -sENVIRONMENT=web -o smoke/index.html
+          printf 'LCE Emscripten CI smoke build successful\n' > smoke/BUILD-STATUS.txt
+      - name: Upload smoke artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-emscripten-smoke
+          path: smoke/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Get optional LCE source archive
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p incoming
+          if [ -n "$SOURCE_URL" ]; then
+            case "$SOURCE_URL" in https://*) ;; *) echo "::error::Source URL must use HTTPS"; exit 1 ;; esac
+            curl --fail --location --retry 3 --output incoming/source.zip "$SOURCE_URL"
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif gh release download lce-web-input --repo "$GITHUB_REPOSITORY" --pattern 'lce-web-work-*.zip' --dir incoming; then
+            found="$(find incoming -maxdepth 1 -name 'lce-web-work-*.zip' -type f | head -1)"
+            if [ -n "$found" ]; then
+              mv "$found" incoming/source.zip
+              echo "available=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "available=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "No LCE source archive configured: smoke only"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Unpack full project
+        if: steps.source.outputs.available == 'true'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile("incoming/source.zip") as z:
+              z.testzip() is None or exit(1)
+              if not all(n == 'lce-web-work/' or n.startswith('lce-web-work/') for n in z.namelist()):
+                  raise SystemExit("Wrong ZIP root; expected lce-web-work/")
+              z.extractall(".")
+          PY
+          test -f lce-web-work/tools/build_web.sh
+          test -f lce-web-work/tools/build_ruffle_webiggy.sh
+      - name: Install LCE dependencies
+        if: steps.source.outputs.available == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake clang libpng-dev zlib1g-dev pkg-config
+          rustup target add wasm32-unknown-unknown
+      - name: Build patched Ruffle WebIggy
+        if: steps.source.outputs.available == 'true'
+        working-directory: lce-web-work
+        shell: bash
+        run: |
+          chmod +x tools/build_ruffle_webiggy.sh
+          ./tools/build_ruffle_webiggy.sh 2>&1 | tee ruffle-build.log
+      - name: Build full LCE WebAssembly
+        if: steps.source.outputs.available == 'true'
+        working-directory: lce-web-work
+        shell: bash
+        run: |
+          chmod +x tools/build_web.sh
+          ./tools/build_web.sh
+      - name: Upload LCE browser game
+        if: steps.source.outputs.available == 'true' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-web-fix63-browser
+          path: |
+            lce-web-work/build-web/
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: error
+      - name: Upload diagnostic logs
+        if: steps.source.outputs.available == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-web-build-logs
+          path: |
+            lce-web-work/web-build-all.log
+            lce-web-work/ruffle-build.log
+          if-no-files-found: ignore
+          retention-days: 14
