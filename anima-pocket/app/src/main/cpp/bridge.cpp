@@ -4,6 +4,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <cstdio>
 #include "stable-diffusion.h"
 
 namespace {
@@ -35,9 +36,27 @@ void notify(const std::string& msg){
     if(attached)vm->DetachCurrentThread();
 }
 void logs(sd_log_level_t level,const char* msg,void*){
+    if (!msg) return;
     __android_log_print(level>=SD_LOG_ERROR?ANDROID_LOG_ERROR:ANDROID_LOG_INFO,
-        "AnimaCore","%s",msg?msg:"");
-    if(level>=SD_LOG_ERROR&&msg)notify(std::string("Engine: ")+msg);
+        "AnimaCore","%s",msg);
+    // The phone user may have no ADB/Logcat access. Send the engine log
+    // to the app itself, preserving the complete diagnostic trail.
+    if(!vm || !activity) return;
+    JNIEnv* env=nullptr;
+    bool attached=false;
+    if(vm->GetEnv(reinterpret_cast<void**>(&env),JNI_VERSION_1_6)!=JNI_OK){
+        if(vm->AttachCurrentThread(&env,nullptr)!=JNI_OK) return;
+        attached=true;
+    }
+    jclass cls=env->GetObjectClass(activity);
+    jmethodID cb=env->GetMethodID(cls,"onNativeLog","(ILjava/lang/String;)V");
+    if(cb){
+        jstring line=env->NewStringUTF(msg);
+        if(line){ env->CallVoidMethod(activity,cb,static_cast<jint>(level),line);env->DeleteLocalRef(line); }
+        if(env->ExceptionCheck())env->ExceptionClear();
+    }
+    env->DeleteLocalRef(cls);
+    if(attached)vm->DetachCurrentThread();
 }
 void progress(int step,int total,float elapsed,void*){
     notify("Sampling "+std::to_string(step)+"/"+std::to_string(total)+" · "+std::to_string((int)elapsed)+"s");
@@ -74,6 +93,7 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     cancelled=false;
     sd_set_log_callback(logs,nullptr);
     sd_set_progress_callback(progress,nullptr);
+    notify("Runtime backend: " + (backend.empty()?std::string("auto"):backend));
     notify("Loading model and preparing Vulkan...");
     sd_ctx_params_t settings{};
     sd_ctx_params_init(&settings);
@@ -89,7 +109,7 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     sd_ctx_t* context=new_sd_ctx(&settings);
     if(!context){
         env->DeleteGlobalRef(activity);activity=nullptr;
-        failure(env,"Could not initialize model; inspect AnimaCore Logcat.");return nullptr;
+        failure(env,"Could not initialize model. See engine diagnostics below.");return nullptr;
     }
     {
         std::lock_guard<std::mutex> guard(mutex);
@@ -128,6 +148,6 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     }
     free_sd_ctx(context);
     env->DeleteGlobalRef(activity);activity=nullptr;
-    if(!output&&!env->ExceptionCheck())failure(env,cancelled?"Generation cancelled":"Generation failed; inspect Logcat.");
+    if(!output&&!env->ExceptionCheck())failure(env,cancelled?"Generation cancelled":"Generation failed. See engine diagnostics below.");
     return output;
 }
