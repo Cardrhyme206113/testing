@@ -118,6 +118,33 @@ jobs:
             await page.mouse.click(640,370);
             await wait(5000);
             await snap('06-after-center-click');
+            // Exercise the Create World UI.
+            await page.mouse.click(550,255);
+            await wait(1800);
+            await snap('07-world-name-dialog');
+            record('text-entry-dom',await page.evaluate(()=>({
+              active:document.activeElement?.outerHTML?.slice(0,600),
+              inputs:[...document.querySelectorAll('input,textarea')].map(e=>({tag:e.tagName,type:e.type,id:e.id,value:e.value,visible:!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length)}))
+            })));
+            await page.keyboard.press('ControlOrMeta+A');
+            await page.keyboard.insertText('Browser Playtest World');
+            await wait(700);
+            await snap('08-name-typed');
+            await page.keyboard.press('Enter');
+            await wait(1500);
+            await snap('09-name-confirmed');
+            // Try world creation and follow-up dialogs.
+            await page.mouse.click(640,646);
+            await wait(4500);
+            await snap('10-after-create-click');
+            await page.keyboard.press('Enter');
+            await wait(22000);
+            await snap('11-after-world-load');
+            await page.keyboard.down('w');await wait(1500);await page.keyboard.up('w');
+            await page.keyboard.press('Escape');
+            await wait(1500);
+            await snap('12-pause-after-movement');
+
             report.runtime=await page.evaluate(()=>({
               href:location.href,
               isolation:crossOriginIsolated,
@@ -141,7 +168,7 @@ jobs:
             console.log('last meaningful console messages:',report.events.filter(x=>/error|warn|LCE-Web|Ruffle|Runtime|World/i.test(x.message)).slice(-35));
           });
           JS
-          timeout 270s node playtest.cjs 2>&1 | tee playtest-results/runner.log
+          timeout 310s node playtest.cjs 2>&1 | tee playtest-results/runner.log
       - name: Upload playable screenshots and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
