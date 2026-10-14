@@ -1,0 +1,33 @@
+name: Anima Pocket Android
+on:
+  push:
+    branches: [anima-pocket]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Set up Android NDK and shader tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc libvulkan-dev spirv-headers ninja-build
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - name: Check out upstream inference engine
+        run: git clone --depth 1 --recurse-submodules https://github.com/leejet/stable-diffusion.cpp.git anima-pocket/app/src/main/cpp/stable-diffusion.cpp
+      - name: Build ARM64 APK
+        run: cd anima-pocket && gradle --no-daemon --max-workers=2 assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AnimaPocket-ARM64-APK
+          path: anima-pocket/app/build/outputs/apk/debug/app-debug.apk
