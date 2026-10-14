@@ -93,19 +93,34 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     cancelled=false;
     sd_set_log_callback(logs,nullptr);
     sd_set_progress_callback(progress,nullptr);
-    notify("Runtime backend: " + (backend.empty()?std::string("auto"):backend));
-    notify("Loading model and preparing Vulkan...");
+    const bool gpu=(backend=="vulkan-1.5" || backend=="vulkan-2.0");
+    if(!gpu && backend!="cpu"){
+        env->DeleteGlobalRef(activity);activity=nullptr;
+        failure(env,"Unknown backend safety profile");return nullptr;
+    }
+    std::string runtime=gpu?"diffusion=vulkan0,te=cpu,vae=cpu":"cpu";
+    std::string residency="diffusion=disk,te=cpu,vae=cpu";
+    std::string vram=backend=="vulkan-2.0"?"vulkan0=2.0":"vulkan0=1.5";
+    notify(gpu?"Preparing budgeted Vulkan (experimental)...":"Preparing CPU-only...");
+    logs(SD_LOG_INFO,(std::string("Profile=")+backend+" runtime="+runtime+
+        " weights="+residency+" maxVRAM="+(gpu?vram:"none")+
+        " prefetch=off eager=off threads=2").c_str(),nullptr);
     sd_ctx_params_t settings{};
     sd_ctx_params_init(&settings);
     settings.diffusion_model_path=model.c_str();
     settings.llm_path=llm.c_str();
     if(useTae)settings.taesd_path=decoder.c_str();
     else settings.vae_path=decoder.c_str();
-    settings.backend=backend.empty()?nullptr:backend.c_str();
+    settings.backend=runtime.c_str();
+    settings.params_backend=residency.c_str();
+    settings.max_vram=gpu?vram.c_str():nullptr;
+    settings.auto_fit=false;
     settings.enable_mmap=true;
+    settings.disable_prefetch=true;
+    settings.eager_load=false;
+    settings.conditioning_cache_size=0;
     settings.diffusion_flash_attn=flash;
-    settings.n_threads=4;
-    settings.auto_fit=true;
+    settings.n_threads=2;
     sd_ctx_t* context=new_sd_ctx(&settings);
     if(!context){
         env->DeleteGlobalRef(activity);activity=nullptr;

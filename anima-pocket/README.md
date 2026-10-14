@@ -1,12 +1,24 @@
-# Anima Pocket · experimental Android native inference
-Local offline Anima 2B / Anima Turbo app using stable-diffusion.cpp Vulkan backend.
-Use Android browser to download model files, then select each using Android's document picker. Original downloads remain outside app; a private working copy is made once per selected file.
+# Anima Pocket — Safe profile / v0.2
 
-Required weights:
-- Diffusion: https://huggingface.co/vanes430/Anima-Turbo-V1.1-GGUF/resolve/main/anima-turbo-v1.1-Q4_0.gguf?download=true
-- Qwen3 encoder: https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors?download=true
-- Tiny decoder: https://github.com/madebyollin/taehv/raw/refs/heads/main/safetensors/taew2_1.safetensors
-- Full alternative VAE: https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true
+Experimental offline Anima image generation for Android ARM64 using stable-diffusion.cpp.
 
-Build: Actions → Anima Pocket Android → latest successful build → AnimaPocket-ARM64-APK.
-This is not tested on a Dimensity 9300+. Vulkan numerics and performance may fail. CPU mode is offered as a diagnostic fallback; keep the screen on while generating. GitHub Actions produces a debug-signed APK (not a verified release).
+### Required files (not bundled in APK)
+- Main Anima Turbo Q4_0 GGUF: https://huggingface.co/vanes430/Anima-Turbo-V1.1-GGUF/resolve/main/anima-turbo-v1.1-Q4_0.gguf?download=true
+- **Qwen3-0.6B-Base Q4_K_M GGUF encoder**: https://huggingface.co/Antigma/Qwen3-0.6B-Base-GGUF/resolve/main/qwen3-0.6b-base-q4_k_m.gguf?download=true
+- TAEW2.1 tiny decoder: https://github.com/madebyollin/taehv/raw/refs/heads/main/safetensors/taew2_1.safetensors
+
+Files are selected through the Android file picker, copied into a private working cache when necessary, and validated using their headers. The original browser downloads survive app resets. Qwen3-0.6B-Base safetensors remains compatible, but GGUF is recommended for lower memory usage. Do not substitute Qwen3 Instruct.
+
+### Safety-focused profiles
+- **Default: CPU only**; GPU probing is not performed on launch. CPU inference can be extremely slow and may still exceed memory.
+- Optional explicit-acknowledgement Vulkan profiles: 1.5 GiB or 2.0 GiB **managed Vulkan budget**. Not a hard OS/driver memory cap, and a Mali driver stall may still reboot the phone.
+- Runtime: diffusion on Vulkan, TE and VAE on CPU, or CPU for all in diagnostic mode.
+- Weights: diffusion=disk, te=cpu, vae=cpu for all modes. `auto_fit=false`, `disable_prefetch=true`, `eager_load=false`, `enable_mmap=true`, `n_threads=2`, conditioning cache off. Expect potential slow disk-backed inference.
+- Preflight avoids inference if Android reports low memory or < 3 GiB RAM available (not a stability guarantee).
+- 512×512, 4 steps default. 384×384 lower-pressure option. Flash attention defaults off.
+- On-device native engine logs, model header inspection, copy/share logs.
+- GGUF main-model provider file < 200 MiB rejected, and all invalid headers rejected before model initialization.
+
+GitHub Actions workflow **Anima Pocket Android** builds debug signed APKs on the `anima-pocket` branch. The GitHub-hosted debug signing key is ephemeral, so updating a previous test APK may require uninstalling it first.
+
+**No claim of on-device correctness or reboot prevention.** Build success verifies compilation only.

@@ -34,7 +34,7 @@ public class MainActivity extends Activity {
     final String[] KEYS={"model","encoder","decoder"};
     final String[] URLS={
         "https://huggingface.co/vanes430/Anima-Turbo-V1.1-GGUF/resolve/main/anima-turbo-v1.1-Q4_0.gguf?download=true",
-        "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors?download=true",
+        "https://huggingface.co/Antigma/Qwen3-0.6B-Base-GGUF/resolve/main/qwen3-0.6b-base-q4_k_m.gguf?download=true",
         "https://github.com/madebyollin/taehv/raw/refs/heads/main/safetensors/taew2_1.safetensors",
         "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true"
     };
@@ -103,10 +103,10 @@ public class MainActivity extends Activity {
         ScrollView scroll=new ScrollView(this);scroll.setBackgroundColor(bg);scroll.setFillViewport(true);
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(20),dp(20),dp(20),dp(40));scroll.addView(root);setContentView(scroll);
         TextView title=text("ANIMA / POCKET",24,Color.WHITE);title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);add(root,title,0);
-        add(root,text("Native offline image generation · ARM64 Vulkan",12,hint),0);
+        add(root,text("ARM64 · safe memory profiles · GGUF Qwen supported",12,hint),0);
         add(root,text("MODEL FILES",17,accent),22);
         add(root,text("Download in your browser, then select local files. Browser Downloads survive app resets. The app caches working copies.",12,hint),2);
-        String[] labels={"01   Anima GGUF","02   Qwen3 text encoder","03   TAEW2.1 or full VAE"};
+        String[] labels={"01   Anima GGUF","02   Qwen3-0.6B-Base GGUF / safetensors","03   TAEW2.1 or full VAE"};
         for(int i=0;i<3;i++){
             final int n=i;add(root,text(labels[i],14,Color.WHITE),12);
             files[i]=text(preferences.getString(KEYS[i]+"_name","No file selected"),12,hint);add(root,files[i],0);
@@ -123,11 +123,12 @@ public class MainActivity extends Activity {
         prompt.setGravity(android.view.Gravity.TOP);prompt.setText(preferences.getString("prompt","anime illustration of a city at night"));
         prompt.setPadding(dp(14),dp(14),dp(14),dp(14));prompt.setBackground(shape(panel));add(root,prompt,5);
         add(root,text("Resolution",13,hint),12);
-        resolution=spinner(new String[]{"512 × 512","768 × 768","1024 × 1024","512 × 768","768 × 512"},0);add(root,resolution,2);
+        resolution=spinner(new String[]{"512 × 512","384 × 384","512 × 384","384 × 512"},0);add(root,resolution,2);
         add(root,text("Sampling steps",13,hint),12);
-        steps=spinner(new String[]{"4","6","8","10","12","16"},2);add(root,steps,2);
+        steps=spinner(new String[]{"4","6","8","10"},0);add(root,steps,2);
         add(root,text("Backend",13,hint),12);
-        backend=spinner(new String[]{"Hybrid Vulkan + CPU","Auto","All Vulkan","CPU diagnostic"},0);add(root,backend,2);
+        backend=spinner(new String[]{"CPU only (no GPU inference)","Vulkan conservative (1.5 GiB)","Vulkan experimental (2 GiB)"},0);
+        add(root,text("WARNING: this phone previously rebooted during Vulkan inference. Budgets do not cap all driver allocations. Try CPU mode first.",12,0xffffc278),6);add(root,backend,2);
         flash=new CheckBox(this);flash.setText("Experimental diffusion Flash Attention");flash.setTextColor(hint);add(root,flash,7);
         add(root,text("Seed (-1=random)",13,hint),7);
         seed=new EditText(this);seed.setTextColor(Color.WHITE);seed.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
@@ -147,10 +148,14 @@ public class MainActivity extends Activity {
         logView.setPadding(dp(12),dp(10),dp(12),dp(10));
         logView.setBackground(shape(panel));
         add(root,logView,6);
-        devices=text("Detecting backends…",11,hint);add(root,devices,9);
+        devices=text("Vulkan probing skipped at launch.",11,hint);add(root,devices,9);
+        add(root,button("Probe Vulkan devices (optional)",()->executor.execute(()->{
+            try{String detected=devices();runOnUiThread(()->devices.setText("Backends: "+detected.replace('\t',' ')));}
+            catch(Throwable e){runOnUiThread(()->devices.setText("Device probe error: "+e.getMessage()));}
+        })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        try{devices.setText("Backends: "+devices().replace('\t',' '));}catch(Throwable e){devices.setText("Backend detection error: "+e.getMessage());}
+
     }
     void pick(int n){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);startActivityForResult(i,900+n);}
     @Override protected void onActivityResult(int request,int result,Intent data){
@@ -173,20 +178,41 @@ public class MainActivity extends Activity {
     }
     void start(){
         if(running)return;
+        if(backend.getSelectedItemPosition()>0){
+            new android.app.AlertDialog.Builder(this)
+                .setTitle("Warning: Vulkan previously rebooted this phone")
+                .setMessage("This device suffered a complete restart while loading the model. A managed Vulkan budget is not a hard physical memory limit. Continue at your own risk, or use CPU-only diagnostics.")
+                .setNegativeButton("Cancel",null)
+                .setPositiveButton("Proceed anyway",(dialog,which)->startUnchecked())
+                .show();
+        }else startUnchecked();
+    }
+    void startUnchecked(){
+        if(running)return;
         String[] selected=new String[3];for(int n=0;n<3;n++){selected[n]=preferences.getString(KEYS[n],null);
             if(selected[n]==null){Toast.makeText(this,"Choose all model files",Toast.LENGTH_SHORT).show();return;}}
         String p=prompt.getText().toString().trim();if(p.isEmpty()){Toast.makeText(this,"Enter a prompt",Toast.LENGTH_SHORT).show();return;}
         String[] wh=resolution.getSelectedItem().toString().replace(" ","").split("×");
         int w=Integer.parseInt(wh[0]),h=Integer.parseInt(wh[1]),s=Integer.parseInt(steps.getSelectedItem().toString());
-        String[] backends={"diffusion=vulkan0,te=cpu,vae=cpu","","vulkan0","cpu"};
+        String[] backends={"cpu","vulkan-1.5","vulkan-2.0"};
         String target=backends[backend.getSelectedItemPosition()];
+        android.app.ActivityManager am=(android.app.ActivityManager)getSystemService(ACTIVITY_SERVICE);
+        android.app.ActivityManager.MemoryInfo mi=new android.app.ActivityManager.MemoryInfo();
+        if(am!=null){
+            am.getMemoryInfo(mi);
+            if(mi.lowMemory || mi.availMem<3L*1024*1024*1024){
+                status.setText("Not starting: only "+(mi.availMem/1048576)+" MiB RAM available or Android lowMemory set.");
+                return;
+            }
+        }
         boolean tae=decoderType.getSelectedItemPosition()==0, fa=flash.isChecked();
         long rand;try{rand=Long.parseLong(seed.getText().toString());}catch(NumberFormatException e){rand=-1;}
         if(rand<0)rand=new SecureRandom().nextLong()&Long.MAX_VALUE;
         final long id=rand;preferences.edit().putString("prompt",p).apply();
         diagnostics.setLength(0);
         appendDiagnostic("Anima Pocket diagnostics, native init");
-        appendDiagnostic("Backend "+(target.isEmpty()?"auto":target)+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa);
+        appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa);
+        if(am!=null)appendDiagnostic("Free system RAM "+(mi.availMem/1048576)+" MiB; lowMemory="+mi.lowMemory);
         for(int n=0;n<3;n++)appendDiagnostic("Selected file "+n+": "+preferences.getString(KEYS[n]+"_name","?"));
         busy(true);
         executor.execute(()->{
@@ -211,8 +237,12 @@ public class MainActivity extends Activity {
     }
     String copyModel(Uri uri,int index)throws Exception{
         byte[] originalHeader=sourcePrefix(uri,index);
+        if(!isValidHeader(originalHeader,Long.MAX_VALUE))
+            throw new IOException("File "+index+" is not a GGUF or safetensors file. Original bytes: "+bytesInfo(originalHeader));
         File dir=new File(getFilesDir(),"weights");if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create cache");
         long size=-1;try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){if(c!=null&&c.moveToFirst()&&!c.isNull(0))size=c.getLong(0);}
+        if(index==0 && size>0 && size<200L*1048576L)
+            throw new IOException("Android provides only "+(size/1048576)+" MiB for the main Anima model. Expected about 1.24 GB.");
         byte[] hash=MessageDigest.getInstance("SHA-256").digest((uri.toString()+":"+size).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         StringBuilder key=new StringBuilder();for(int n=0;n<12;n++)key.append(String.format(Locale.US,"%02x",hash[n]));
         String suffix=fileName(uri).toLowerCase(Locale.ROOT).endsWith(".gguf")?".gguf":".safetensors";
