@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           du -sh site
-          find site -maxdepth 3 -type f | head -65
+          find site -maxdepth 1 -type f -print
           test -f site/lce_web_demo.html
           test -f site/lce_web_demo.js
           test -f site/lce_web_demo.wasm
