@@ -70,10 +70,10 @@ jobs:
             const browser=await chromium.launch({headless:true,args:[
               '--use-gl=angle', '--use-angle=swiftshader',
               '--enable-unsafe-swiftshader','--enable-webgl',
-              '--disable-dev-shm-usage','--no-sandbox',
+              '--disable-dev-shm-usage','--no-sandbox','--lang=en-US',
               '--autoplay-policy=no-user-gesture-required'
             ]});
-            const context=await browser.newContext({viewport:{width:1280,height:720},deviceScaleFactor:1,acceptDownloads:false,hasTouch:false});
+            const context=await browser.newContext({viewport:{width:1280,height:720},deviceScaleFactor:1,acceptDownloads:false,hasTouch:false,locale:'en-US'});
             const page=await context.newPage();
             page.on('console',m=>{
               if(report.events.length<500)report.events.push({type:m.type(),message:m.text().slice(0,1200)});
@@ -96,7 +96,7 @@ jobs:
                     return g?{version:g.getParameter(g.VERSION),renderer:g.getParameter(g.RENDERER)}:null;
                   }catch(e){return {error:String(e)}}
                 })();
-                return {title:document.title,readyState:document.readyState,text:body,canvases:canvas.slice(0,30),crossOriginIsolated:crossOriginIsolated,webgl2:gl};
+                return {title:document.title,readyState:document.readyState,browserLocale:navigator.language,text:body,canvases:canvas.slice(0,30),crossOriginIsolated:crossOriginIsolated,webgl2:gl};
               });
               record('snapshot '+name,info);
             }
