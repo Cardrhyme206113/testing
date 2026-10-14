@@ -20,6 +20,11 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/stable-diffusion.cpp/CMakeLists.txt")
     message(FATAL_ERROR "Clone stable-diffusion.cpp with submodules before building.")
 endif()
 add_subdirectory(stable-diffusion.cpp "${CMAKE_BINARY_DIR}/sdcore")
+# NDK lacks Vulkan-Hpp, which GGML's Vulkan backend requires.
+# Header-only SDK copy; Vulkan library remains NDK's libvulkan.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-headers/vulkan/vulkan.hpp")
+    target_include_directories(ggml-vulkan BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-headers")
+endif()
 add_library(animabridge SHARED bridge.cpp)
 target_include_directories(animabridge PRIVATE stable-diffusion.cpp/include)
 target_link_libraries(animabridge PRIVATE stable-diffusion log android)

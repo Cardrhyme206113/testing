@@ -26,6 +26,11 @@ jobs:
           "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
       - name: Check out upstream inference engine
         run: git clone --depth 1 --recurse-submodules https://github.com/leejet/stable-diffusion.cpp.git anima-pocket/app/src/main/cpp/stable-diffusion.cpp
+      - name: Stage Vulkan SDK C and C++ headers
+        run: |
+          mkdir -p anima-pocket/app/src/main/cpp/vulkan-headers
+          cp -a /usr/include/vulkan anima-pocket/app/src/main/cpp/vulkan-headers/
+          if [ -d /usr/include/vk_video ]; then cp -a /usr/include/vk_video anima-pocket/app/src/main/cpp/vulkan-headers/; fi
       - name: Build ARM64 APK
         run: cd anima-pocket && gradle --no-daemon --max-workers=2 assembleDebug
       - uses: actions/upload-artifact@v4
