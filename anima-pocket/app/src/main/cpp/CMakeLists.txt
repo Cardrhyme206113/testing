@@ -9,6 +9,9 @@ set(SD_VULKAN ON CACHE BOOL "" FORCE)
 set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+# NDK cross-compilation isolates host CMake packages; SPIRV-Headers
+# is host-side, header-only build metadata required by ggml-vulkan.
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
 find_library(ANDROID_VULKAN_LIB vulkan REQUIRED)
 set(Vulkan_LIBRARY "${ANDROID_VULKAN_LIB}" CACHE FILEPATH "" FORCE)
 set(Vulkan_INCLUDE_DIR "${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include" CACHE PATH "" FORCE)
