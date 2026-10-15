@@ -109,7 +109,12 @@ async function run(){
     const scene={kind,title,opened:null,before:null,controls:[],tests:[],exceptions:[],status:'unknown'};
     report.scenes.push(scene);
     try{
+      if(kind>=20){await page.keyboard.press('Escape');await pause(1050);}
       scene.opened=await open(kind);
+      if(kind>=20 && scene.opened.result===0){
+        await page.keyboard.press('Escape');await pause(1300);
+        scene.opened=await open(kind);
+      }
       if(scene.opened.result!==1){scene.status='unavailable';return;}
       await pause(650);
       scene.before=await snapshot(`${kind}-${title}-initial`);
@@ -133,6 +138,7 @@ async function run(){
           const step={id:c.id,type:c.type,name:c.name,status:'unknown'};
           scene.tests.push(step);
           try{
+            if(kind>=20){await page.keyboard.press('Escape');await pause(850);}
             let r=await open(kind);
             if(r.result!==1){step.status='reopen-failed';step.result=r;break;}
             const prior=await movie();
