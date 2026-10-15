@@ -1,0 +1,78 @@
+name: LCE Web / Fix73 repaired More Options build
+on:
+  push:
+    branches: [lce-fix73-options-render-20261015]
+    paths: ['.github/workflows/lce-fix73-build.yml', 'tools/lce-fix73-apply.py', 'tools/lce-fix73-verify.cjs']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore fully compiled Fix70 LCE browser runtime
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38748564538
+          name: lce-web-fix63-browser
+          github-token: ${{ github.token }}
+          path: site
+      - name: Apply targeted Fix73 Ruffle geometry and panel repair
+        run: |
+          python3 tools/lce-fix73-apply.py site/lce_web_demo.js
+          node --check site/lce_web_demo.js
+          test -f site/lce_web_demo.wasm
+          test -f site/lce_web_demo.data
+          grep -q LCE_WEB_FIX73_OPTIONS_GEOMETRY site/lce_web_demo.js
+      - name: Install Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Start isolated original browser runtime
+        shell: bash
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,path):
+              if path.endswith('.wasm'):return 'application/wasm'
+              if path.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(path)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Validate real Flash menu hitboxes and backing
+        shell: bash
+        run: |
+          set -o pipefail
+          UI_TEST_OUT=fix73-evidence timeout 170s node tools/lce-fix73-verify.cjs | tee fix73-verify.log
+      - name: Upload browser-ready Fix73 game
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-web-fix73-playable
+          path: site/
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: error
+      - name: Upload validation screenshot and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix73-regression-evidence
+          path: |
+            fix73-evidence/
+            fix73-verify.log
+            server.log
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: warn
