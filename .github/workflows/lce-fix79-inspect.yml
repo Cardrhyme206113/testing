@@ -1,0 +1,63 @@
+name: LCE Web / Fix79 shared frame renderer inspection
+on:
+  push:
+    branches: [lce-fix79-frame-renderer-20261015]
+    paths: ['.github/workflows/lce-fix79-inspect.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download compiled runtime
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38782615512
+          name: lce-web-fix78-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Inspect original renderer code, scale9 and source mappings
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          files=sorted((p for p in Path('site').rglob('*') if p.is_file()),key=lambda p:p.stat().st_size)
+          for p in files:
+            if p.stat().st_size<500000 or p.suffix in ('.js','.html'):
+              print('FIX79_FILE',p,p.stat().st_size)
+          paths=[p for p in files if p.suffix in ('.js','.html','.css') and p.stat().st_size < 15000000]
+          needles=['function setNativeScale9Panel','function draw','function paint','scale9','nineSlice','9slice','drawImage','putImageData','native-panel','scale-grid','Ruffle','function createScale9']
+          for p in paths:
+            s=p.read_text(errors='replace')
+            for token in needles:
+              count=s.lower().count(token.lower())
+              print('FIX79_TOKEN',p,repr(token),'count',count)
+              if count and token in ('function setNativeScale9Panel','function draw','function paint','nineSlice','9slice','drawImage','putImageData','native-panel','scale-grid','function createScale9'):
+                found=list(re.finditer(re.escape(token),s,re.I))
+                for m in found[:6]:
+                  print('FIX79_SNIPPET',p,token,m.start())
+                  print(s[max(0,m.start()-450):m.start()+3800].replace('\n',' ')[:4300])
+          PY
+      - name: Archive extracted runtime snippets
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          for p in [Path('site/lce_web_demo.js'),Path('site/lce_web_demo.html')]:
+            if not p.exists():continue
+            s=p.read_text(errors='replace')
+            positions=[s.find(k) for k in ['function setNativeScale9Panel','function setNativeMenuHelpPanel','function createScale9','function getValue']]
+            lines=[]
+            for pos in positions:
+              if pos>=0: lines.append(s[max(0,pos-1000):pos+12000])
+            Path(p.name+'.snippets.txt').write_text('\n-----\n'.join(lines))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix79-runtime-renderer-excerpts
+          path: '*.snippets.txt'
+          compression-level: 1
