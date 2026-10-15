@@ -1,0 +1,59 @@
+name: LCE Web / Fix75 shared UI rendering diagnosis
+on:
+  push:
+    branches: [lce-fix75-ui-recovery-20261015]
+    paths: ['.github/workflows/lce-fix75-probe.yml','tools/lce-fix75-probe.cjs']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download playable Fix73 browser build
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38772489669
+          name: lce-web-fix73-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Install headless Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Start original compiled LCE web game
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,path):
+              if path.endswith('.wasm'):return 'application/wasm'
+              if path.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(path)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Compare original Flash versus native overlays and restore control positions
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 380s node tools/lce-fix75-probe.cjs | tee fix75-run.log
+      - name: Publish all probes including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix75-root-cause-probes
+          path: |
+            fix75-probe/
+            fix75-run.log
+          compression-level: 1
+          retention-days: 14
