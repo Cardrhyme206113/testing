@@ -120,8 +120,7 @@ jobs:
           test -f lce-web-work/tools/build_ruffle_webiggy.sh
           cp -a incoming/overlay/lce-web-work/. lce-web-work/
           test -f lce-web-work/FIX70-UI-STATUS.md
-          cp -a incoming/overlay/lce-web-work/. lce-web-work/
-          grep -q LCE_WEBIGGY_RUFFLE_PATCH_16 lce-web-work/tools/patch_ruffle_webiggy.py
+          grep -q LCE_WEBIGGY_RUFFLE_PATCH_14 lce-web-work/tools/patch_ruffle_webiggy.py
       - name: Install LCE dependencies
         if: steps.source.outputs.available == 'true'
         run: |
