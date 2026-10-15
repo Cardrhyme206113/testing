@@ -1,0 +1,126 @@
+{
+  "cases": [
+    {
+      "scene": 3,
+      "name": "options",
+      "result": 1,
+      "info": {
+        "player": "SettingsOptionsMenu720.swf",
+        "id": 18,
+        "background": {
+          "exists": true,
+          "visible": false,
+          "x": 476,
+          "y": 291,
+          "width": 339,
+          "height": 185
+        },
+        "overlays": [
+          "fix80-settings-nine-slice-frame"
+        ]
+      },
+      "expect": true,
+      "repaired": true
+    },
+    {
+      "scene": 4,
+      "name": "audio",
+      "result": 1,
+      "info": {
+        "player": "SettingsAudioMenu720.swf",
+        "id": 19,
+        "background": {
+          "exists": true,
+          "visible": false,
+          "x": 474,
+          "y": 249,
+          "width": 330,
+          "height": 106
+        },
+        "overlays": [
+          "fix80-settings-nine-slice-frame"
+        ]
+      },
+      "expect": true,
+      "repaired": true
+    },
+    {
+      "scene": 5,
+      "name": "control",
+      "result": 1,
+      "info": {
+        "player": "SettingsControlMenu720.swf",
+        "id": 22,
+        "background": {
+          "exists": true,
+          "visible": false,
+          "x": 474,
+          "y": 249,
+          "width": 330,
+          "height": 106
+        },
+        "overlays": [
+          "fix80-settings-nine-slice-frame"
+        ]
+      },
+      "expect": true,
+      "repaired": true
+    },
+    {
+      "scene": 6,
+      "name": "graphics",
+      "result": 1,
+      "info": {
+        "player": "SettingsGraphicsMenu720.swf",
+        "id": 23,
+        "background": {
+          "exists": true,
+          "visible": false,
+          "x": 474,
+          "y": 249,
+          "width": 330,
+          "height": 222
+        },
+        "overlays": [
+          "fix80-settings-nine-slice-frame"
+        ]
+      },
+      "expect": true,
+      "repaired": true
+    },
+    {
+      "scene": 7,
+      "name": "interface",
+      "result": 1,
+      "info": {
+        "player": "SettingsUIMenu720.swf",
+        "id": 24,
+        "background": {
+          "exists": true,
+          "visible": false,
+          "x": 455,
+          "y": 214,
+          "width": 383,
+          "height": 212
+        },
+        "overlays": [
+          "fix80-settings-nine-slice-frame"
+        ]
+      },
+      "expect": true,
+      "repaired": true
+    }
+  ],
+  "errors": [],
+  "passed": true,
+  "at": "2026-10-15T18:51:51.392Z",
+  "create": {
+    "result": 1,
+    "visible": [
+      "ToolTips720.swf",
+      "PressStartToPlay720.swf",
+      "Panorama720.swf",
+      "CreateWorldMenu720.swf"
+    ]
+  }
+}
