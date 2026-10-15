@@ -1,0 +1,26 @@
+{
+  "paths": [
+    {
+      "path": "MainPanel",
+      "visible": "true",
+      "x": "395.9",
+      "y": "110",
+      "width": "628",
+      "height": "498",
+      "alpha": "1"
+    }
+  ],
+  "properties": {
+    "BackgroundPanel": "undefined",
+    "Panel_2": "undefined",
+    "FJ_Panel9Grid": "undefined",
+    "scale9Grid": "null",
+    "numChildren": "17",
+    "__lce_children": "undefined",
+    "visible": "true",
+    "alpha": "1",
+    "_alpha": "undefined"
+  },
+  "errors": [],
+  "id": 18
+}
