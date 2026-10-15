@@ -1,0 +1,57 @@
+name: LCE Web / Create World Click Audit
+on:
+  push:
+    branches: [lce-web-ci-20261014]
+    paths: ['.github/workflows/lce-createworld-audit.yml','tools/lce-createworld-audit.cjs']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  click-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download compiled fix65
+        uses: actions/download-artifact@v4
+        with:
+          name: lce-web-fix63-browser
+          repository: Cardrhyme206113/testing
+          run-id: 38680264919
+          github-token: ${{ github.token }}
+          path: site
+      - name: Install Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Click every Create World UI element
+        run: |
+          mkdir -p createworld-evidence
+          cat > serve-audit.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+              def end_headers(self):
+                  self.send_header('Cross-Origin-Opener-Policy','same-origin')
+                  self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+                  self.send_header('Cross-Origin-Resource-Policy','same-origin')
+                  super().end_headers()
+              def guess_type(self,path):
+                  if path.endswith('.wasm'):return 'application/wasm'
+                  if path.endswith('.data'):return 'application/octet-stream'
+                  return super().guess_type(path)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../serve-audit.py > ../createworld-evidence/server.log 2>&1) &
+          sleep 2
+          curl --fail -sSI http://127.0.0.1:8000/lce_web_demo.html
+          timeout 660s node tools/lce-createworld-audit.cjs 2>&1 | tee createworld-evidence/output.log
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fix65-createworld-click-screenshots
+          path: createworld-evidence/
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: warn
