@@ -1,0 +1,108 @@
+name: LCE Web fix64 UI build and playtest
+on:
+  push:
+    branches: [lce-web-ui-audit-20261015]
+    paths: ['.github/workflows/lce-fix64-verify.yml']
+permissions:
+  contents: read
+jobs:
+  build-and-playtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 160
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 'latest'
+          actions-cache-folder: emsdk-cache
+      - name: Fetch and reconstruct fix64 source
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, concurrent.futures, urllib.request, hashlib, zipfile
+          urls=["https://sdmntprnortheu.oaiusercontent.com/files/00000000-889c-81f4-ace2-f950f09b64e9/raw?se=2026-10-15T03%3A34%3A17Z&sp=r&sv=2026-02-06&sr=b&scid=8f064e48-1762-5b45-8856-cd665ec7dc26&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A22%3A05Z&ske=2026-10-16T02%3A22%3A05Z&sks=b&skv=2026-02-06&sig=0PJh3emQjm8kO9Bc0C/hifAuyIcDXhQtYhUcxd5UjGk%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-a90c-81f4-acbf-098cc34bbb1c/raw?se=2026-10-15T03%3A34%3A17Z&sp=r&sv=2026-02-06&sr=b&scid=ece7bd9a-56b4-5b93-ad52-71afac72c8d1&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A21%3A37Z&ske=2026-10-16T02%3A21%3A37Z&sks=b&skv=2026-02-06&sig=BFzjgVhgmP5gXmtd1v7O5q25yEgOpLp7nMpQM9iWh%2BQ%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-a428-81f4-b992-c1e6742bf983/raw?se=2026-10-15T03%3A34%3A16Z&sp=r&sv=2026-02-06&sr=b&scid=630be805-6197-5c77-a284-8fa2be2a5af9&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A07%3A03Z&ske=2026-10-16T03%3A07%3A03Z&sks=b&skv=2026-02-06&sig=tezaplADoNpK9JD%2BDlsjFA/Tk2DmLrT5FS5dEDwaT0s%3D","https://sdmntprukwest.oaiusercontent.com/files/00000000-e34c-8243-a2b9-90b6907b08e1/raw?se=2026-10-15T03%3A34%3A16Z&sp=r&sv=2026-02-06&sr=b&scid=a2103364-e4c4-58d6-a4d6-928ff8005166&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A19%3A44Z&ske=2026-10-16T03%3A19%3A44Z&sks=b&skv=2026-02-06&sig=l9Q3Wq/YK4TuvRCOi429N/BAQc9%2BMtFX6paPE5eOS04%3D","https://sdmntprukwest.oaiusercontent.com/files/00000000-65f8-8243-a438-7e13f282e110/raw?se=2026-10-15T03%3A34%3A21Z&sp=r&sv=2026-02-06&sr=b&scid=b5cf8d81-f070-5e39-b90f-9c1b772868c4&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A22%3A34Z&ske=2026-10-16T02%3A22%3A34Z&sks=b&skv=2026-02-06&sig=APjF86fgeTlF04Wa%2Bnd2S6W4N4j6KjSGNKWy%2BoYOaJw%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-6e84-820a-b9b0-ccc750562db6/raw?se=2026-10-15T03%3A34%3A20Z&sp=r&sv=2026-02-06&sr=b&scid=8f105967-22c4-5634-a423-2fea625c08b8&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A55%3A47Z&ske=2026-10-16T02%3A55%3A47Z&sks=b&skv=2026-02-06&sig=0N7fdOb1NQedvsTD2ILhS2p%2Bi1%2BAvnFaYx1m160nJgM%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-c64c-81f4-bba6-1f1592ffa40f/raw?se=2026-10-15T03%3A34%3A21Z&sp=r&sv=2026-02-06&sr=b&scid=1d6d3139-f403-52cb-847c-33e3fcfdb5db&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A06%3A06Z&ske=2026-10-15T05%3A06%3A06Z&sks=b&skv=2026-02-06&sig=lqftDTm1ZRPjPeSh3r11rEUx7mO1Nhc03qwAu756lVY%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-7840-8246-956b-f1dffa69f888/raw?se=2026-10-15T03%3A34%3A21Z&sp=r&sv=2026-02-06&sr=b&scid=b60efa08-372d-53f2-8d29-9707ba0687e0&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A09%3A20Z&ske=2026-10-16T03%3A09%3A20Z&sks=b&skv=2026-02-06&sig=xCEtywVq3otWhNecfhlnRhoL5z2sXHlgYja/pYjyExg%3D","https://sdmntprdenmarkeast.oaiusercontent.com/files/00000000-e148-8210-bf94-c34b79343769/raw?se=2026-10-15T03%3A34%3A24Z&sp=r&sv=2026-02-06&sr=b&scid=d67d4782-bd72-5575-bb92-2e0a1c292232&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T06%3A52%3A31Z&ske=2026-10-15T06%3A52%3A31Z&sks=b&skv=2026-02-06&sig=xV%2BwP/anibXnlLiMiLmo0uYkMWrXK0CXm1EotlBARq0%3D","https://sdmntprukwest.oaiusercontent.com/files/00000000-e168-8243-8ba9-a9ab0a5e6430/raw?se=2026-10-15T03%3A34%3A24Z&sp=r&sv=2026-02-06&sr=b&scid=1a2de3cc-f9f8-5a49-a22a-0e0e3452dc3b&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A07%3A27Z&ske=2026-10-15T05%3A07%3A27Z&sks=b&skv=2026-02-06&sig=2RGKBCc2WfGdPtG/lH00MIT18axTjZlF6Ht1rKHBzYk%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-f710-820a-a65a-52b0f0ad11b7/raw?se=2026-10-15T03%3A34%3A51Z&sp=r&sv=2026-02-06&sr=b&scid=64f97f23-61e8-590d-847f-734cd7ebf717&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T04%3A59%3A24Z&ske=2026-10-15T04%3A59%3A24Z&sks=b&skv=2026-02-06&sig=LgqqQmkp0o9t6b39toIhL8D7sJCTR0n5Zd%2BHEnSquTM%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-57d8-8246-b51e-a75975348c85/raw?se=2026-10-15T03%3A34%3A24Z&sp=r&sv=2026-02-06&sr=b&scid=ff1b31ab-5856-5f08-8b4a-c25522e23eb1&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A52%3A29Z&ske=2026-10-16T02%3A52%3A29Z&sks=b&skv=2026-02-06&sig=t61QSEyQ9dkqBUHVLC0XUPEofLdjnkETSU%2BLneClrlI%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-6620-820a-92a4-5ed3b0775c0f/raw?se=2026-10-15T03%3A34%3A54Z&sp=r&sv=2026-02-06&sr=b&scid=9907ceeb-1a21-50b1-b7c0-86cb1f145032&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A16%3A12Z&ske=2026-10-15T05%3A16%3A12Z&sks=b&skv=2026-02-06&sig=25zBUbvIlg0kKbtEYIhsGgrgFsP7/aRF2s5e9j/fh7k%3D","https://sdmntprdenmarkeast.oaiusercontent.com/files/00000000-1864-8210-8c47-480046aacd7d/raw?se=2026-10-15T03%3A35%3A01Z&sp=r&sv=2026-02-06&sr=b&scid=61095a02-6039-5cbc-8827-4ffac5acf731&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T07%3A31%3A17Z&ske=2026-10-15T07%3A31%3A17Z&sks=b&skv=2026-02-06&sig=HR1tYfRM29SKzacuRCGmymmhKW4gscW7mgJBnumbLgg%3D"]
+          folder=pathlib.Path('source-parts');folder.mkdir(exist_ok=True)
+          def get(i):
+              request=urllib.request.Request(urls[i],headers={'User-Agent':'LCE-UI-Fix64-CI'})
+              with urllib.request.urlopen(request,timeout=180) as f:data=f.read()
+              if i<13 and len(data)!=15728640: raise Exception('Invalid part size '+str(i))
+              (folder/f'part_{i:02d}').write_bytes(data)
+              return len(data)
+          with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+              print('Parts',list(pool.map(get,range(len(urls)))))
+          output=pathlib.Path('source.zip')
+          with output.open('wb') as dest:
+              for p in sorted(folder.glob('part_*')):
+                  with p.open('rb') as src:
+                      while b:=src.read(1048576):dest.write(b)
+          digest=hashlib.sha256(output.read_bytes()).hexdigest()
+          if digest!='81d502ccb8d21cbf0af4ca5f099a45fed1a75fb2880fd1c1549a73e2e2c7b8fa':raise SystemExit('CHECKSUM FAILURE '+digest)
+          print('Source SHA-256 verified',digest)
+          with zipfile.ZipFile(output) as z:
+              names=z.namelist()
+              if not all(n.startswith('lce-web-work/') for n in names):raise SystemExit('Wrong ZIP root')
+              if z.testzip() is not None:raise SystemExit('Bad archive')
+              z.extractall('.')
+          PY
+          test -f lce-web-work/tools/playtest_ui_matrix.cjs
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake clang pkg-config zlib1g-dev libpng-dev
+          rustup target add wasm32-unknown-unknown
+      - name: Build patched Ruffle
+        working-directory: lce-web-work
+        shell: bash
+        run: ./tools/build_ruffle_webiggy.sh 2>&1 | tee ruffle64.log
+      - name: Build fix64 game
+        working-directory: lce-web-work
+        shell: bash
+        run: ./tools/build_web.sh
+      - name: Export browser game
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix64-browser
+          path: |
+            lce-web-work/build-web/*.html
+            lce-web-work/build-web/*.js
+            lce-web-work/build-web/*.wasm
+            lce-web-work/build-web/*.data
+            lce-web-work/build-web/*.css
+            lce-web-work/build-web/*.swf
+            lce-web-work/build-web/vendor/ruffle/
+            lce-web-work/build-web/ui-assets/
+            lce-web-work/build-web/audio-opus/
+          compression-level: 1
+          retention-days: 10
+          if-no-files-found: error
+      - name: Setup Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Run UI menu/control matrix
+        working-directory: lce-web-work
+        shell: bash
+        env:
+          UI_TEST_OUT: ../ui-playtest-results
+          UI_BOOT_MS: '32000'
+        run: |
+          python3 tools/serve_web.py build-web > ../ui-test-server.log 2>&1 &
+          sleep 3
+          curl -fsSI http://127.0.0.1:8000/lce_web_demo.html | head -20
+          ln -s "$GITHUB_WORKSPACE/node_modules" node_modules
+          timeout 2100 node tools/playtest_ui_matrix.cjs 2>&1 | tee ../ui-test-runner.log
+      - name: Upload matrix screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix64-ui-playtest-results
+          path: |
+            ui-playtest-results/
+            ui-test-server.log
+            ui-test-runner.log
+            lce-web-work/ruffle64.log
+            lce-web-work/web-build-all.log
+          retention-days: 10
+          if-no-files-found: ignore
