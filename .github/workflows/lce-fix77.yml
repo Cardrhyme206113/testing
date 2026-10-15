@@ -1,0 +1,75 @@
+name: LCE Web / Fix77 UI border and in-world inventory probe
+on:
+  push:
+    branches: [lce-fix77-border-inventory-20261015]
+    paths: ['.github/workflows/lce-fix77.yml', 'tools/lce-fix77-probe.cjs']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: true}
+      - name: Restore verified Fix76 compiled browser
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38780195248
+          name: lce-web-fix76-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Install browser
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Run true game web server
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Screenshot divider comparisons and actual inventory screen
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 600s node tools/lce-fix77-probe.cjs | tee fix77-run.log
+      - name: Upload native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix77-border-and-inventory-evidence
+          path: |
+            fix77-review/
+            fix77-run.log
+          compression-level: 1
+          retention-days: 14
+      - name: Commit visual test screenshots to separate test branch
+        if: success()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          a=sorted(Path('fix77-review').glob('*.png'))
+          lines=['# Fix77 actual LCE screen comparisons','','This diagnostic changes native SWF coordinates only for the before/after probes.','']
+          for p in a: lines += [f'## {p.stem}',f'![{p.stem}]({p.name})','']
+          Path('fix77-review/README.md').write_text('\n'.join(lines))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fix77-review/
+          git commit -m "Visual: capture native World Options divider and inventory UI"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
