@@ -33,14 +33,24 @@ try{
  const result=await page.evaluate(()=>{
   const es=window.__fix73Events||[],p=globalThis.LCEWebIggy?.debugState?.().players||[];
   let methods={};for(const e of es)methods[e.method]=(methods[e.method]||0)+1;
-  return {methods,items:es.slice(-500),players:p.filter(x=>x.visible).map(x=>({filename:x.filename,id:x.id})),panels:[...document.querySelectorAll('.lce-webiggy-scale9-panel-overlay')].map(x=>({key:x.dataset.lcePanelKey,visibility:getComputedStyle(x).visibility}))}
+  const forOptions=es.filter(e=>e.args[0]==='19');
+  const optionsCalls=forOptions.filter(e=>e.method==='getValue');
+  const unique=[...new Map(optionsCalls.map(e=>[JSON.stringify(e.args),e])).values()];
+  const otherOptions=forOptions.filter(e=>e.method!=='getValue').slice(-150);
+  const probes=[];
+  for(const pth of ['MainPanel','MainPanel\\x1fCheckboxPVP','WorldOptions','CheckboxPVP','CheckboxTrustSystem','CheckboxFireSpreads','CheckboxTNT','CheckboxFlatWorld','CheckboxHostPrivileges']){
+    for(const prop of ['visible','__lce_stage_x','__lce_stage_y','__lce_stage_width','__lce_stage_height','_x','_y','_width','_height']){
+      try{probes.push({path:pth,prop,value:String(globalThis.LCEWebIggy.getValue(19,pth,prop))});}catch(err){probes.push({path:pth,prop,error:String(err).slice(0,90)});}
+    }
+  }
+  return {methods,items:es.slice(-100),optionsGetValue:unique.slice(0,160),optionsOther:otherOptions,probes,players:p.filter(x=>x.visible).map(x=>({filename:x.filename,id:x.id})),panels:[...document.querySelectorAll('.lce-webiggy-scale9-panel-overlay')].map(x=>({key:x.dataset.lcePanelKey,visibility:getComputedStyle(x).visibility}))}
  });
  observations=result;
 } catch(e){exceptions.push('HARNESS: '+String(e.stack||e))}
 finally{
  let controls=consoleEvents.filter(x=>x.includes('[ui-test-control]')&&x.includes('scene=46 '));
  fs.writeFileSync(path.join(out,'report.json'),JSON.stringify({observations,controls,exceptions,events:consoleEvents.filter(x=>/warn|failed|exception|error|MoreOptions|world-options|scene=46/i.test(x)).slice(-100)},null,2));
- console.log('FIX73_REPORT '+JSON.stringify({methods:observations.methods,players:observations.players,panels:observations.panels,controls,events:observations.items?.filter(x=>/world|panel|options/i.test(JSON.stringify(x))).slice(-100),exceptions}).slice(0,25000));
+ console.log('FIX73_REPORT '+JSON.stringify({methods:observations.methods,players:observations.players,panels:observations.panels,controls,optionsGetValue:observations.optionsGetValue,optionsOther:observations.optionsOther,probes:observations.probes,exceptions}).slice(0,25000));
  await browser.close().catch(()=>{});
 }
 })();
