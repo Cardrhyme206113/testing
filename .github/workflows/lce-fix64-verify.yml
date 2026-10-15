@@ -1,8 +1,8 @@
-name: LCE Web fix64 UI build and playtest
+name: LCE Web fix65 UI build and playtest
 on:
   push:
     branches: [lce-web-ui-audit-20261015]
-    paths: ['.github/workflows/lce-fix64-verify-disabled.yml']
+    paths: ['.github/workflows/lce-fix64-verify.yml']
 permissions:
   contents: read
 jobs:
@@ -21,7 +21,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import pathlib, concurrent.futures, urllib.request, hashlib, zipfile
-          urls=[]  # temporary URLs retired after the source was verified on runner
+          urls=["https://sdmntprdenmarkeast.oaiusercontent.com/files/00000000-6cbc-8210-8baa-9960ee15e509/raw?se=2026-10-15T03%3A53%3A56Z&sp=r&sv=2026-02-06&sr=b&scid=dc1160c0-4a51-5250-ab1c-00eedde0f477&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A13%3A23Z&ske=2026-10-15T05%3A13%3A23Z&sks=b&skv=2026-02-06&sig=Ggv%2BxjJONtu7P8EdsDltynw0zSgLRSLcP6VNRISVeVM%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-8914-8246-8d27-bc7f6458f89d/raw?se=2026-10-15T03%3A53%3A57Z&sp=r&sv=2026-02-06&sr=b&scid=144f4d6b-b3bf-5b10-9c73-fe7f5ddab76b&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A21%3A39Z&ske=2026-10-16T02%3A21%3A39Z&sks=b&skv=2026-02-06&sig=B4jnsOSQEJeX2yEeLJj1nX3rs5U/oyR71jiZHmIrXHw%3D","https://sdmntprdenmarkeast.oaiusercontent.com/files/00000000-c438-8210-9204-0170f45b5cda/raw?se=2026-10-15T03%3A53%3A57Z&sp=r&sv=2026-02-06&sr=b&scid=ca6d0003-2702-5d1f-8103-3ff6439fc07e&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A02%3A35Z&ske=2026-10-15T05%3A02%3A35Z&sks=b&skv=2026-02-06&sig=hccbYiiPl/X8yNIWlqvi%2BC/9ifpk9NLL37htMa%2BT3Q0%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-8aac-8246-a0d3-6d6d6a6af8cd/raw?se=2026-10-15T03%3A53%3A57Z&sp=r&sv=2026-02-06&sr=b&scid=ceb93d78-a089-5b09-92fb-3b3ad92d086a&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T07%3A57%3A57Z&ske=2026-10-15T07%3A57%3A57Z&sks=b&skv=2026-02-06&sig=lHhrmay3LVsNpQ0a5ei6Qpv/uJKpaD0LXmMcW290Qaw%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-7128-81f4-82f4-79eef2379fae/raw?se=2026-10-15T03%3A54%3A00Z&sp=r&sv=2026-02-06&sr=b&scid=cbc07c29-2dc2-5a85-8dbd-197e750004e1&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A07%3A27Z&ske=2026-10-15T05%3A07%3A27Z&sks=b&skv=2026-02-06&sig=CHv8lVhLSVqFDReG/bz41GFC1yM4und0x6NYVOSI6xI%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-3f78-81f4-8d9c-b28d9762d5d7/raw?se=2026-10-15T03%3A54%3A02Z&sp=r&sv=2026-02-06&sr=b&scid=b275f796-2d04-5eb7-908a-a99af218fa4f&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A22%3A23Z&ske=2026-10-16T02%3A22%3A23Z&sks=b&skv=2026-02-06&sig=S/l/foKZAzC6c2bTIzy6X7AwVm2TayIhjRSHRlzd5fQ%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-a2d4-820a-883c-2ba3884b11db/raw?se=2026-10-15T03%3A54%3A00Z&sp=r&sv=2026-02-06&sr=b&scid=89eecfc6-9f11-54e5-9db3-4e34dd1bcd21&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A05%3A13Z&ske=2026-10-15T05%3A05%3A13Z&sks=b&skv=2026-02-06&sig=2oU8VgeiF%2BOZ6R5ImtAARSOZeUfmbz9tW4fk19hmXlQ%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-d2c4-820a-b476-f0d557084945/raw?se=2026-10-15T03%3A54%3A00Z&sp=r&sv=2026-02-06&sr=b&scid=83185489-9429-5909-884e-ca6f7cc07f58&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A43%3A44Z&ske=2026-10-16T03%3A43%3A44Z&sks=b&skv=2026-02-06&sig=4x9qCvGk5e6XMvEjjTCQXttuuKbqR7HNIOcJ9C8EfXU%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-dfd0-8246-a265-47fa0406b580/raw?se=2026-10-15T03%3A54%3A04Z&sp=r&sv=2026-02-06&sr=b&scid=d92c4246-3d2d-5810-a61c-32a9b8c5901d&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A48%3A19Z&ske=2026-10-16T02%3A48%3A19Z&sks=b&skv=2026-02-06&sig=4R9EtAsWrsZ8TlWS4H49Ur44A2P/bhi1dlgOvCby2Ds%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-a6b8-81f4-946c-ee172b03742f/raw?se=2026-10-15T03%3A54%3A06Z&sp=r&sv=2026-02-06&sr=b&scid=dac71ddb-7461-56f4-808f-1a36e07ac4fb&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A21%3A39Z&ske=2026-10-16T02%3A21%3A39Z&sks=b&skv=2026-02-06&sig=WPk0GDbBEzX794mqyQriY8hG7yRQLYHBCRr6Qd0GDlY%3D","https://sdmntprukwest.oaiusercontent.com/files/00000000-3548-8243-a24a-12d21fd6cc6a/raw?se=2026-10-15T03%3A54%3A31Z&sp=r&sv=2026-02-06&sr=b&scid=42695eb6-e166-562b-9bd4-c39d166b6f26&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T08%3A40%3A34Z&ske=2026-10-15T08%3A40%3A34Z&sks=b&skv=2026-02-06&sig=WeCMSEnbUJgksfBNolmh4C2jMI2x9eDoEGDIP5zqMLw%3D","https://sdmntprdenmarkeast.oaiusercontent.com/files/00000000-390c-8210-af88-a8f80a4a8044/raw?se=2026-10-15T03%3A54%3A04Z&sp=r&sv=2026-02-06&sr=b&scid=bd90975e-62b8-5000-8b7b-9ff69f5e5310&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T06%3A52%3A29Z&ske=2026-10-15T06%3A52%3A29Z&sks=b&skv=2026-02-06&sig=F5leizQmE94KmN9KEKqtI8ozyV8ltAgy0kioQCQqzHI%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-46d0-8246-8e09-67d04f80da84/raw?se=2026-10-15T03%3A54%3A34Z&sp=r&sv=2026-02-06&sr=b&scid=f3125b5f-0765-5349-972b-0575d7e2a648&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A48%3A26Z&ske=2026-10-16T02%3A48%3A26Z&sks=b&skv=2026-02-06&sig=XwcW/3REYJt1Xs4eIVFmY8beK1TzV63nrOviz9VI4R8%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-cab0-820a-8dc7-1dd8e7e2c3c7/raw?se=2026-10-15T03%3A54%3A34Z&sp=r&sv=2026-02-06&sr=b&scid=32816323-7b18-58ad-a2e9-4ec076468ad2&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T00%3A48%3A22Z&ske=2026-10-16T00%3A48%3A22Z&sks=b&skv=2026-02-06&sig=i2LZmrNlSg%2ByQ3oxY1NM6oS/aheL9kUlRVX/H52lAm8%3D"]
           folder=pathlib.Path('source-parts');folder.mkdir(exist_ok=True)
           def get(i):
               request=urllib.request.Request(urls[i],headers={'User-Agent':'LCE-UI-Fix64-CI'})
@@ -46,6 +46,41 @@ jobs:
               z.extractall('.')
           PY
           test -f lce-web-work/tools/playtest_ui_matrix.cjs
+      - name: Apply validated fix65 source corrections
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib,hashlib
+          changes = {
+              'Minecraft.Client/Web/Web_DemoMain.cpp': [
+                  ('namespace {\\n#ifndef __EMSCRIPTEN__', '#ifdef __EMSCRIPTEN__\\n// Forward declaration must have the same linkage/scope as its definition\\n// below the anonymous startup namespace (verified by wasm-ld, fix64).\\nstatic void serviceUiTestRequest();\\n#endif\\n\\nnamespace {\\n#ifndef __EMSCRIPTEN__'),
+                  ('int g_uiTestLastResult = -99;\\nstatic void serviceUiTestRequest();', 'int g_uiTestLastResult = -99;')
+              ],
+              'Minecraft.Client/Common/UI/UIScene_MainMenu.cpp': [
+                  ('ui.NavigateToScene(m_iPad,eUIScene_SettingsMenu);\\n\\t\\treturn;', '// Preserve the original LCE Help & Options hierarchy on Web.\\n\\t\\tui.NavigateToScene(m_iPad,eUIScene_HelpAndOptionsMenu);\\n\\t\\treturn;')
+              ],
+              'tools/playtest_ui_matrix.cjs': [
+                  ('![1,3,18,20].includes(c.type)','![1,2,3,17,18,19,20].includes(c.type)')
+              ]
+          }
+          expected={
+            'Minecraft.Client/Web/Web_DemoMain.cpp':'d11a620159c5f5788baa2ba7a29da75810d017eec4fc209c16824520da696146',
+            'Minecraft.Client/Common/UI/UIScene_MainMenu.cpp':'3c8ebcdd38ac4e8bc7d438eb19377679ab45add4d6d473e8d716276dd54c4e2d',
+            'tools/playtest_ui_matrix.cjs':'da481ce1503212f73be9ccf05f3e8de77220006bac1473fa55461b54955fab9a'
+          }
+          for name,repls in changes.items():
+              p=pathlib.Path('lce-web-work')/name
+              s=p.read_text()
+              for old,new in repls:
+                  old=old.encode().decode('unicode_escape')
+                  new=new.encode().decode('unicode_escape')
+                  if s.count(old)!=1: raise SystemExit(f'Unexpected patch context for {name}')
+                  s=s.replace(old,new)
+              p.write_text(s)
+              got=hashlib.sha256(p.read_bytes()).hexdigest()
+              if got!=expected[name]:raise SystemExit(f'Wrong patched SHA: {name}: {got}')
+              print('Verified fix65 file',name,got)
+          PY
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -63,7 +98,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: lce-fix64-browser
+          name: lce-fix65-browser
           path: |
             lce-web-work/build-web/*.html
             lce-web-work/build-web/*.js
@@ -97,7 +132,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: lce-fix64-ui-playtest-results
+          name: lce-fix65-ui-playtest-results
           path: |
             ui-playtest-results/
             ui-test-server.log
