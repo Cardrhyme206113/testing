@@ -21,6 +21,14 @@ jobs:
           name: lce-web-fix63-browser
           github-token: ${{ github.token }}
           path: site
+      - name: Recover grounded Fix70 native control matrix
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38748882722
+          name: lce-fix70-ui-evidence
+          github-token: ${{ github.token }}
+          path: reference
       - name: Install Chromium
         run: |
           npm install --no-save playwright@1.56.1
