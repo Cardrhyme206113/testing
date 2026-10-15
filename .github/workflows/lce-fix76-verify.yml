@@ -1,0 +1,74 @@
+name: LCE Web / Fix76 original menu restoration and visual gate
+on:
+  push:
+    branches: [lce-fix76-menus-restored-20261015]
+    paths: ['.github/workflows/lce-fix76-verify.yml','tools/lce-fix76-apply.py','tools/lce-fix76-verify.cjs']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recover real compiled Fix73 game and patched Ruffle
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38772489669
+          name: lce-web-fix73-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Patch original Ruffle menu movie without HTML replacements
+        run: |
+          python3 tools/lce-fix76-apply.py site/lce_web_demo.js
+          node --check site/lce_web_demo.js
+          grep -q LCE_WEB_FIX76_RESTORE_ORIGINAL_AVM1_CONTROLS site/lce_web_demo.js
+      - name: Install Chromium and PNG pixel auditor
+        run: |
+          npm install --no-save playwright@1.56.1 pngjs@7
+          npx playwright install --with-deps chromium
+      - name: Start locally isolated game
+        shell: bash
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,path):
+              if path.endswith('.wasm'):return 'application/wasm'
+              if path.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(path)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Assert original More Options labels render and capture all initial menus
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 430s node tools/lce-fix76-verify.cjs | tee fix76-verify.log
+      - name: Publish playable Fix76 browser package only after visual gate
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-web-fix76-playable
+          path: site/
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: error
+      - name: Publish original screenshots and audit even if failed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix76-all-menu-visual-evidence
+          path: |
+            fix76-gallery/
+            fix76-verify.log
+          retention-days: 14
+          compression-level: 1
