@@ -1,10 +1,392 @@
 {
-  "probes": [],
-  "errors": [
-    "no current menu 12",
-    "no current menu 3",
-    "no current menu 6",
-    "no current menu 8",
-    "no current menu 10"
-  ]
+  "probes": [
+    {
+      "scene": 12,
+      "name": "create-world",
+      "players": [
+        {
+          "id": 18,
+          "filename": "CreateWorldMenu720.swf"
+        }
+      ],
+      "id": 18,
+      "paths": [
+        {
+          "path": "BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "BackgroundPanel2",
+          "exists": false
+        },
+        {
+          "path": "MainPanel",
+          "exists": true,
+          "visible": true,
+          "x": 395.9,
+          "y": 110,
+          "width": 628,
+          "height": 498,
+          "__lce_stage_x": 395.9,
+          "__lce_stage_y": 110,
+          "__lce_stage_width": 628,
+          "__lce_stage_height": 498,
+          "alpha": 1
+        },
+        {
+          "path": "MainPanel.BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel/BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel\\x1fBackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "Panel",
+          "exists": false
+        },
+        {
+          "path": "Panel_2",
+          "exists": false
+        },
+        {
+          "path": "WorldOptionsBox",
+          "exists": false
+        },
+        {
+          "path": "FJ_Panel9Grid",
+          "exists": false
+        },
+        {
+          "path": "HtmlBackground",
+          "exists": false
+        },
+        {
+          "path": "ButtonListBackground",
+          "exists": false
+        }
+      ],
+      "variants": [
+        {
+          "path": "MainPanel",
+          "hide": true,
+          "other": {
+            "players": [
+              "ToolTips720.swf",
+              "PressStartToPlay720.swf",
+              "CreateWorldMenu720.swf"
+            ],
+            "overlays": [
+              "createworld-main",
+              "createworld-texture-panel",
+              "createworld-texture-list"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scene": 3,
+      "name": "settings-options",
+      "players": [
+        {
+          "id": 19,
+          "filename": "SettingsOptionsMenu720.swf"
+        }
+      ],
+      "id": 19,
+      "paths": [
+        {
+          "path": "BackgroundPanel",
+          "exists": true,
+          "visible": true,
+          "x": 476,
+          "y": 291,
+          "width": 339,
+          "height": 185,
+          "__lce_stage_x": 476,
+          "__lce_stage_y": 291,
+          "__lce_stage_width": 339,
+          "__lce_stage_height": 185,
+          "alpha": 1
+        },
+        {
+          "path": "BackgroundPanel2",
+          "exists": false
+        },
+        {
+          "path": "MainPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel.BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel/BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel\\x1fBackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "Panel",
+          "exists": false
+        },
+        {
+          "path": "Panel_2",
+          "exists": false
+        },
+        {
+          "path": "WorldOptionsBox",
+          "exists": false
+        },
+        {
+          "path": "FJ_Panel9Grid",
+          "exists": false
+        },
+        {
+          "path": "HtmlBackground",
+          "exists": false
+        },
+        {
+          "path": "ButtonListBackground",
+          "exists": false
+        }
+      ],
+      "variants": [
+        {
+          "path": "BackgroundPanel",
+          "hide": true,
+          "other": {
+            "players": [
+              "ToolTips720.swf",
+              "PressStartToPlay720.swf",
+              "SettingsOptionsMenu720.swf",
+              "Panorama720.swf",
+              "ComponentLogo720.swf"
+            ],
+            "overlays": []
+          }
+        }
+      ]
+    },
+    {
+      "scene": 6,
+      "name": "settings-graphics",
+      "players": [
+        {
+          "id": 22,
+          "filename": "SettingsGraphicsMenu720.swf"
+        }
+      ],
+      "id": 22,
+      "paths": [
+        {
+          "path": "BackgroundPanel",
+          "exists": true,
+          "visible": true,
+          "x": 474,
+          "y": 249,
+          "width": 330,
+          "height": 222,
+          "__lce_stage_x": 474,
+          "__lce_stage_y": 249,
+          "__lce_stage_width": 330,
+          "__lce_stage_height": 222,
+          "alpha": 1
+        },
+        {
+          "path": "BackgroundPanel2",
+          "exists": false
+        },
+        {
+          "path": "MainPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel.BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel/BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel\\x1fBackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "Panel",
+          "exists": false
+        },
+        {
+          "path": "Panel_2",
+          "exists": false
+        },
+        {
+          "path": "WorldOptionsBox",
+          "exists": false
+        },
+        {
+          "path": "FJ_Panel9Grid",
+          "exists": false
+        },
+        {
+          "path": "HtmlBackground",
+          "exists": false
+        },
+        {
+          "path": "ButtonListBackground",
+          "exists": false
+        }
+      ],
+      "variants": [
+        {
+          "path": "BackgroundPanel",
+          "hide": true,
+          "other": {
+            "players": [
+              "ToolTips720.swf",
+              "PressStartToPlay720.swf",
+              "Panorama720.swf",
+              "ComponentLogo720.swf",
+              "SettingsGraphicsMenu720.swf"
+            ],
+            "overlays": []
+          }
+        }
+      ]
+    },
+    {
+      "scene": 8,
+      "name": "how-to-play",
+      "players": [
+        {
+          "id": 23,
+          "filename": "HowToPlayMenu720.swf"
+        }
+      ],
+      "id": 23,
+      "paths": [
+        {
+          "path": "BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "BackgroundPanel2",
+          "exists": false
+        },
+        {
+          "path": "MainPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel.BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel/BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel\\x1fBackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "Panel",
+          "exists": false
+        },
+        {
+          "path": "Panel_2",
+          "exists": false
+        },
+        {
+          "path": "WorldOptionsBox",
+          "exists": false
+        },
+        {
+          "path": "FJ_Panel9Grid",
+          "exists": false
+        },
+        {
+          "path": "HtmlBackground",
+          "exists": false
+        },
+        {
+          "path": "ButtonListBackground",
+          "exists": false
+        }
+      ],
+      "variants": []
+    },
+    {
+      "scene": 10,
+      "name": "skin-select",
+      "players": [
+        {
+          "id": 24,
+          "filename": "SkinSelectMenu720.swf"
+        }
+      ],
+      "id": 24,
+      "paths": [
+        {
+          "path": "BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "BackgroundPanel2",
+          "exists": false
+        },
+        {
+          "path": "MainPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel.BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel/BackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "MainPanel\\x1fBackgroundPanel",
+          "exists": false
+        },
+        {
+          "path": "Panel",
+          "exists": false
+        },
+        {
+          "path": "Panel_2",
+          "exists": false
+        },
+        {
+          "path": "WorldOptionsBox",
+          "exists": false
+        },
+        {
+          "path": "FJ_Panel9Grid",
+          "exists": false
+        },
+        {
+          "path": "HtmlBackground",
+          "exists": false
+        },
+        {
+          "path": "ButtonListBackground",
+          "exists": false
+        }
+      ],
+      "variants": []
+    }
+  ],
+  "errors": []
 }
