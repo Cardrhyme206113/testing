@@ -1,0 +1,67 @@
+name: LCE Web / Fix81 inspect nested Create World frame
+on:
+  push:
+    branches: [lce-fix81-nested-scale9-20261015]
+    paths: ['.github/workflows/lce-fix81.yml','tools/lce-fix81-probe.cjs']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: true}
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38789030016
+          name: lce-web-fix80-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Validate and install browser
+        run: |
+          node --check tools/lce-fix81-probe.cjs
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Serve compiled LCE
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Inspect nested BackgroundPanel and preserve original Flash controls
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 140s node tools/lce-fix81-probe.cjs | tee fix81-probe.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lce-fix81-nested-create-world-panel
+          path: |
+            fix81-nested-probe/
+            fix81-probe.log
+          retention-days: 14
+          compression-level: 1
+      - name: Publish screenshots and nested Flash properties
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fix81-nested-probe/
+          git commit -m "LCE: publish nested SWF frame inspection evidence"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
