@@ -7,7 +7,7 @@ const report={errors:[],controls:[],verified:false};
  const browser=await chromium.launch({headless:true,args:['--no-sandbox','--enable-webgl','--enable-unsafe-swiftshader','--use-gl=angle','--use-angle=swiftshader','--disable-dev-shm-usage']});
  const page=await browser.newPage({viewport:{width:1280,height:800},locale:'en-US'});
  page.on('pageerror',e=>report.errors.push(String(e)));
- page.on('dialog',d=>d.dismiss().catch(()=>{});
+ page.on('dialog',d=>d.dismiss().catch(()=>{}));
  const shot=async name=>PNG.sync.read(await page.screenshot({path:path.join(OUT,name+'.png')}));
  const state=()=>page.evaluate(()=>{
   const h=globalThis.LCEWebIggy,clips=['CheckboxPVP','CheckboxHostPrivileges','WorldOptions','CheckboxStructures','CheckboxFlatWorld','CheckboxBonusChest'];
