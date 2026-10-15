@@ -17,7 +17,7 @@ const candidates=['BackgroundPanel','BackgroundPanel2','MainPanel','MainPanel.Ba
  };
  const shot=async name=>page.screenshot({path:path.join(OUT,name+'.png'),timeout:30000});
  const find=async()=>page.evaluate(()=>{
-   const a=globalThis.LCEWebIggy.debugState().players.filter(p=>p.visible&&/Menu720\\.swf$/i.test(p.filename));
+   const a=globalThis.LCEWebIggy.debugState().players.filter(p=>p.visible&&String(p.filename||"").endsWith("Menu720.swf"));
    return a.sort((a,b)=>b.id-a.id).map(p=>({id:p.id,filename:p.filename}));
  });
  const probe=async(id,names)=>page.evaluate(({id,names})=>{
