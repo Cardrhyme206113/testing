@@ -76,6 +76,35 @@ jobs:
               o.extractall('incoming/overlay')
           print('Verified base and staged fix68 overlay')
           PY
+      - name: Fetch verified fix70 source overlay
+        shell: bash
+        run: |
+          mkdir -p incoming
+          python3 - <<'PY'
+          import concurrent.futures,hashlib,pathlib,urllib.request,zipfile
+          urls=["https://sdmntprnortheu.oaiusercontent.com/files/00000000-3c18-81f4-b57f-198f82a441b3/raw?se=2026-10-15T14%3A02%3A21Z&sp=r&sv=2026-02-06&sr=b&scid=87674c33-30a6-5941-beb1-7296363ff6f3&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T13%3A35%3A53Z&ske=2026-10-16T13%3A35%3A53Z&sks=b&skv=2026-02-06&sig=AdSEvYsNdKYl0ESem5KcxWmCyfjZeCPTUbr4Px%2B8tBw%3D","https://sdmntprcentralus.oaiusercontent.com/files/00000000-8d88-81f5-ae2c-8d3c18ff58a7/raw?se=2026-10-15T14%3A02%3A22Z&sp=r&sv=2026-02-06&sr=b&scid=866e7f08-66d9-5a8a-bcdf-4f8fec0dbe10&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A22%3A33Z&ske=2026-10-16T02%3A22%3A33Z&sks=b&skv=2026-02-06&sig=X%2BSmFHK7NFi3R5gwxuxAfwm0BboRZm/Au03jVjjknDg%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-2148-820a-839e-5b5a59b8bef6/raw?se=2026-10-15T14%3A02%3A36Z&sp=r&sv=2026-02-06&sr=b&scid=44cc9f0b-457c-59f6-9a94-a48fbd5b45ed&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T13%3A18%3A08Z&ske=2026-10-16T13%3A18%3A08Z&sks=b&skv=2026-02-06&sig=HmnE2%2BziEn6NV3XP/3vmUHSERJnUl7pJ8sm/99A2wC4%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-2538-820a-9d3e-6038c3817c60/raw?se=2026-10-15T14%3A02%3A19Z&sp=r&sv=2026-02-06&sr=b&scid=34862deb-b8ad-51b2-97ad-d59b34377b2a&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A20%3A40Z&ske=2026-10-16T02%3A20%3A40Z&sks=b&skv=2026-02-06&sig=caqD86eUencop67gxjxsBA105qTAL/W5Sb1qpqFBQ%2BU%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-f090-8246-a357-2e8db8d904d0/raw?se=2026-10-15T14%3A02%3A41Z&sp=r&sv=2026-02-06&sr=b&scid=790b80a8-4272-519e-8211-45ef0ce26643&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T01%3A36%3A42Z&ske=2026-10-16T01%3A36%3A42Z&sks=b&skv=2026-02-06&sig=/48jvUMnIhghQ4mHOdblvxOwmO8sZh2SFBdBeMdStD0%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-2274-81f4-9258-3aeca7e686d8/raw?se=2026-10-15T14%3A02%3A50Z&sp=r&sv=2026-02-06&sr=b&scid=60e0e5f2-7374-5743-ad02-48d0e0bd987e&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T13%3A35%3A54Z&ske=2026-10-16T13%3A35%3A54Z&sks=b&skv=2026-02-06&sig=pgLIPwx5ljUtJO2p6Stag25ESzGx6xfvZi2t06/HTWs%3D","https://sdmntprdenmarkeast.oaiusercontent.com/files/00000000-dd84-8210-aae2-b2ba00832134/raw?se=2026-10-15T14%3A02%3A53Z&sp=r&sv=2026-02-06&sr=b&scid=9439652f-7e72-5572-b190-a4f0f9775e4c&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T05%3A26%3A38Z&ske=2026-10-16T05%3A26%3A38Z&sks=b&skv=2026-02-06&sig=LqTxNOaGPy0EFHtmnjuxDHPwklie9onMOGHO7E3UQ8o%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-bd20-8246-b913-0537170b33ec/raw?se=2026-10-15T14%3A02%3A47Z&sp=r&sv=2026-02-06&sr=b&scid=9951417e-d49e-5f62-bc4e-13942bfa9d7c&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A39%3A16Z&ske=2026-10-16T03%3A39%3A16Z&sks=b&skv=2026-02-06&sig=BTP%2BRcipy/sq6jNfzTHRo7W2j8xgmHpseHVZn212nME%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-ac60-8246-ae14-22f9543c9d7c/raw?se=2026-10-15T14%3A02%3A58Z&sp=r&sv=2026-02-06&sr=b&scid=850878dd-696d-560e-8088-f67b4c91e7ca&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T01%3A43%3A02Z&ske=2026-10-16T01%3A43%3A02Z&sks=b&skv=2026-02-06&sig=jPYZOq8PVun7sujYMobNd7wdx2mOXdsfhGQTE9E27uM%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-1234-81f4-8eda-2fb62458a081/raw?se=2026-10-15T14%3A02%3A57Z&sp=r&sv=2026-02-06&sr=b&scid=805dcf30-73a4-5b7a-893f-76b09a225f10&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T13%3A37%3A36Z&ske=2026-10-16T13%3A37%3A36Z&sks=b&skv=2026-02-06&sig=2Ujk3fyICYF4qEXhcGiQFwxYN0B3ejIPHc/6cDbafIQ%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-d618-820a-8e00-e597bc5aa87b/raw?se=2026-10-15T14%3A03%3A29Z&sp=r&sv=2026-02-06&sr=b&scid=f524881f-4513-54fb-b1bf-3ea855ed8580&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T04%3A21%3A46Z&ske=2026-10-16T04%3A21%3A46Z&sks=b&skv=2026-02-06&sig=hKJ2Yqmv1NEBUdnetWl8u6ubY4EeocjrL8xlt3rxKcs%3D","https://sdmntprindiasocentral.oaiusercontent.com/files/00000000-294c-8211-8ee7-dfa890b9c6a8/raw?se=2026-10-15T14%3A03%3A03Z&sp=r&sv=2026-02-06&sr=b&scid=b829f7bb-7307-5dc7-83df-65282f39f6b3&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A56%3A58Z&ske=2026-10-16T03%3A56%3A58Z&sks=b&skv=2026-02-06&sig=EwPsd%2BuK85e76qAuY3Etns1oMrlrmWmG/KnCRqRW0nE%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-d6e0-81f4-8a14-d7f94b15ba48/raw?se=2026-10-15T14%3A03%3A32Z&sp=r&sv=2026-02-06&sr=b&scid=58f739e8-c691-568c-8739-a2d465954f6d&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T08%3A02%3A17Z&ske=2026-10-16T08%3A02%3A17Z&sks=b&skv=2026-02-06&sig=tMjCyxVgeZ2gpYJv44jpP2JoLv7FVFCaCEyKXift8dw%3D","https://sdmntprdenmarkeast.oaiusercontent.com/files/00000000-4808-8210-9ad9-3c197ab11387/raw?se=2026-10-15T14%3A03%3A55Z&sp=r&sv=2026-02-06&sr=b&scid=d014c864-3ca8-507b-b328-853280f66a57&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T04%3A35%3A26Z&ske=2026-10-16T04%3A35%3A26Z&sks=b&skv=2026-02-06&sig=R7eM%2B1nR7JQuGxgLh%2BiMuZ%2BMyUi4VFEh/HhnsnDvdHk%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-81c8-81f4-be8b-5d7e684cc0fe/raw?se=2026-10-15T14%3A03%3A35Z&sp=r&sv=2026-02-06&sr=b&scid=5a499d41-1d5b-502e-9a7b-7149268097dc&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T07%3A21%3A02Z&ske=2026-10-16T07%3A21%3A02Z&sks=b&skv=2026-02-06&sig=nqJUEGOxuqhYqvQ4LEtj98Jk9s8n/KBxWxmZ%2Bc9LegI%3D"]
+          d=pathlib.Path('incoming/parts');d.mkdir(parents=True,exist_ok=True)
+          def get(i):
+              req=urllib.request.Request(urls[i],headers={'User-Agent':'LCE-Web-fix70-CI'})
+              with urllib.request.urlopen(req,timeout=220) as r: data=r.read()
+              if i<13 and len(data)!=15728640:raise RuntimeError(f'Part {i} incomplete')
+              name=(f'part{i:02d}' if i<14 else 'overlay.zip')
+              (d/name).write_bytes(data)
+              print('Fetched',name,len(data))
+          with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:list(pool.map(get,range(len(urls))))
+          z=pathlib.Path('incoming/source.zip')
+          with z.open('wb') as out:
+              for i in range(14):
+                  with (d/f'part{i:02d}').open('rb') as stream:
+                      while buf:=stream.read(1048576):out.write(buf)
+          with z.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()
+          expected='81d502ccb8d21cbf0af4ca5f099a45fed1a75fb2880fd1c1549a73e2e2c7b8fa'
+          if digest!=expected:raise SystemExit('Source digest mismatch: '+digest)
+          with zipfile.ZipFile(d/'overlay.zip') as o:
+              if o.testzip():raise SystemExit('Bad fix70 overlay')
+              o.extractall('incoming/overlay')
+          print('Verified fix64 base; fix70 overlay staged')
+          PY
       - name: Get optional LCE source archive
         id: source
         shell: bash
@@ -115,6 +144,8 @@ jobs:
           PY
           test -f lce-web-work/tools/build_web.sh
           test -f lce-web-work/tools/build_ruffle_webiggy.sh
+          cp -a incoming/overlay/lce-web-work/. lce-web-work/
+          test -f lce-web-work/FIX70-UI-STATUS.md
           cp -a incoming/overlay/lce-web-work/. lce-web-work/
           grep -q LCE_WEBIGGY_RUFFLE_PATCH_16 lce-web-work/tools/patch_ruffle_webiggy.py
       - name: Install LCE dependencies
