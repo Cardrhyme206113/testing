@@ -1,0 +1,88 @@
+name: LCE Web / Fix80 nine-slice frame correction
+on:
+  push:
+    branches: [lce-fix80-native-scale9-frames-20261015]
+    paths: ['.github/workflows/lce-fix80.yml','tools/lce-fix80-apply.py','tools/lce-fix80-verify.cjs']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 13
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: true}
+      - name: Recover original playable LCE browser game
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38782615512
+          name: lce-web-fix78-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Patch shared settings nine-slice renderer, syntax validation
+        run: |
+          python3 tools/lce-fix80-apply.py site/lce_web_demo.js
+          node --check site/lce_web_demo.js
+          node --check tools/lce-fix80-verify.cjs
+      - name: Install Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Serve original isolated compiled game
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Visually validate five original Settings menus and Create World
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 240s node tools/lce-fix80-verify.cjs | tee fix80-run.log
+      - name: Upload visual gallery even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix80-settings-nine-slice-screenshots
+          path: |
+            fix80-gallery/
+            fix80-run.log
+          retention-days: 14
+          compression-level: 1
+      - name: Publish playable game only if all regression tests pass
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-web-fix80-playable
+          path: site/
+          retention-days: 14
+          compression-level: 1
+      - name: Publish actual menu screenshots for human comparison
+        if: success()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          imgs=sorted(Path('fix80-gallery').glob('*.png'))
+          lines=['# Fix80 fixed-corner native settings frames','','Screenshots from actual Chromium gameplay, not mockups.','']
+          for p in imgs: lines.extend([f'## {p.stem}',f'![{p.stem}]({p.name})',''])
+          Path('fix80-gallery/README.md').write_text('\n'.join(lines))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fix80-gallery/
+          git commit -m "LCE: publish 5 Settings screens with correctly scaled panel corners"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
