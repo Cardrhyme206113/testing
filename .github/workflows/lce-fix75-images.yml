@@ -1,0 +1,41 @@
+name: LCE Web / Fix75 publish probe images
+on:
+  push:
+    branches: [lce-fix75-ui-recovery-20261015]
+    paths: ['.github/workflows/lce-fix75-images.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all 12 original renderer comparisons
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38778937026
+          name: lce-fix75-root-cause-probes
+          github-token: ${{ github.token }}
+          path: fix75-images
+      - name: Publish exact screenshots for review
+        run: |
+          find fix75-images -iname '*.png' -printf '%P\n'
+          python3 - <<'PY'
+          from pathlib import Path
+          p=list(Path('fix75-images').rglob('*.png'))
+          assert len(p)==12, f'Expected 12, found {len(p)}'
+          s=['# Fix75 cross-menu tests — unmodified Chromium screenshots','','The numbered images compare original canvas/SWF and native overlays; open individually.','']
+          for i in sorted(p):
+            rel=i.relative_to(Path('fix75-images'))
+            s.append(f'## {rel.name}\n\n![{rel.name}]({rel.as_posix()})\n')
+          Path('fix75-images/README.md').write_text('\n'.join(s))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fix75-images/
+          git commit -m "LCE: publish 12 raw before-after UI root-cause screenshots"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
