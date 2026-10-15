@@ -1,0 +1,195 @@
+{
+  "states": [
+    {
+      "case": "create",
+      "open": 1
+    },
+    {
+      "case": "options-original",
+      "controls": [
+        {
+          "name": "WorldOptions",
+          "y": 336,
+          "stage": 334,
+          "h": 29.05
+        },
+        {
+          "name": "CheckboxHostPrivileges",
+          "y": 306,
+          "stage": 306,
+          "h": 29.05
+        },
+        {
+          "name": "CheckboxStructures",
+          "y": 369,
+          "stage": 369,
+          "h": 29.05
+        },
+        {
+          "name": "CheckboxFlatWorld",
+          "y": 403,
+          "stage": 403,
+          "h": 29.05
+        },
+        {
+          "name": "CheckboxBonusChest",
+          "y": 437,
+          "stage": 437,
+          "h": 29.05
+        }
+      ],
+      "state": {
+        "root": {
+          "x": 0,
+          "y": 40,
+          "width": 1280,
+          "height": 720
+        },
+        "players": [
+          {
+            "id": 1,
+            "name": "ToolTips720.swf"
+          },
+          {
+            "id": 2,
+            "name": "PressStartToPlay720.swf"
+          },
+          {
+            "id": 19,
+            "name": "LaunchMoreOptionsMenu720.swf"
+          },
+          {
+            "id": 20,
+            "name": "Panorama720.swf"
+          }
+        ],
+        "panels": [
+          "world-options-main"
+        ]
+      }
+    },
+    {
+      "case": "options-header-up14",
+      "set": true,
+      "controls": [
+        {
+          "name": "WorldOptions",
+          "y": 322
+        },
+        {
+          "name": "CheckboxStructures",
+          "y": 369
+        },
+        {
+          "name": "CheckboxBonusChest",
+          "y": 437
+        }
+      ]
+    },
+    {
+      "case": "options-header-up20",
+      "set": true
+    },
+    {
+      "case": "create2",
+      "open": 1
+    }
+  ],
+  "errors": [],
+  "buttons": [],
+  "inventory": {
+    "startProbe": 0,
+    "worldStarted": true,
+    "afterKeyboard": {
+      "root": {
+        "x": 0,
+        "y": 40,
+        "width": 1280,
+        "height": 720
+      },
+      "players": [
+        {
+          "id": 2,
+          "name": "PressStartToPlay720.swf"
+        },
+        {
+          "id": 3,
+          "name": "ToolTips720.swf"
+        },
+        {
+          "id": 22,
+          "name": "InventoryMenu720.swf"
+        }
+      ],
+      "panels": []
+    },
+    "later": {
+      "root": {
+        "x": 0,
+        "y": 40,
+        "width": 1280,
+        "height": 720
+      },
+      "players": [
+        {
+          "id": 2,
+          "name": "PressStartToPlay720.swf"
+        },
+        {
+          "id": 3,
+          "name": "ToolTips720.swf"
+        },
+        {
+          "id": 22,
+          "name": "InventoryMenu720.swf"
+        }
+      ],
+      "panels": []
+    },
+    "properties": [
+      {
+        "path": "MainPanel",
+        "visible": true,
+        "x": 424,
+        "y": 94,
+        "width": 431,
+        "height": 435,
+        "__lce_stage_y": 94,
+        "__lce_stage_width": 431
+      }
+    ],
+    "recentConsole": [
+      "[LCE-Web][WebIggy][compat70] custom regions 16 Panorama720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 15 MainMenu720.swf iggy_Splash[0.0,0.0 500.0x50.0]",
+      "[LCE-Web][WebIggy][compat70] custom regions 1 ToolTips720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 2 PressStartToPlay720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 17 ComponentLogo720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 18 CreateWorldMenu720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 20 Panorama720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 19 LaunchMoreOptionsMenu720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 16 Panorama720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 15 MainMenu720.swf iggy_Splash[0.0,0.0 500.0x50.0]",
+      "[LCE-Web][WebIggy][compat70] custom regions 1 ToolTips720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 2 PressStartToPlay720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 17 ComponentLogo720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 18 CreateWorldMenu720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 20 Panorama720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 19 FullscreenProgress720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 21 ComponentLogo720.swf <none>",
+      "Inventory::setItem - slot = 9,\t item = 358, aux = 0",
+      "Inventory::setItem - slot = 9,\t item = 358, aux = 0",
+      "Inventory::setItem - slot = 9,\t item = 358, aux = 0",
+      "[LCE-Web][WebIggy][compat70] custom regions 3 ToolTips720.swf <none>",
+      "[LCE-Web][WebIggy][compat70] custom regions 5 HUD720.swf iggy_slot_0[0.0,0.0 24.0x24.0] | iggy_slot_1[0.0,0.0 24.0x24.0] | iggy_slot_2[0.0,0.0 24.0x24.0] | iggy_slot_3[0.0,0.0 24.0x24.0] | iggy_slot_4[0.0,0.0 24.0x24.0] | iggy_slot_5[0.0,0.0 24.0x24.0] | iggy_slot_6[0.0,0.0 24.0x24.0] | iggy_slot_7[0.0,0.0 24.0x24.0] | iggy_slot_8[0.0,0.0 24.0x24.0]",
+      "[LCE-Web][WebIggy][compat70] renderer InventoryMenu720.swf canvas",
+      "[LCE-Web][WebIggy][compat70] RSL/preload barrier complete InventoryMenu720.swf 364.4ms",
+      "[LCE-Web][WebIggy][compat70] player ready 22 InventoryMenu720.swf 1280x720@30",
+      "[LCE-Web][WebIggy] player 22 loaded: InventoryMenu720.swf (1280x720 @ 30.00)",
+      "Loaded iggy movie InventoryMenu720.swf",
+      "[LCE-Web][container-panel] InventoryMenu stage=(424.0,94.0 431.0x435.0) native scale9 replacement",
+      "[LCE-Web][WebIggy][compat70] first draw 22 InventoryMenu720.swf 1280x720 overlay=1280x720",
+      "[LCE-Web][WebIggy][compat70] custom regions 22 InventoryMenu720.swf iggy_slot_9[0.0,0.0 38.0x38.0] | iggy_slot_10[0.0,0.0 38.0x38.0] | iggy_slot_11[0.0,0.0 38.0x38.0] | iggy_slot_12[0.0,0.0 38.0x38.0] | iggy_slot_13[0.0,0.0 38.0x38.0] | iggy_slot_14[0.0,0.0 38.0x38.0] | iggy_slot_15[0.0,0.0 38.0x38.0] | iggy_slot_16[0.0,0.0 38.0x38.0] | iggy_slot_17[0.0,0.0 38.0x38.0] | iggy_slot_18[0.0,0.0 38.0x38.0] | iggy_slot_19[0.0,0.0 38.0x38.0] | iggy_slot_20[0.0,0.0 38.0x38.0] | iggy_slot_21[0.0,0.0 38.0x38.0] | iggy_slot_22[0.0,0.0 38.0x38.0] | iggy_slot_23[0.0,0.0 38.0x38.0] | iggy_slot_24[0.0,0.0 38.0x38.0] | iggy_slot_25[0.0,0.0 38.0x38.0] | iggy_slot_26[0.0,0.0 38.0x38.0] | iggy_slot_27[0.0,0.0 38.0x38.0] | iggy_slot_28[0.0,0.0 38.0x38.0] | iggy_slot_29[0.0,0.0 38.0x38.0] | iggy_slot_30[0.0,0.0 38.0x38.0] | iggy_slot_31[0.0,0.0 38.0x38.0] | iggy_slot_32[0.0,0.0 38.0x38.0] | iggy_slot_33[0.0,0.0 38.0x38.0] | iggy_slot_34[0.0,0.0 38.0x38.0] | iggy_slot_35[0.0,0.0 38.0x38.0] | iggy_slot_36[0.0,0.0 38.0x38.0] | iggy_slot_37[0.0,0.0 38.0x38.0] | iggy_slot_38[0.0,0.0 38.0x38.0] | iggy_slot_39[0.0,0.0 38.0x38.0] | iggy_slot_40[0.0,0.0 38.0x38.0] | iggy_slot_41[0.0,0.0 38.0x38.0] | iggy_slot_42[0.0,0.0 38.0x38.0] | iggy_slot_43[0.0,0.0 38.0x38.0] | iggy_slot_44[0.0,0.0 38.0x38.0] | iggy_slot_5[0.0,0.0 38.0x38.0] | iggy_slot_6[0.0,0.0 38.0x38.0] | iggy_slot_7[0.0,0.0 38.0x38.0] | iggy_slot_8[0.0,0.0 38.0x38.0] | iggy_player[0.0,0.0 126.0x168.0] | iggy_pointerIcon[0.0,0.0 65.0x59.0]",
+      "[LCE-Web][ui-native-custom] kind=1 rect=(604,120 126x168) changed=6215\\n[LCE-Web][ui-test-scene] scene=11 movie=InventoryMenu count=8"
+    ]
+  }
+}
