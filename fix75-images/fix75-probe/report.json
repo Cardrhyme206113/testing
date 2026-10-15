@@ -1,0 +1,923 @@
+{
+  "screens": [
+    "01-create-normal",
+    "02-create-without-native-panel",
+    "03-options-normal",
+    "04-options-after-set",
+    "05-options-set-later",
+    "06-options-continuous",
+    "07-options-after-continuous",
+    "08-options-without-native-panel",
+    "09-graphics-original",
+    "10-graphics-hide-overlays",
+    "11-howto-original",
+    "12-howto-hide-overlays"
+  ],
+  "test": [
+    {
+      "case": "create",
+      "open": {
+        "a": 1,
+        "b": 1
+      }
+    },
+    {
+      "case": "options-initial",
+      "state": {
+        "controls": [
+          {
+            "name": "CheckboxPVP",
+            "x": 438,
+            "y": -107374182.4,
+            "width": 204,
+            "height": -1,
+            "sy": 169,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxTrustSystem",
+            "x": 438,
+            "y": -107374182.4,
+            "width": 173,
+            "height": 29.05,
+            "sy": 204,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxFireSpreads",
+            "x": 438,
+            "y": -107374182.4,
+            "width": 163,
+            "height": 29.05,
+            "sy": 238,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxTNT",
+            "x": 438,
+            "y": -107374182.4,
+            "width": 165,
+            "height": 29.05,
+            "sy": 272,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxHostPrivileges",
+            "x": 438,
+            "y": -107374182.4,
+            "width": 181,
+            "height": 29.05,
+            "sy": 306,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "WorldOptions",
+            "x": 438,
+            "y": 336,
+            "width": 140,
+            "height": 29.05,
+            "sy": 334,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxStructures",
+            "x": 448,
+            "y": -107374182.4,
+            "width": 243,
+            "height": 29.05,
+            "sy": 369,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxFlatWorld",
+            "x": 448,
+            "y": -107374182.4,
+            "width": 189,
+            "height": 29.05,
+            "sy": 403,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxBonusChest",
+            "x": 448,
+            "y": -107374182.4,
+            "width": 155,
+            "height": 29.05,
+            "sy": 437,
+            "sh": 29.05,
+            "visible": true
+          }
+        ],
+        "panels": [
+          {
+            "key": "createworld-main",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "createworld-texture-panel",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "createworld-texture-list",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "world-options-main",
+            "display": "block",
+            "visible": "visible",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          }
+        ],
+        "players": [
+          {
+            "id": 1,
+            "filename": "ToolTips720.swf"
+          },
+          {
+            "id": 2,
+            "filename": "PressStartToPlay720.swf"
+          },
+          {
+            "id": 19,
+            "filename": "LaunchMoreOptionsMenu720.swf"
+          },
+          {
+            "id": 20,
+            "filename": "Panorama720.swf"
+          }
+        ]
+      }
+    },
+    {
+      "case": "set-once",
+      "result": [
+        {
+          "name": "CheckboxOnline",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxOnline",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "CheckboxInviteOnly",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxInviteOnly",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "CheckboxAllowFoF",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxAllowFoF",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "CheckboxPVP",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxPVP",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "CheckboxTrustSystem",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxTrustSystem",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "CheckboxFireSpreads",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxFireSpreads",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "CheckboxTNT",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxTNT",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "CheckboxHostPrivileges",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxHostPrivileges",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "CheckboxResetNether",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxResetNether",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "WorldOptions",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "WorldOptions",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "CheckboxStructures",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxStructures",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "CheckboxFlatWorld",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxFlatWorld",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "CheckboxBonusChest",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "CheckboxBonusChest",
+          "prop": "_y",
+          "ok": false
+        },
+        {
+          "name": "Description",
+          "prop": "y",
+          "ok": true
+        },
+        {
+          "name": "Description",
+          "prop": "_y",
+          "ok": false
+        }
+      ]
+    },
+    {
+      "case": "after-set",
+      "state": {
+        "controls": [
+          {
+            "name": "CheckboxPVP",
+            "x": 438,
+            "y": 170,
+            "width": 204,
+            "height": 29.05,
+            "sy": 169,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxTrustSystem",
+            "x": 438,
+            "y": 204,
+            "width": 173,
+            "height": 29.05,
+            "sy": 204,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxFireSpreads",
+            "x": 438,
+            "y": 238,
+            "width": 163,
+            "height": 29.05,
+            "sy": 238,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxTNT",
+            "x": 438,
+            "y": 272,
+            "width": 165,
+            "height": 29.05,
+            "sy": 272,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxHostPrivileges",
+            "x": 438,
+            "y": 306,
+            "width": 181,
+            "height": 29.05,
+            "sy": 306,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "WorldOptions",
+            "x": 438,
+            "y": 336,
+            "width": 140,
+            "height": 29.05,
+            "sy": 334,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxStructures",
+            "x": 448,
+            "y": 369,
+            "width": 243,
+            "height": 29.05,
+            "sy": 369,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxFlatWorld",
+            "x": 448,
+            "y": 403,
+            "width": 189,
+            "height": 29.05,
+            "sy": 403,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxBonusChest",
+            "x": 448,
+            "y": 437,
+            "width": 155,
+            "height": 29.05,
+            "sy": 437,
+            "sh": 29.05,
+            "visible": true
+          }
+        ],
+        "panels": [
+          {
+            "key": "createworld-main",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "createworld-texture-panel",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "createworld-texture-list",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "world-options-main",
+            "display": "block",
+            "visible": "visible",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          }
+        ],
+        "players": [
+          {
+            "id": 1,
+            "filename": "ToolTips720.swf"
+          },
+          {
+            "id": 2,
+            "filename": "PressStartToPlay720.swf"
+          },
+          {
+            "id": 19,
+            "filename": "LaunchMoreOptionsMenu720.swf"
+          },
+          {
+            "id": 20,
+            "filename": "Panorama720.swf"
+          }
+        ]
+      }
+    },
+    {
+      "case": "later",
+      "state": {
+        "controls": [
+          {
+            "name": "CheckboxPVP",
+            "x": 438,
+            "y": 170,
+            "width": 204,
+            "height": 29.05,
+            "sy": 169,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxTrustSystem",
+            "x": 438,
+            "y": 204,
+            "width": 173,
+            "height": 29.05,
+            "sy": 204,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxFireSpreads",
+            "x": 438,
+            "y": 238,
+            "width": 163,
+            "height": 29.05,
+            "sy": 238,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxTNT",
+            "x": 438,
+            "y": 272,
+            "width": 165,
+            "height": 29.05,
+            "sy": 272,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxHostPrivileges",
+            "x": 438,
+            "y": 306,
+            "width": 181,
+            "height": 29.05,
+            "sy": 306,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "WorldOptions",
+            "x": 438,
+            "y": 336,
+            "width": 140,
+            "height": 29.05,
+            "sy": 334,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxStructures",
+            "x": 448,
+            "y": 369,
+            "width": 243,
+            "height": 29.05,
+            "sy": 369,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxFlatWorld",
+            "x": 448,
+            "y": 403,
+            "width": 189,
+            "height": 29.05,
+            "sy": 403,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxBonusChest",
+            "x": 448,
+            "y": 437,
+            "width": 155,
+            "height": 29.05,
+            "sy": 437,
+            "sh": 29.05,
+            "visible": true
+          }
+        ],
+        "panels": [
+          {
+            "key": "createworld-main",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "createworld-texture-panel",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "createworld-texture-list",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "world-options-main",
+            "display": "block",
+            "visible": "visible",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          }
+        ],
+        "players": [
+          {
+            "id": 1,
+            "filename": "ToolTips720.swf"
+          },
+          {
+            "id": 2,
+            "filename": "PressStartToPlay720.swf"
+          },
+          {
+            "id": 19,
+            "filename": "LaunchMoreOptionsMenu720.swf"
+          },
+          {
+            "id": 20,
+            "filename": "Panorama720.swf"
+          }
+        ]
+      }
+    },
+    {
+      "case": "continuous",
+      "state": {
+        "controls": [
+          {
+            "name": "CheckboxPVP",
+            "x": 438,
+            "y": 170,
+            "width": 204,
+            "height": 29.05,
+            "sy": 169,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxTrustSystem",
+            "x": 438,
+            "y": 204,
+            "width": 173,
+            "height": 29.05,
+            "sy": 204,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxFireSpreads",
+            "x": 438,
+            "y": 238,
+            "width": 163,
+            "height": 29.05,
+            "sy": 238,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxTNT",
+            "x": 438,
+            "y": 272,
+            "width": 165,
+            "height": 29.05,
+            "sy": 272,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxHostPrivileges",
+            "x": 438,
+            "y": 306,
+            "width": 181,
+            "height": 29.05,
+            "sy": 306,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "WorldOptions",
+            "x": 438,
+            "y": 336,
+            "width": 140,
+            "height": 29.05,
+            "sy": 334,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxStructures",
+            "x": 448,
+            "y": 369,
+            "width": 243,
+            "height": 29.05,
+            "sy": 369,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxFlatWorld",
+            "x": 448,
+            "y": 403,
+            "width": 189,
+            "height": 29.05,
+            "sy": 403,
+            "sh": 29.05,
+            "visible": true
+          },
+          {
+            "name": "CheckboxBonusChest",
+            "x": 448,
+            "y": 437,
+            "width": 155,
+            "height": 29.05,
+            "sy": 437,
+            "sh": 29.05,
+            "visible": true
+          }
+        ],
+        "panels": [
+          {
+            "key": "createworld-main",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "createworld-texture-panel",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "createworld-texture-list",
+            "display": "none",
+            "visible": "hidden",
+            "rect": {
+              "x": 0,
+              "y": 0,
+              "width": 0,
+              "height": 0,
+              "top": 0,
+              "right": 0,
+              "bottom": 0,
+              "left": 0
+            }
+          },
+          {
+            "key": "world-options-main",
+            "display": "block",
+            "visible": "visible",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          }
+        ],
+        "players": [
+          {
+            "id": 1,
+            "filename": "ToolTips720.swf"
+          },
+          {
+            "id": 2,
+            "filename": "PressStartToPlay720.swf"
+          },
+          {
+            "id": 19,
+            "filename": "LaunchMoreOptionsMenu720.swf"
+          },
+          {
+            "id": 20,
+            "filename": "Panorama720.swf"
+          }
+        ]
+      }
+    },
+    {
+      "case": "graphics",
+      "open": {
+        "a": 1,
+        "b": 1
+      }
+    },
+    {
+      "case": "graphics-panels",
+      "panels": []
+    },
+    {
+      "case": "how-to",
+      "open": {
+        "a": 1,
+        "b": 1
+      }
+    }
+  ],
+  "errors": [],
+  "events": [
+    "[LCE-Web][frame-stage] 1 StartFrame begin",
+    "[LCE-Web][frame-stage] 1 StartFrame done; 2 platform ticks begin",
+    "[LCE-Web][frame-stage] 2 platform ticks done; 3 UI tick begin",
+    "[LCE-Web][frame-stage] 3 UI tick done; 4 network begin",
+    "[LCE-Web][frame-stage] 4 network/actions done; 5 world/update begin",
+    "[LCE-Web][frame-stage] 5 world/update done; 6 UI render begin",
+    "[LCE-Web][frame-stage] 6 UI render done; 7 Present begin",
+    "[LCE-Web][frame-stage] 7 Present done; menu close state advanced; first browser frame committed",
+    "[LCE-Web][frame-stage] 1 StartFrame begin",
+    "[LCE-Web][frame-stage] 1 StartFrame done; 2 platform ticks begin",
+    "[LCE-Web][frame-stage] 2 platform ticks done; 3 UI tick begin",
+    "[LCE-Web][frame-stage] 3 UI tick done; 4 network begin",
+    "[LCE-Web][frame-stage] 4 network/actions done; 5 world/update begin",
+    "[LCE-Web][frame-stage] 5 world/update done; 6 UI render begin",
+    "[LCE-Web][frame-stage] 6 UI render done; 7 Present begin",
+    "[LCE-Web][frame-stage] 7 Present done; menu close state advanced; first browser frame committed",
+    "[LCE-Web][frame-stage] 1 StartFrame begin",
+    "[LCE-Web][frame-stage] 1 StartFrame done; 2 platform ticks begin",
+    "[LCE-Web][frame-stage] 2 platform ticks done; 3 UI tick begin",
+    "[LCE-Web][frame-stage] 3 UI tick done; 4 network begin",
+    "[LCE-Web][frame-stage] 4 network/actions done; 5 world/update begin",
+    "[LCE-Web][frame-stage] 5 world/update done; 6 UI render begin",
+    "[LCE-Web][frame-stage] 6 UI render done; 7 Present begin",
+    "[LCE-Web][frame-stage] 7 Present done; menu close state advanced; first browser frame committed"
+  ]
+}
