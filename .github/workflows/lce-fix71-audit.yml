@@ -1,0 +1,62 @@
+name: LCE Web / Fix71 native-control diagnostic
+on:
+  push:
+    branches: [lce-fix71-validation-20261015]
+    paths: ['.github/workflows/lce-fix71-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verified Fix70 browser runtime
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38748564538
+          name: lce-web-fix63-browser
+          github-token: ${{ github.token }}
+          path: site
+      - name: Install Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Start isolated browser game server
+        run: |
+          cat > playtest-server.py <<'PY'
+          from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+              def end_headers(self):
+                  self.send_header('Cross-Origin-Opener-Policy','same-origin')
+                  self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+                  self.send_header('Cross-Origin-Resource-Policy','same-origin')
+                  self.send_header('Cache-Control','no-store')
+                  super().end_headers()
+              def guess_type(self,path):
+                  if path.endswith('.wasm'): return 'application/wasm'
+                  if path.endswith('.data'): return 'application/octet-stream'
+                  return super().guess_type(path)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          ( cd site && python3 ../playtest-server.py > ../server.log 2>&1 ) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Probe native More Options and world-start controls
+        shell: bash
+        run: |
+          mkdir -p fix71-probe
+          UI_TEST_OUT=fix71-probe timeout 500s node tools/lce-fix71-audit.cjs 2>&1 | tee fix71-probe/runner.log
+      - name: Upload unfiltered findings and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix71-native-control-evidence
+          path: |
+            fix71-probe/
+            server.log
+          retention-days: 14
+          if-no-files-found: warn
