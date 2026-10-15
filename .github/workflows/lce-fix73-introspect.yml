@@ -1,0 +1,69 @@
+name: LCE Web / Fix73 More Options bridge inspection
+on:
+  push:
+    branches: [lce-fix73-options-render-20261015]
+    paths: ['.github/workflows/lce-fix73-introspect.yml', 'tools/lce-fix73-introspect.cjs']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get verified Fix70 browser game
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38748564538
+          name: lce-web-fix63-browser
+          github-token: ${{ github.token }}
+          path: site
+      - name: Print WebIggy bridge implementations
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('site/lce_web_demo.js').read_text()
+          for token in ('function getValue(', 'function beginCall(', 'function finishCall(', 'function setNativeScale9Panel(', 'function metadata(', 'function stageRectFor('):
+            a=s.find(token)
+            print('FIX73_JS_SOURCE',token,a)
+            if a>=0: print(s[a:a+2400].replace('\n',' ')[:2400])
+          PY
+      - name: Install headless Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Serve engine with isolation
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,path):
+              if path.endswith('.wasm'):return 'application/wasm'
+              if path.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(path)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../local_server.log 2>&1) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Record original More Options bridge activity
+        run: |
+          set -o pipefail
+          UI_TEST_OUT=fix73-introspect timeout 170s node tools/lce-fix73-introspect.cjs | tee fix73-run.log
+      - name: Save evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix73-options-trace
+          path: |
+            fix73-introspect/
+            fix73-run.log
+          retention-days: 14
+          compression-level: 1
