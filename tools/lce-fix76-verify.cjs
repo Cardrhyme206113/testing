@@ -40,6 +40,15 @@ const opts=['CheckboxPVP','CheckboxTrustSystem','CheckboxFireSpreads','CheckboxT
    await pause(1000);
    await shot('01-create-world');
    await page.mouse.click(642,558);
+   // The authentic Iggy scene may take multiple seconds to initialize its SWF.
+   // Do not certify Create World as if it were the More Options screenshot.
+   let loaded=false;
+   for(let i=0;i<100;i++){
+     await pause(300);
+     loaded=await page.evaluate(()=>(globalThis.LCEWebIggy?.debugState?.().players||[]).some(p=>p.visible&&p.filename==='LaunchMoreOptionsMenu720.swf'));
+     if(loaded)break;
+   }
+   if(!loaded)throw new Error('Original More Options SWF did not become visible');
    await pause(1500);
    let png=await shot('02-options-1.5s');
    report.verdict.first=labelsPresent(png);
