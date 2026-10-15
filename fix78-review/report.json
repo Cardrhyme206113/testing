@@ -1,0 +1,106 @@
+{
+  "errors": [],
+  "controls": [],
+  "verified": true,
+  "before": {
+    "players": [
+      "ToolTips720.swf",
+      "PressStartToPlay720.swf",
+      "LaunchMoreOptionsMenu720.swf",
+      "Panorama720.swf"
+    ],
+    "controls": [
+      {
+        "name": "CheckboxPVP",
+        "y": 170,
+        "sy": 169,
+        "shown": true
+      },
+      {
+        "name": "CheckboxHostPrivileges",
+        "y": 306,
+        "sy": 306,
+        "shown": true
+      },
+      {
+        "name": "WorldOptions",
+        "y": 336,
+        "sy": 334,
+        "shown": true
+      },
+      {
+        "name": "CheckboxStructures",
+        "y": 381,
+        "sy": 381,
+        "shown": true
+      },
+      {
+        "name": "CheckboxFlatWorld",
+        "y": 415,
+        "sy": 415,
+        "shown": true
+      },
+      {
+        "name": "CheckboxBonusChest",
+        "y": 449,
+        "sy": 449,
+        "shown": true
+      }
+    ],
+    "help": [
+      "When enabled, players can inflict damage on other players. Only affects Survival mode."
+    ]
+  },
+  "geometry": true,
+  "after": {
+    "players": [
+      "ToolTips720.swf",
+      "PressStartToPlay720.swf",
+      "LaunchMoreOptionsMenu720.swf",
+      "Panorama720.swf"
+    ],
+    "controls": [
+      {
+        "name": "CheckboxPVP",
+        "y": 170,
+        "sy": 170,
+        "shown": true
+      },
+      {
+        "name": "CheckboxHostPrivileges",
+        "y": 306,
+        "sy": 306,
+        "shown": true
+      },
+      {
+        "name": "WorldOptions",
+        "y": 336,
+        "sy": 334,
+        "shown": true
+      },
+      {
+        "name": "CheckboxStructures",
+        "y": 381,
+        "sy": 380,
+        "shown": true
+      },
+      {
+        "name": "CheckboxFlatWorld",
+        "y": 415,
+        "sy": 415,
+        "shown": true
+      },
+      {
+        "name": "CheckboxBonusChest",
+        "y": 449,
+        "sy": 449,
+        "shown": true
+      }
+    ],
+    "help": [
+      "When enabled, structures such as Villages and Strongholds will generate in the world."
+    ]
+  },
+  "checkboxPixelChanges": 426,
+  "helpChanged": true
+}
