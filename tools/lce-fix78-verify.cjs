@@ -22,7 +22,7 @@ const report={errors:[],controls:[],verified:false};
   for(let i=0;i<100;i++){await delay(180);if(await page.evaluate(()=>Module._lce_web_test_last_ui_result())!==-99)break;}
   await delay(1000);
   await page.mouse.click(642,558);
-  for(let i=0;i<100;i++){await delay(300);if((await state()).players.includes('LaunchMoreOptionsMenu720.swf'))break;}
+  for(let i=0;i<100;i++){await delay(300);if(await page.evaluate(()=>(globalThis.LCEWebIggy?.debugState?.().players||[]).some(x=>x.visible&&x.filename==='LaunchMoreOptionsMenu720.swf')))break;}
   await delay(3200);
   const b=await shot('01-repaired-options-before-interaction');
   report.before=await state();
