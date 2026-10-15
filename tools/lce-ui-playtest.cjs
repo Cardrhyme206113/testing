@@ -156,16 +156,27 @@ async function run(){
   try{
     await newPage();
     for(const row of FILES.filter(([k])=>k<=12)) await testScene(row,true);
-    // Open Create World in the actual frontend, then create a Survival world.
+    // Use a fresh page for the heavyweight world-start transition. The
+    // frontend sweep may have left scene stacks/overlay state behind.
+    await newPage();
     const creation=await open(12);
     if(creation.result===1){
+      await snapshot('12-CreateWorld-before-create');
       await page.mouse.click(640,646);
-      await pause(1800);
-      await page.keyboard.press('Enter'); // acknowledge host privileges if present
+      await pause(1600);
+      await snapshot('12-CreateWorld-after-create');
+      await page.keyboard.press('Enter'); // privilege confirmation if present
       const start=Date.now();
-      while(Date.now()-start<90000){
-        if(history.some(e=>/game world is live|GameStarted\(true\)/i.test(e.text))){report.worldStarted=true;break;}
-        await pause(1500);
+      // Poll the real C++ game-start predicate indirectly through the public
+      // test-scene bridge, not speculative console text.
+      while(Date.now()-start<180000){
+        const probe=await open(20);
+        if(probe.result===1){
+          report.worldStarted=true;
+          await snapshot('20-World-live-inventory-probe');
+          break;
+        }
+        await pause(2500);
       }
     }
     if(report.worldStarted){
