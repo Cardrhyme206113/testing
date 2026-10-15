@@ -1,0 +1,72 @@
+name: LCE Web / Fix68 root alignment probe
+on:
+  push:
+    branches: [lce-web-ci-20261014]
+    paths: ['.github/workflows/lce-root-align-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lce-web-fix63-browser
+          repository: Cardrhyme206113/testing
+          run-id: 38690303324
+          github-token: ${{ github.token }}
+          path: site
+      - name: Patch only UI root alignment in built fix67 JavaScript
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          p=pathlib.Path('site/lce_web_demo.js');s=p.read_text()
+          for a,b in [
+          ('    root.style.left = `${rect.left}px`;','    root.style.left = `${rect.left - (root.offsetParent || root.parentElement).getBoundingClientRect().left}px`;'),
+          ('    root.style.top = `${rect.top}px`;','    root.style.top = `${rect.top - (root.offsetParent || root.parentElement).getBoundingClientRect().top}px`;'),
+          ('root.id = "lce-webiggy-root";\n    Object.assign(root.style, {\n      position: "fixed",','root.id = "lce-webiggy-root";\n    Object.assign(root.style, {\n      position: "absolute",')
+          ]:
+              assert s.count(a)==1,(a,s.count(a))
+              s=s.replace(a,b)
+          p.write_text(s)
+
+          PY
+          node --check site/lce_web_demo.js
+      - name: Install Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Test alignment and Create World navigation
+        shell: bash
+        run: |
+          mkdir -p fix67-visual-results
+          cat > server.py <<'PY'
+          from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              self.send_header('Cross-Origin-Opener-Policy','same-origin')
+              self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+              self.send_header('Cross-Origin-Resource-Policy','same-origin')
+              super().end_headers()
+            def guess_type(self,path):
+              if path.endswith('.wasm'):return 'application/wasm'
+              return super().guess_type(path)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../server.py > ../fix67-visual-results/server.log 2>&1) &
+          sleep 2
+          timeout 390s node tools/lce-visual-fix67.cjs 2>&1 | tee fix67-visual-results/output.log
+      - name: Upload runtime screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix68-root-alignment-probe
+          path: fix67-visual-results/
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: warn
