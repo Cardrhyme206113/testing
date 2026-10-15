@@ -2,7 +2,7 @@ name: LCE Web / Fix72 runtime diagnostics
 on:
   push:
     branches: [lce-fix72-diagnostics-20261015]
-    paths: ['.github/workflows/lce-fix72-diagnostics.yml']
+    paths: ['.github/workflows/lce-fix72-diagnostics.yml', 'tools/lce-fix72-diagnostics.cjs']
   workflow_dispatch:
 permissions:
   contents: read
