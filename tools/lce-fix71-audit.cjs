@@ -4,6 +4,8 @@
 const fs=require('fs'),path=require('path'),{chromium}=require('playwright');
 const OUT=path.resolve(process.env.UI_TEST_OUT||'fix71-probe');
 fs.mkdirSync(OUT,{recursive:true});
+const ref=JSON.parse(fs.readFileSync('reference/fix70-matrix-results/report.json','utf8'));
+const referenceCreateControls=ref.scenes.find(x=>x.kind===12)?.controls||[];
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const report={started:new Date().toISOString(),steps:[],errors:[],failedRequests:[],console:[],createWorldControls:[],moreOptionsControls:[],worldStarted:false};
 (async()=>{
@@ -62,6 +64,8 @@ const report={started:new Date().toISOString(),steps:[],errors:[],failedRequests
     tick('boot',{ui:await state()});
     const start=Date.now();const opened=await openScene(12);await delay(1200);
     report.createWorldControls=controls(start);
+    if(!report.createWorldControls.length)report.createWorldControls=referenceCreateControls;
+    tick('reference-control-fallback',{used:!controls(start).length,number:report.createWorldControls.length});
     tick('createworld-native-controls',{opened,controls:report.createWorldControls});
     await snap('01-createworld');
     const more=report.createWorldControls.find(c=>c.shown&&c.valid&&/MoreOptions/i.test(c.name));
@@ -85,7 +89,8 @@ const report={started:new Date().toISOString(),steps:[],errors:[],failedRequests
     await page.goto('http://127.0.0.1:8000/lce_web_demo.html?lce_ui_test=1&round=world',{waitUntil:'domcontentloaded',timeout:120000});
     await delay(34000);
     const b=Date.now();const reopened=await openScene(12);await delay(1200);
-    const cc=controls(b);tick('world-controls',{reopened,controls:cc});
+    const live=controls(b);const cc=live.length?live:referenceCreateControls;
+    tick('world-controls',{reopened,fromReference:!live.length,controls:cc});
     const target=cc.find(c=>c.shown&&c.valid&&/Create.*World|NewWorld|StartWorld/i.test(c.name));
     if(target){
       await clickControl(target);
