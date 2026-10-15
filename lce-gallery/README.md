@@ -5,6 +5,8 @@ They are **not** reference art, and passing hitbox/geometry tests does not mean 
 
 **Caution:** Fix70/71/72 are older runtime snapshots. Fix73 is the latest patched runtime and captured only one screenshot.
 
+**Visual verdict (Fix73): FAIL.** The More Options checkbox labels and toggles are absent. Only a large blank grey panel, the `World Options` label, and a detached help box are visible. Passing the native control-coordinate assertions did not repair the actual Flash artwork. This menu is still incomplete.
+
 **Total: 80 screenshots.**
 
 For a full-screen responsive view, open [the offline gallery HTML](index.html) after cloning/downloading the branch.
