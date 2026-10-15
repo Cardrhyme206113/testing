@@ -26,6 +26,7 @@ jobs:
         run: |
           python3 tools/lce-fix78-apply.py site/lce_web_demo.js
           node --check site/lce_web_demo.js
+          node --check tools/lce-fix78-verify.cjs
           grep -q LCE_WEB_FIX78_WORLD_OPTIONS_SPACING site/lce_web_demo.js
       - name: Install Chromium and screenshots
         run: |
