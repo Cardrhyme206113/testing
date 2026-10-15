@@ -1,0 +1,31 @@
+name: LCE Web / Fix79 SWF panel component catalog
+on:
+  push:
+    branches: [lce-fix79-frame-renderer-20261015]
+    paths: ['.github/workflows/lce-fix79-swf.yml','tools/lce-fix79-swf-inspect.py']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38782615512
+          name: lce-web-fix78-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Enumerate actual scale9 source SWF classes and panel symbols
+        run: |
+          python3 tools/lce-fix79-swf-inspect.py | tee fix79-swf-results.txt
+          echo '### All runtime menu SWFs'
+          find site/ui-assets/runtime -maxdepth 1 -iname '*.swf' -printf '%f\n' | grep -Ei 'menu|option|settings|create|graphics|howto|skin' | sort | head -100
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix79-original-swf-panel-names
+          path: fix79-swf-results.txt
