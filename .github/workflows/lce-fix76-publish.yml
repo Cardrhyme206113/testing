@@ -1,0 +1,44 @@
+name: LCE Web / Fix76 publish reviewable UI screenshots
+on:
+  push:
+    branches: [lce-fix76-menus-restored-20261015]
+    paths: ['.github/workflows/lce-fix76-publish.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Recover all original Fix76 browser screenshots
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38780195248
+          name: lce-fix76-all-menu-visual-evidence
+          github-token: ${{ github.token }}
+          path: fix76-review
+      - name: Create simple browseable Markdown index, preserve exact PNG bytes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('fix76-review')
+          images=sorted(p.rglob('*.png'))
+          assert len(images)>=12, len(images)
+          s=['# Fix76 real browser screenshots', '', 'These are raw Playwright screenshots, **not** polished reference images.','',f'{len(images)} screenshots','']
+          for file in images:
+            rel=file.relative_to(p).as_posix()
+            s.append(f'## {file.stem}\n\n![{file.stem}]({rel})\n')
+          (p/'README.md').write_text('\n'.join(s))
+          print(len(images),'screenshots')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fix76-review
+          git commit -m "Visual: publish Fix76 original SWF screenshots for human review"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
