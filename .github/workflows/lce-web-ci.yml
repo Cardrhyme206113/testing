@@ -50,6 +50,31 @@ jobs:
           path: smoke/
           if-no-files-found: error
           retention-days: 7
+      - name: Download fix64+fix65 private source bundle
+        shell: bash
+        run: |
+          mkdir -p incoming
+          python3 - <<'PY'
+          import concurrent.futures, hashlib, pathlib, urllib.request,zipfile
+          urls = ["https://sdmntpritalynorth.oaiusercontent.com/files/00000000-c0c0-8246-986c-c1e3255df5da/raw?se=2026-10-15T04%3A16%3A57Z&sp=r&sv=2026-02-06&sr=b&scid=3f19e3ea-9e12-5ddd-8383-cb3517d1ae71&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A50%3A37Z&ske=2026-10-16T02%3A50%3A37Z&sks=b&skv=2026-02-06&sig=GK/mGnVZlMNNm3ex4AoiagEWzcmzc71Fnijs%2BY2o6g0%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-c878-820a-866c-488f2bd9f02e/raw?se=2026-10-15T04%3A16%3A56Z&sp=r&sv=2026-02-06&sr=b&scid=a4a857c9-ecf7-5b03-82fd-48e3d5815225&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A38%3A57Z&ske=2026-10-16T03%3A38%3A57Z&sks=b&skv=2026-02-06&sig=OkajyNwMuHIJE9gC4mNOeqp1qvj%2BWGOPwGrfJ3ZKta8%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-dc50-8246-9eb1-8bb068e38d9d/raw?se=2026-10-15T04%3A16%3A58Z&sp=r&sv=2026-02-06&sr=b&scid=be3eb1a9-db90-5db5-bc67-2a6d5a67d3b0&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A39%3A41Z&ske=2026-10-16T03%3A39%3A41Z&sks=b&skv=2026-02-06&sig=HNnsrqzB6b9VnBL9xF0H/KKhTRlFZR2i4dBE7NCxxvM%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-b834-8246-bad8-c3275684de1e/raw?se=2026-10-15T04%3A16%3A56Z&sp=r&sv=2026-02-06&sr=b&scid=7708e18e-23b6-5881-a272-2e503cca3919&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A52%3A50Z&ske=2026-10-16T02%3A52%3A50Z&sks=b&skv=2026-02-06&sig=7lvYh%2Bj7WlU5YEpECVEkh9ypZONRxGPawf/h3xymhVI%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-beb4-81f4-a0b2-2e5cd807bd94/raw?se=2026-10-15T04%3A16%3A57Z&sp=r&sv=2026-02-06&sr=b&scid=b1effafa-3497-5e9a-afc6-afbdf8fdde52&skoid=0a4a0f0c-99ac-4752-9d87-cfac036fa93f&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A21%3A12Z&ske=2026-10-16T02%3A21%3A12Z&sks=b&skv=2026-02-06&sig=6SgC3xMOL8mghgkup2R3fCK9WlT%2Bp19/OPokyNbqqKM%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-89b0-8246-959f-25c0838a03a2/raw?se=2026-10-15T04%3A17%3A01Z&sp=r&sv=2026-02-06&sr=b&scid=457e0a86-7a03-52d6-8f19-9e9927b6d948&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T02%3A41%3A16Z&ske=2026-10-16T02%3A41%3A16Z&sks=b&skv=2026-02-06&sig=eHJv757vWUxF9IHZ/b35fd0LlMuxqPloYr6/n/eOScA%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-c35c-8246-8afb-479a4fa294ff/raw?se=2026-10-15T04%3A17%3A00Z&sp=r&sv=2026-02-06&sr=b&scid=eec73d90-fd78-5116-8458-408e21473e89&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A17%3A30Z&ske=2026-10-16T03%3A17%3A30Z&sks=b&skv=2026-02-06&sig=phmsq3TLw4%2BORjYUl0wE5sRyloFySkcGuL7iyr%2BuHBQ%3D","https://sdmntprnortheu.oaiusercontent.com/files/00000000-5354-81f4-b2e2-a3a01fc1f90b/raw?se=2026-10-15T04%3A17%3A01Z&sp=r&sv=2026-02-06&sr=b&scid=48cf8e8d-1774-5bbc-9ec9-d4410e7deb31&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A13%3A58Z&ske=2026-10-15T05%3A13%3A58Z&sks=b&skv=2026-02-06&sig=EKx5yWFC3uJEJ4ZXFHwy9o7xLeWT0YkIwaIXYOcmowg%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-8850-820a-98e8-534db8ef72d2/raw?se=2026-10-15T04%3A17%3A00Z&sp=r&sv=2026-02-06&sr=b&scid=23d3359b-6a22-5147-984a-ca88f8354a87&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T04%3A08%3A02Z&ske=2026-10-16T04%3A08%3A02Z&sks=b&skv=2026-02-06&sig=RD2g5zRM9z19nygGOjKeCNWjUhEpPkC3/FNi0w3yPhA%3D","https://sdmntprukwest.oaiusercontent.com/files/00000000-0a8c-8243-a63b-8c3fe9f52db0/raw?se=2026-10-15T04%3A17%3A01Z&sp=r&sv=2026-02-06&sr=b&scid=7a318ac6-c1cd-5ce5-96d0-ba68cb3138fe&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A15%3A16Z&ske=2026-10-16T03%3A15%3A16Z&sks=b&skv=2026-02-06&sig=iYG3pCwJ%2BeA55K7eLMQtx2lLY0RZw51zwmxzTmyyhdo%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-5f34-820a-a131-d4549ee91bce/raw?se=2026-10-15T04%3A17%3A31Z&sp=r&sv=2026-02-06&sr=b&scid=f71b6a95-c90d-542b-9f01-2a4076208063&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T04%3A11%3A10Z&ske=2026-10-16T04%3A11%3A10Z&sks=b&skv=2026-02-06&sig=L0w/IQ1IIR3N1LvaPO58QYUq7u%2Bvyu7ohkvH8MH2T3A%3D","https://sdmntprukwest.oaiusercontent.com/files/00000000-6dac-8243-8335-0a81f0c31369/raw?se=2026-10-15T04%3A17%3A04Z&sp=r&sv=2026-02-06&sr=b&scid=6353bc3d-c565-55a3-b586-4b1218e6886e&skoid=1d6acb5b-b3f4-43ec-a5ec-b05c4a7708c8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T05%3A16%3A14Z&ske=2026-10-15T05%3A16%3A14Z&sks=b&skv=2026-02-06&sig=7KLfaVu5tNsbwMm3kVOSUJH2dXFQ5PbAH6UnuL3s4x4%3D","https://sdmntprukwest.oaiusercontent.com/files/00000000-3018-8243-aa76-2b1a6e474cae/raw?se=2026-10-15T04%3A17%3A04Z&sp=r&sv=2026-02-06&sr=b&scid=4fc005b9-10e4-50db-ae76-d2fc5c0489f3&skoid=6658dbdd-f305-4d30-8f6b-d62218202cb9&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-14T08%3A40%3A27Z&ske=2026-10-15T08%3A40%3A27Z&sks=b&skv=2026-02-06&sig=mYDXBml01HWiGFRoD3cr8eqwYuwTLp1G5Rf29OkLAKQ%3D","https://sdmntprpolandcentral.oaiusercontent.com/files/00000000-0b34-820a-9589-abb12617e3c2/raw?se=2026-10-15T04%3A17%3A04Z&sp=r&sv=2026-02-06&sr=b&scid=5d31ddfb-8eb0-5b6f-a7bd-086074f9cca8&skoid=d4d17077-8f33-42a9-bd8b-aa9d5eaf5320&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A13%3A55Z&ske=2026-10-16T03%3A13%3A55Z&sks=b&skv=2026-02-06&sig=TsHyCM45%2BLpLqpW8sn4T6F%2B6ebZPD8yq%2BfSYrF%2B3AVo%3D","https://sdmntpritalynorth.oaiusercontent.com/files/00000000-0c48-8246-9d6c-50ba4145bb22/raw?se=2026-10-15T04%3A17%3A03Z&sp=r&sv=2026-02-06&sr=b&scid=f9530d09-dfd8-5fd8-a4de-a343ae53a572&skoid=82a3371f-2f6c-4f81-8a78-2701b362559b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-15T03%3A48%3A42Z&ske=2026-10-16T03%3A48%3A42Z&sks=b&skv=2026-02-06&sig=a3tJdsNuyLPzh2S/rDcuHDn9DfhCe%2B4kOloyWLCI49w%3D"]
+          d=pathlib.Path('incoming/parts');d.mkdir(exist_ok=True)
+          def fetch(i):
+              req=urllib.request.Request(urls[i],headers={'User-Agent':'LCE-UI-Test-CI/1.0'})
+              with urllib.request.urlopen(req,timeout=180) as r: buf=r.read()
+              if i<13 and len(buf)!=15728640:raise SystemExit(f'Bad source part {i}: {len(buf)} bytes')
+              name=f'part{i:02d}' if i<14 else 'fix65-overlay.zip'
+              (d/name).write_bytes(buf)
+              print('Downloaded',name,len(buf))
+          with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:list(pool.map(fetch,range(len(urls))))
+          z=pathlib.Path('incoming/source.zip')
+          with z.open('wb') as f:
+              for i in range(14):f.write((d/f'part{i:02d}').read_bytes())
+          digest=hashlib.file_digest(z.open('rb'),'sha256').hexdigest()
+          if digest!='81d502ccb8d21cbf0af4ca5f099a45fed1a75fb2880fd1c1549a73e2e2c7b8fa':raise SystemExit('Bad fix64 digest '+digest)
+          print('fix64 SHA verified:',digest)
+          with zipfile.ZipFile(d/'fix65-overlay.zip') as overlay:
+              overlay.extractall('incoming/overlay')
+          PY
       - name: Get optional LCE source archive
         id: source
         shell: bash
@@ -57,7 +82,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p incoming
-          if [ -n "$SOURCE_URL" ]; then
+          if [ -f incoming/source.zip ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          elif [ -n "$SOURCE_URL" ]; then
             case "$SOURCE_URL" in https://*) ;; *) echo "::error::Source URL must use HTTPS"; exit 1 ;; esac
             curl --fail --location --retry 3 --output incoming/source.zip "$SOURCE_URL"
             echo "available=true" >> "$GITHUB_OUTPUT"
@@ -87,6 +114,9 @@ jobs:
           PY
           test -f lce-web-work/tools/build_web.sh
           test -f lce-web-work/tools/build_ruffle_webiggy.sh
+          cp -a incoming/overlay/lce-web-work/. lce-web-work/
+          test -f lce-web-work/FIX65-UI-REVALIDATION.md
+          chmod +x lce-web-work/tools/build_web.sh
       - name: Install LCE dependencies
         if: steps.source.outputs.available == 'true'
         run: |
