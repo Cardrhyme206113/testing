@@ -19,20 +19,30 @@ new = '''function getValue(id, path, property) {
     const clip = String(path || "");
     const prop = String(property || "");
     let value = record.api.webIggyGet(clip, prop);
-    // LCE_WEB_FIX73_OPTIONS_GEOMETRY: Ruffle 720p AVM1 stage transform can
-    // encode an invalid INT_MIN/20 Y for the original More Options controls.
-    // The same authored root-level controls expose correct local x/y/size.
-    // Preserve every finite stage coordinate and all other SWF behaviour.
-    if (/LaunchMoreOptionsMenu/i.test(String(record.filename || "")) &&
-        /^__lce_stage_(x|y|width|height)$/.test(prop)) {
-      const axis = prop.substring("__lce_stage_".length);
-      const n = Number(value);
-      if (!Number.isFinite(n) || Math.abs(n) > 8192 ||
-          ((axis === "width" || axis === "height") && n <= 0)) {
-        const candidate = Number(record.api.webIggyGet(clip, axis));
-        if (Number.isFinite(candidate) && Math.abs(candidate) < 8192 &&
-            ((axis !== "width" && axis !== "height") || candidate > 0)) {
-          value = candidate;
+    // LCE_WEB_FIX73_OPTIONS_GEOMETRY: the original AVM1 menu reports correct
+    // local control coordinates during init but some become INT_MIN/20 once
+    // the Flash timeline advances. Cache only real, finite original values.
+    if (/LaunchMoreOptionsMenu/i.test(String(record.filename || ""))) {
+      record.__lceFix73Original ||= new Map();
+      const isDimension = axis => axis === "width" || axis === "height";
+      const sane = (n, axis) => Number.isFinite(n) && Math.abs(n) < 8192 &&
+          (!isDimension(axis) || n > 0);
+      if (/^(x|y|width|height)$/.test(prop)) {
+        const n = Number(value);
+        if (sane(n, prop)) record.__lceFix73Original.set(clip + ":" + prop, n);
+      }
+      if (/^__lce_stage_(x|y|width|height)$/.test(prop)) {
+        const axis = prop.substring("__lce_stage_".length);
+        if (!sane(Number(value), axis)) {
+          let original = Number(record.api.webIggyGet(clip, axis));
+          if (!sane(original, axis)) original = record.__lceFix73Original.get(clip + ":" + axis);
+          if (sane(original, axis)) {
+            // Restore the actual Flash property as well as the native hitbox,
+            // so the authored checkbox graphics and input share coordinates.
+            try { record.api.webIggySet(clip, axis, original); } catch (_) {}
+            const stage = Number(record.api.webIggyGet(clip, prop));
+            value = sane(stage, axis) ? stage : original;
+          }
         }
       }
     }
