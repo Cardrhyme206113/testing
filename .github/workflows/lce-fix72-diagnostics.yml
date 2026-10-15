@@ -1,0 +1,79 @@
+name: LCE Web / Fix72 runtime diagnostics
+on:
+  push:
+    branches: [lce-fix72-diagnostics-20261015]
+    paths: ['.github/workflows/lce-fix72-diagnostics.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recover actual Fix70 compiled browser build
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38748564538
+          name: lce-web-fix63-browser
+          github-token: ${{ github.token }}
+          path: site
+      - name: Verify engine runtime files
+        run: |
+          test -f site/lce_web_demo.html
+          test -f site/lce_web_demo.js
+          test -f site/lce_web_demo.wasm
+          node --check tools/lce-fix72-diagnostics.cjs
+      - name: Inspect compiled JS native panel and input symbols
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('site/lce_web_demo.js').read_text(errors='replace')
+          for token in ('function setNativeScale9Panel(', 'function setNativeMenuHelpPanel(', 'LCEWebIggy', 'addEventListener("keydown"', 'lce_web_test_open_ui'):
+            i=s.find(token)
+            print('FIX72_JS_SYMBOL', repr(token), i)
+            if i>=0:
+              print(s[max(0,i-180):i+1350].replace('\n',' ')[:1550])
+          PY
+      - name: Install Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Serve original runtime with WASM thread isolation
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in (('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cross-Origin-Resource-Policy','same-origin'),('Cache-Control','no-store')):self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,path):
+              if path.endswith('.wasm'):return 'application/wasm'
+              if path.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(path)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Probe More Options geometry and actual inventory keyboard path
+        shell: bash
+        run: |
+          set -o pipefail
+          UI_TEST_OUT=fix72-evidence timeout 610s node tools/lce-fix72-diagnostics.cjs | tee fix72-run.log
+      - name: Upload exact screenshots and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix72-runtime-evidence
+          path: |
+            fix72-evidence/
+            fix72-run.log
+            server.log
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: warn
