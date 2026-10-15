@@ -1,0 +1,77 @@
+name: LCE Web / Fix74 screenshot gallery
+on:
+  push:
+    branches: [lce-fix74-screenshot-gallery-20261015]
+    paths: ['.github/workflows/lce-fix74-gallery.yml','tools/lce-fix74-gallery.py']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  collect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Fetch Fix70 full visual matrix
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38748882722
+          name: lce-fix70-ui-evidence
+          github-token: ${{ github.token }}
+          path: evidence/fix70
+      - name: Fetch Fix71 native menu diagnostics
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38758491351
+          name: lce-fix71-native-control-evidence
+          github-token: ${{ github.token }}
+          path: evidence/fix71
+      - name: Fetch Fix72 inventory and menu diagnostics
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38769392763
+          name: lce-fix72-runtime-evidence
+          github-token: ${{ github.token }}
+          path: evidence/fix72
+      - name: Fetch Fix73 repaired menu screenshot
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38772489669
+          name: lce-fix73-regression-evidence
+          github-token: ${{ github.token }}
+          path: evidence/fix73
+      - name: Build gallery and verify originals
+        run: |
+          python3 tools/lce-fix74-gallery.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          rows=json.loads(Path('lce-gallery/manifest.json').read_text())
+          n=sum(len(r['screenshots']) for r in rows)
+          assert n>=8, f'Expected multiple actual screenshots, got {n}'
+          assert any(x['id']=='fix73' and len(x['screenshots'])==1 for x in rows)
+          print('Verified',n,'real browser screenshots')
+          PY
+      - name: Commit PNG screenshots and browsable index to this gallery branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lce-gallery/
+          if ! git diff --cached --quiet; then
+            git commit -m "LCE: publish all Fix70-Fix73 captured screenshots"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+      - name: Publish downloadable complete gallery
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix74-all-screenshots-gallery
+          path: lce-gallery/
+          retention-days: 14
+          compression-level: 1
