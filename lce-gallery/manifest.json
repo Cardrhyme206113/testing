@@ -1,0 +1,350 @@
+[
+  {
+    "id": "fix70",
+    "label": "Fix70 \u2014 full UI scene/control matrix",
+    "run_id": "38748882722",
+    "screenshots": [
+      {
+        "name": "0-MainMenu-0-Button1-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__0-MainMenu-0-Button1-clicked.png"
+      },
+      {
+        "name": "0-MainMenu-3-Button4-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__0-MainMenu-3-Button4-clicked.png"
+      },
+      {
+        "name": "0-MainMenu-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__0-MainMenu-initial.png"
+      },
+      {
+        "name": "1-HelpAndOptions-0-Button1-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__1-HelpAndOptions-0-Button1-clicked.png"
+      },
+      {
+        "name": "1-HelpAndOptions-1-Button2-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__1-HelpAndOptions-1-Button2-clicked.png"
+      },
+      {
+        "name": "1-HelpAndOptions-2-Button3-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__1-HelpAndOptions-2-Button3-clicked.png"
+      },
+      {
+        "name": "1-HelpAndOptions-3-Button4-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__1-HelpAndOptions-3-Button4-clicked.png"
+      },
+      {
+        "name": "1-HelpAndOptions-4-Button5-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__1-HelpAndOptions-4-Button5-clicked.png"
+      },
+      {
+        "name": "1-HelpAndOptions-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__1-HelpAndOptions-initial.png"
+      },
+      {
+        "name": "10-SkinSelect-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__10-SkinSelect-initial.png"
+      },
+      {
+        "name": "11-Credits-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__11-Credits-initial.png"
+      },
+      {
+        "name": "12-CreateWorld-0-EditWorldName-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__12-CreateWorld-0-EditWorldName-clicked.png"
+      },
+      {
+        "name": "12-CreateWorld-1-EditSeed-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__12-CreateWorld-1-EditSeed-clicked.png"
+      },
+      {
+        "name": "12-CreateWorld-2-TexturePackSelector-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__12-CreateWorld-2-TexturePackSelector-clicked.png"
+      },
+      {
+        "name": "12-CreateWorld-3-GameModeToggle-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__12-CreateWorld-3-GameModeToggle-clicked.png"
+      },
+      {
+        "name": "12-CreateWorld-4-Difficulty-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__12-CreateWorld-4-Difficulty-clicked.png"
+      },
+      {
+        "name": "12-CreateWorld-5-MoreOptions-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__12-CreateWorld-5-MoreOptions-clicked.png"
+      },
+      {
+        "name": "12-CreateWorld-after-create.png",
+        "file": "screens/fix70/fix70-matrix-results__12-CreateWorld-after-create.png"
+      },
+      {
+        "name": "12-CreateWorld-before-create.png",
+        "file": "screens/fix70/fix70-matrix-results__12-CreateWorld-before-create.png"
+      },
+      {
+        "name": "12-CreateWorld-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__12-CreateWorld-initial.png"
+      },
+      {
+        "name": "2-Settings-0-Button1-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__2-Settings-0-Button1-clicked.png"
+      },
+      {
+        "name": "2-Settings-1-Button2-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__2-Settings-1-Button2-clicked.png"
+      },
+      {
+        "name": "2-Settings-2-Button3-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__2-Settings-2-Button3-clicked.png"
+      },
+      {
+        "name": "2-Settings-4-Button4-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__2-Settings-4-Button4-clicked.png"
+      },
+      {
+        "name": "2-Settings-5-Button5-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__2-Settings-5-Button5-clicked.png"
+      },
+      {
+        "name": "2-Settings-6-Button6-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__2-Settings-6-Button6-clicked.png"
+      },
+      {
+        "name": "2-Settings-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__2-Settings-initial.png"
+      },
+      {
+        "name": "3-SettingsOptions-0-ViewBob-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__3-SettingsOptions-0-ViewBob-clicked.png"
+      },
+      {
+        "name": "3-SettingsOptions-1-ShowHints-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__3-SettingsOptions-1-ShowHints-clicked.png"
+      },
+      {
+        "name": "3-SettingsOptions-2-ShowTooltips-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__3-SettingsOptions-2-ShowTooltips-clicked.png"
+      },
+      {
+        "name": "3-SettingsOptions-3-InGameGamertags-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__3-SettingsOptions-3-InGameGamertags-clicked.png"
+      },
+      {
+        "name": "3-SettingsOptions-6-Difficulty-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__3-SettingsOptions-6-Difficulty-clicked.png"
+      },
+      {
+        "name": "3-SettingsOptions-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__3-SettingsOptions-initial.png"
+      },
+      {
+        "name": "4-SettingsAudio-0-Music-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__4-SettingsAudio-0-Music-clicked.png"
+      },
+      {
+        "name": "4-SettingsAudio-1-Sound-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__4-SettingsAudio-1-Sound-clicked.png"
+      },
+      {
+        "name": "4-SettingsAudio-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__4-SettingsAudio-initial.png"
+      },
+      {
+        "name": "5-SettingsControls-0-SensitivityInGame-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__5-SettingsControls-0-SensitivityInGame-clicked.png"
+      },
+      {
+        "name": "5-SettingsControls-1-SensitivityInMenu-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__5-SettingsControls-1-SensitivityInMenu-clicked.png"
+      },
+      {
+        "name": "5-SettingsControls-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__5-SettingsControls-initial.png"
+      },
+      {
+        "name": "6-SettingsGraphics-0-Clouds-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__6-SettingsGraphics-0-Clouds-clicked.png"
+      },
+      {
+        "name": "6-SettingsGraphics-1-BedrockFog-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__6-SettingsGraphics-1-BedrockFog-clicked.png"
+      },
+      {
+        "name": "6-SettingsGraphics-2-CustomSkinAnim-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__6-SettingsGraphics-2-CustomSkinAnim-clicked.png"
+      },
+      {
+        "name": "6-SettingsGraphics-3-Gamma-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__6-SettingsGraphics-3-Gamma-clicked.png"
+      },
+      {
+        "name": "6-SettingsGraphics-4-InterfaceOpacity-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__6-SettingsGraphics-4-InterfaceOpacity-clicked.png"
+      },
+      {
+        "name": "6-SettingsGraphics-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__6-SettingsGraphics-initial.png"
+      },
+      {
+        "name": "7-SettingsUI-0-DisplayHUD-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__7-SettingsUI-0-DisplayHUD-clicked.png"
+      },
+      {
+        "name": "7-SettingsUI-1-DisplayHand-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__7-SettingsUI-1-DisplayHand-clicked.png"
+      },
+      {
+        "name": "7-SettingsUI-2-DisplayDeathMessages-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__7-SettingsUI-2-DisplayDeathMessages-clicked.png"
+      },
+      {
+        "name": "7-SettingsUI-3-DisplayAnimatedCharacter-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__7-SettingsUI-3-DisplayAnimatedCharacter-clicked.png"
+      },
+      {
+        "name": "7-SettingsUI-6-UISize-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__7-SettingsUI-6-UISize-clicked.png"
+      },
+      {
+        "name": "7-SettingsUI-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__7-SettingsUI-initial.png"
+      },
+      {
+        "name": "8-HowToPlay-0-HowToList-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__8-HowToPlay-0-HowToList-clicked.png"
+      },
+      {
+        "name": "8-HowToPlay-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__8-HowToPlay-initial.png"
+      },
+      {
+        "name": "9-Controls-0-Button1-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__9-Controls-0-Button1-clicked.png"
+      },
+      {
+        "name": "9-Controls-1-Button2-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__9-Controls-1-Button2-clicked.png"
+      },
+      {
+        "name": "9-Controls-2-Button3-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__9-Controls-2-Button3-clicked.png"
+      },
+      {
+        "name": "9-Controls-3-InvertLook-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__9-Controls-3-InvertLook-clicked.png"
+      },
+      {
+        "name": "9-Controls-4-SouthPaw-clicked.png",
+        "file": "screens/fix70/fix70-matrix-results__9-Controls-4-SouthPaw-clicked.png"
+      },
+      {
+        "name": "9-Controls-initial.png",
+        "file": "screens/fix70/fix70-matrix-results__9-Controls-initial.png"
+      },
+      {
+        "name": "01-settings-options.png",
+        "file": "screens/fix70/fix70-visual-results__01-settings-options.png"
+      },
+      {
+        "name": "02-settings-difficulty.png",
+        "file": "screens/fix70/fix70-visual-results__02-settings-difficulty.png"
+      },
+      {
+        "name": "03-create-world.png",
+        "file": "screens/fix70/fix70-visual-results__03-create-world.png"
+      },
+      {
+        "name": "04-more-options.png",
+        "file": "screens/fix70/fix70-visual-results__04-more-options.png"
+      },
+      {
+        "name": "05-more-options-toggle.png",
+        "file": "screens/fix70/fix70-visual-results__05-more-options-toggle.png"
+      },
+      {
+        "name": "06-return-create-world.png",
+        "file": "screens/fix70/fix70-visual-results__06-return-create-world.png"
+      },
+      {
+        "name": "07-mainmenu.png",
+        "file": "screens/fix70/fix70-visual-results__07-mainmenu.png"
+      },
+      {
+        "name": "08-help-and-options.png",
+        "file": "screens/fix70/fix70-visual-results__08-help-and-options.png"
+      }
+    ]
+  },
+  {
+    "id": "fix71",
+    "label": "Fix71 \u2014 native World Options and world-start inspection",
+    "run_id": "38758491351",
+    "screenshots": [
+      {
+        "name": "01-createworld.png",
+        "file": "screens/fix71/fix71-probe__01-createworld.png"
+      },
+      {
+        "name": "02-moreoptions-settled.png",
+        "file": "screens/fix71/fix71-probe__02-moreoptions-settled.png"
+      },
+      {
+        "name": "03-moreoptions-7sec.png",
+        "file": "screens/fix71/fix71-probe__03-moreoptions-7sec.png"
+      },
+      {
+        "name": "04-return-createworld.png",
+        "file": "screens/fix71/fix71-probe__04-return-createworld.png"
+      },
+      {
+        "name": "05-after-create-10sec.png",
+        "file": "screens/fix71/fix71-probe__05-after-create-10sec.png"
+      },
+      {
+        "name": "06-world-inventory.png",
+        "file": "screens/fix71/fix71-probe__06-world-inventory.png"
+      }
+    ]
+  },
+  {
+    "id": "fix72",
+    "label": "Fix72 \u2014 menu state / inventory keyboard diagnosis",
+    "run_id": "38769392763",
+    "screenshots": [
+      {
+        "name": "01-createworld.png",
+        "file": "screens/fix72/fix72-evidence__01-createworld.png"
+      },
+      {
+        "name": "02-moreoptions.png",
+        "file": "screens/fix72/fix72-evidence__02-moreoptions.png"
+      },
+      {
+        "name": "03-options-after-keys.png",
+        "file": "screens/fix72/fix72-evidence__03-options-after-keys.png"
+      },
+      {
+        "name": "04-inventory-native-probe.png",
+        "file": "screens/fix72/fix72-evidence__04-inventory-native-probe.png"
+      },
+      {
+        "name": "05-inventory-keyboard.png",
+        "file": "screens/fix72/fix72-evidence__05-inventory-keyboard.png"
+      },
+      {
+        "name": "06-inventory-retry.png",
+        "file": "screens/fix72/fix72-evidence__06-inventory-retry.png"
+      }
+    ]
+  },
+  {
+    "id": "fix73",
+    "label": "Fix73 \u2014 repaired More Options visual regression",
+    "run_id": "38772489669",
+    "screenshots": [
+      {
+        "name": "01-fix73-more-options.png",
+        "file": "screens/fix73/fix73-evidence__01-fix73-more-options.png"
+      }
+    ]
+  }
+]
