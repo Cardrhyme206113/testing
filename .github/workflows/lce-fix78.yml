@@ -1,0 +1,82 @@
+name: LCE Web / Fix78 original World Options section spacing
+on:
+  push:
+    branches: [lce-fix78-world-options-spacing-20261015]
+    paths: ['.github/workflows/lce-fix78.yml','tools/lce-fix78-apply.py','tools/lce-fix78-verify.cjs']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 13
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: true}
+      - name: Recover tested Fix76 original game
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38780195248
+          name: lce-web-fix76-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Patch original SWF section positions (not HTML replacements)
+        run: |
+          python3 tools/lce-fix78-apply.py site/lce_web_demo.js
+          node --check site/lce_web_demo.js
+          grep -q LCE_WEB_FIX78_WORLD_OPTIONS_SPACING site/lce_web_demo.js
+      - name: Install Chromium and screenshots
+        run: |
+          npm install --no-save playwright@1.56.1 pngjs@7
+          npx playwright install --with-deps chromium
+      - name: Serve cross-origin-isolated original LCE game
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Assert section controls render and clicking original checkbox responds
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 180s node tools/lce-fix78-verify.cjs | tee fix78-run.log
+      - name: Archive real screenshots and metrics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix78-world-options-before-after
+          path: |
+            fix78-review/
+            fix78-run.log
+          retention-days: 14
+          compression-level: 1
+      - name: Upload browser-ready game only if verified
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-web-fix78-playable
+          path: site/
+          retention-days: 14
+          compression-level: 1
+      - name: Publish screenshots for inspection
+        if: success()
+        run: |
+          printf '# Fix78 actual World Options screenshots\n\n## Layout\n\n![Layout](01-repaired-options-before-interaction.png)\n\n## Original checkbox clicked\n\n![Checkbox clicked](02-original-structures-checkbox-click.png)\n' > fix78-review/README.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fix78-review/
+          git commit -m "Visual: publish original checkbox spacing and functional click evidence"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
