@@ -31,9 +31,12 @@ const report={moreOptions:{},inventory:{},errors:[],events:[]};
   await wait(33000);
   report.moreOptions.create=await open(12);await wait(1200);
   report.moreOptions.before=await state(); await snap('01-createworld');
-  await page.mouse.click(642,558);await wait(4500);
+  await page.mouse.click(642,558);
+  for(let i=0;i<90;i++){if((await state()).players?.some(p=>p.includes('LaunchMoreOptionsMenu')))break;await wait(250);}
+  await wait(1800);
   report.moreOptions.opened=await state();await snap('02-moreoptions');
   report.moreOptions.controls=seen().filter(x=>x.includes('scene=46 '));
+  report.moreOptions.invalidControls=report.moreOptions.controls.filter(line=>/y=-107374182|rect=\\d+,-107374182/.test(line));
   for(const key of ['ArrowDown','Tab','Enter','Escape']){
     const since=events.length;
     await page.keyboard.press(key);await wait(950);
@@ -54,8 +57,10 @@ const report={moreOptions:{},inventory:{},errors:[],events:[]};
   report.inventory.nativeProbe=probe;report.inventory.afterProbe=await state();
   await snap('04-inventory-native-probe');
   const beforeKeys=events.length;
-  await page.keyboard.press('Escape');await wait(800);await page.keyboard.press('e');await wait(3200);
+  await page.keyboard.press('e');await wait(3600);
   report.inventory.keyboardE={state:await state(),logs:events.slice(beforeKeys).filter(x=>/inventory|ui-test|error|warn|open/i.test(x.message)).slice(-35)};
+  await page.keyboard.press('Escape');await wait(900);
+  report.inventory.afterEscape=await state();
   await snap('05-inventory-keyboard');
   await page.keyboard.press('Escape');await wait(500);
   report.inventory.probeAgain=await open(20);await wait(1300);
@@ -66,7 +71,7 @@ const report={moreOptions:{},inventory:{},errors:[],events:[]};
   report.completed=new Date().toISOString();
   fs.writeFileSync(path.join(OUT,'report.json'),JSON.stringify(report,null,2));
   const rows={moreOptions:{create:report.moreOptions.create,controls:report.moreOptions.controls,initial:report.moreOptions.opened,afterKeys:Object.fromEntries(['ArrowDown','Tab','Enter','Escape'].map(k=>[k,report.moreOptions[k]?.state]))},inventory:report.inventory,errors:report.errors};
-  console.log('FIX72_SUMMARY_START');console.log(JSON.stringify(rows,null,2).slice(0,48000));console.log('FIX72_SUMMARY_END');
+  console.log('FIX72_SUMMARY_START');console.log(JSON.stringify(rows,null,2).slice(0,50000));console.log('FIX72_SUMMARY_END');
   await browser.close().catch(()=>{});
  }
 })();
