@@ -2,7 +2,7 @@ name: LCE Web / UI Matrix fix65
 on:
   push:
     branches: [lce-web-ci-20261014]
-    paths: ['.github/workflows/lce-ui-matrix.yml']
+    paths: ['.github/workflows/lce-ui-matrix.yml', 'tools/lce-ui-playtest.cjs']
   workflow_dispatch:
 permissions:
   contents: read
