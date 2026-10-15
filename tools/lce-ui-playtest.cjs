@@ -177,8 +177,13 @@ async function run(){
       // test-scene bridge, not speculative console text.
       while(Date.now()-start<180000){
         const probe=await open(20);
-        if(probe.result===1){
+        if(probe.result===1 || probe.result===0){
+          // 0 means the native app has GameStarted + a LocalPlayer,
+          // but LoadInventoryMenu failed. Record it as an actual defect
+          // rather than misclassifying the whole game as not started.
           report.worldStarted=true;
+          report.inventoryProbe={result:probe.result,passed:probe.result===1};
+          await pause(3500);
           await snapshot('20-World-live-inventory-probe');
           break;
         }
