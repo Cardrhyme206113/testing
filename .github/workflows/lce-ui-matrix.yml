@@ -1,0 +1,89 @@
+name: LCE Web / UI Matrix fix65
+on:
+  push:
+    branches: [lce-web-ci-20261014]
+    paths: ['.github/workflows/lce-ui-matrix.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  menus:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 105
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for fix65 Emscripten artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run=38680264919
+          for i in {1..130}; do
+            status="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status')" || exit 1
+            conclusion="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.conclusion // ""')" || exit 1
+            echo "Run $run: $status / $conclusion"
+            if [ "$status" = completed ]; then
+              test "$conclusion" = success || exit 1
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::Timed out waiting for fix65" && exit 1
+      - name: Retrieve fix65 browser game
+        uses: actions/download-artifact@v4
+        with:
+          name: lce-web-fix63-browser
+          repository: Cardrhyme206113/testing
+          run-id: 38680264919
+          github-token: ${{ github.token }}
+          path: site
+      - name: Validate game files
+        shell: bash
+        run: |
+          test -f site/lce_web_demo.html
+          test -f site/lce_web_demo.js
+          test -f site/lce_web_demo.wasm
+          test -f site/lce_web_demo.data
+          test -f site/vendor/ruffle/ruffle.js
+          du -sh site
+      - name: Install headless Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Run all original UI scene tests
+        shell: bash
+        env:
+          UI_TEST_URL: http://127.0.0.1:8000/lce_web_demo.html
+          UI_TEST_OUT: ui-playtest-results
+          UI_BOOT_MS: "30000"
+        run: |
+          mkdir -p ui-playtest-results
+          cat > ui-playtest-server.py <<'PY'
+          from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              self.send_header('Cross-Origin-Opener-Policy','same-origin')
+              self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+              self.send_header('Cross-Origin-Resource-Policy','same-origin')
+              self.send_header('Cache-Control','no-store')
+              super().end_headers()
+            def guess_type(self,path):
+              if path.endswith('.wasm'):return 'application/wasm'
+              if path.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(path)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../ui-playtest-server.py > ../ui-playtest-results/server.log 2>&1) &
+          sleep 2
+          curl --fail -sSI http://127.0.0.1:8000/lce_web_demo.html
+          timeout 3700s node tools/lce-ui-playtest.cjs 2>&1 | tee ui-playtest-results/matrix-run.log
+      - name: Upload screenshots, audit report, logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix65-ui-matrix-evidence
+          path: ui-playtest-results/
+          if-no-files-found: warn
+          compression-level: 1
+          retention-days: 14
