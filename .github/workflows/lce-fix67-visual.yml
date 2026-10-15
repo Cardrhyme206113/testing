@@ -1,0 +1,73 @@
+name: LCE Web / Fix67 visual regression
+on:
+  push:
+    branches: [lce-web-ci-20261014]
+    paths: [".github/workflows/lce-fix67-visual.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for compiled fix67
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          run=38690303324
+          for i in {1..110}; do
+            status=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status')
+            conclusion=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.conclusion // ""')
+            echo "Build $run $status $conclusion"
+            if [ "$status" = completed ]; then test "$conclusion" = success; exit $?; fi
+            sleep 25
+          done
+          exit 1
+      - name: Download fix67 browser artifact
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38690303324
+          name: lce-web-fix63-browser
+          github-token: ${{ github.token }}
+          path: site
+      - name: Set up headless Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Run original UI visual regression
+        shell: bash
+        run: |
+          mkdir -p fix67-visual-results
+          cat > playtest-server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              self.send_header('Cross-Origin-Opener-Policy','same-origin')
+              self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+              self.send_header('Cross-Origin-Resource-Policy','same-origin')
+              self.send_header('Cache-Control','no-store')
+              super().end_headers()
+            def guess_type(self,path):
+              if path.endswith('.wasm'):return 'application/wasm'
+              if path.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(path)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../playtest-server.py > ../fix67-visual-results/server.log 2>&1) &
+          sleep 2
+          curl -sSIf http://127.0.0.1:8000/lce_web_demo.html
+          timeout 390s node tools/lce-visual-fix67.cjs 2>&1 | tee fix67-visual-results/output.log
+      - name: Upload screenshots and audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix67-visual-evidence
+          path: fix67-visual-results/
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: warn
