@@ -1,4 +1,4 @@
-name: LCE Web / UI Matrix fix65 (world retry)
+name: LCE Web / UI Matrix fix66
 on:
   push:
     branches: [lce-web-ci-20261014]
@@ -13,12 +13,12 @@ jobs:
     timeout-minutes: 105
     steps:
       - uses: actions/checkout@v4
-      - name: Wait for fix65 Emscripten artifact
+      - name: Wait for fix66 Emscripten artifact
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          run=38680264919
+          run=38686723766
           for i in {1..130}; do
             status="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status')" || exit 1
             conclusion="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.conclusion // ""')" || exit 1
@@ -30,12 +30,12 @@ jobs:
             sleep 30
           done
           echo "::error::Timed out waiting for fix65" && exit 1
-      - name: Retrieve fix65 browser game
+      - name: Retrieve fix66 browser game
         uses: actions/download-artifact@v4
         with:
           name: lce-web-fix63-browser
           repository: Cardrhyme206113/testing
-          run-id: 38680264919
+          run-id: 38686723766
           github-token: ${{ github.token }}
           path: site
       - name: Validate game files
@@ -82,7 +82,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: lce-fix65-ui-matrix-evidence
+          name: lce-fix66-ui-matrix-evidence
           path: ui-playtest-results/
           if-no-files-found: warn
           compression-level: 1
