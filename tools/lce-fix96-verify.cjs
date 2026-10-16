@@ -7,7 +7,7 @@ const browser=await chromium.launch({headless:true,args:['--no-sandbox','--enabl
 const page=await browser.newPage({viewport:{width:1280,height:800},locale:'en-US'});
 page.on('pageerror',e=>failures.push('PAGE '+String(e.stack||e)));
 page.on('crash',()=>failures.push('browser crashed'));
-page.on('dialog',d=>d.dismiss().catch(()=>{});
+page.on('dialog',d=>d.dismiss().catch(()=>{}));
 const state=()=>page.evaluate(()=>{
 const h=globalThis.LCEWebIggy,p=(h?.debugState()?.players||[]).filter(x=>x.visible),
 t=document.querySelector('.lce-webiggy-loading-native-tip'),
