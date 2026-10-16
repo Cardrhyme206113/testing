@@ -1,0 +1,53 @@
+name: LCE Web / Fix95 isolated normal-menu visual inspection
+on:
+  push:
+    branches: [lce-fix95-createworld-ninegrid-nav-20261016]
+    paths: ['.github/workflows/lce-fix95-nav.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  visual-inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download existing Fix94 playable (no recompilation)
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38860493440
+          name: lce-fix94-source-patched-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Install browser-only test runner
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Serve existing runtime with required isolation headers
+        run: |
+          cat > server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../server.py > ../server.log 2>&1) &
+          sleep 2
+      - name: Compare normal navigation with forced Create World scene
+        run: timeout 290s node tools/lce-fix95-normal-navigation.cjs
+      - name: Publish full-resolution screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix95-normal-nav-diagnostic
+          path: fix95-nav/
+          compression-level: 1
+          retention-days: 14
