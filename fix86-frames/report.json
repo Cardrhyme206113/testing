@@ -54,7 +54,9 @@
           "ComponentLogo720.swf"
         ],
         "overlays": [],
-        "clipPaths": [],
+        "clipPaths": [
+          "inset(33% 13% 16.5%)"
+        ],
         "root": {
           "x": 0,
           "y": 40,
@@ -70,7 +72,9 @@
           "ComponentLogo720.swf"
         ],
         "overlays": [],
-        "clipPaths": [],
+        "clipPaths": [
+          "inset(33% 13% 16.5%)"
+        ],
         "root": {
           "x": 0,
           "y": 40,
@@ -208,6 +212,6 @@
     }
   ],
   "errors": [],
-  "started": "2026-10-16T04:10:57.484Z",
-  "finished": "2026-10-16T04:12:14.749Z"
+  "started": "2026-10-16T04:16:59.484Z",
+  "finished": "2026-10-16T04:18:10.800Z"
 }
