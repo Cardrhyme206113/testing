@@ -1,7 +1,7 @@
 name: LCE Web / Fix92 rebuild patched Ruffle rendering core
 on:
   push:
-    branches: [lce-fix92-clean-front-20261016]
+    branches: [lce-fix92-createworld-credits-alpha-20261016]
     paths: ['.github/workflows/lce-fix92.yml', 'tools/lce-ruffle-patch85-xz.b64', 'tools/lce-fix92-credits-alpha.py', 'tools/lce-fix92-create-panes.py', 'tools/lce-fix88-unclip-js.py', 'tools/lce-fix86-apply.py', 'tools/lce-fix92-visual.cjs']
   workflow_dispatch:
 permissions:
