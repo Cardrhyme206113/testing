@@ -1,8 +1,8 @@
 name: LCE Web / Fix94 rebuild patched Ruffle rendering core
 on:
   push:
-    branches: [lce-fix94-credits-viewport-create-frame-20261016]
-    paths: ['.github/workflows/lce-fix93.yml', 'tools/lce-ruffle-patch85-xz.b64', 'tools/lce-fix94-credit-stencil.py', 'tools/lce-fix94-create-frame.py', 'tools/lce-fix92-create-panes.py', 'tools/lce-fix88-unclip-js.py', 'tools/lce-fix86-apply.py', 'tools/lce-fix92-visual.cjs']
+    branches: [lce-fix94-credits-alpha-foreground-create-frame-20261016]
+    paths: ['.github/workflows/lce-fix94.yml', 'tools/lce-ruffle-patch85-xz.b64', 'tools/lce-fix94-credits-hide-foreground.py', 'tools/lce-fix94-credits-create-js.py', 'tools/lce-fix92-create-panes.py', 'tools/lce-fix88-unclip-js.py', 'tools/lce-fix86-apply.py', 'tools/lce-fix92-visual.cjs']
   workflow_dispatch:
 permissions:
   contents: read
@@ -23,8 +23,7 @@ jobs:
           git clone --depth 1 --branch v0.6.0 https://github.com/ruffle-rs/ruffle.git ruffle
           test "$(git -C ruffle rev-parse HEAD)" = cac5c99ce4a17e606f4ee3090389bb878f852055
           python3 tools/patch_ruffle_webiggy.py ruffle
-          python3 tools/lce-fix94-credit-stencil.py ruffle
-          python3 tools/lce-fix94-create-frame.py ruffle
+          python3 tools/lce-fix94-credits-hide-foreground.py ruffle
       - uses: actions/cache@v4
         with:
           path: |
@@ -75,6 +74,7 @@ jobs:
           python3 tools/lce-fix86-apply.py site/lce_web_demo.js
           python3 tools/lce-fix88-unclip-js.py site/lce_web_demo.js
           python3 tools/lce-fix92-create-panes.py site/lce_web_demo.js
+          python3 tools/lce-fix94-credits-create-js.py site/lce_web_demo.js
           python3 tools/lce-fix94-credits-create-js.py site/lce_web_demo.js
           node --check site/lce_web_demo.js
           node --check tools/lce-fix92-visual.cjs
