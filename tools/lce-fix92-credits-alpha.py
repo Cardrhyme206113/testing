@@ -44,6 +44,6 @@ use_anchor = "use ruffle_render::perspective_projection::PerspectiveProjection;"
 use_line = "use ruffle_render::commands::CommandHandler;"
 if use_line not in s:
     if s.count(use_anchor)!=1: raise SystemExit("render command import anchor missing")
-    s=s.replace(use_anchor,use_anchor + "\\n" + use_line,1)
+    s=s.replace(use_anchor,use_anchor + "\n" + use_line,1)
 p.write_text(s)
 print("Original Credits720.BlendingMask alpha compositing installed")
