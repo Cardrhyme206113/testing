@@ -15,7 +15,7 @@ b=p.find(x=>x.filename==='Panorama720.swf'),
 player=b && document.querySelector('[data-web-iggy-id="'+b.id+'"]');
 const fallbackPlayer=b&&[...document.querySelectorAll('ruffle-player')].find(x=>x.dataset.webIggyId===String(b.id));
 return {players:p.map(x=>x.filename),tip:t?.textContent||'',tipRect:t?.getBoundingClientRect().toJSON(),tipVisibility:t&&getComputedStyle(t).visibility,
-panoramaFilter: fallbackPlayer && getComputedStyle(fallbackPlayer).filter,tipCount:document.querySelectorAll('.lce-webiggy-loading-native-tip').length};
+panoramaFilter: fallbackPlayer && getComputedStyle(fallbackPlayer).filter,tipCount:document.querySelectorAll('.lce-webiggy-loading-native-tip').length,nativeCalls:globalThis.__lce96SeenNativeLabel||0,ticks:globalThis.__lce96RepairCalled||0,debug:globalThis.__lce96Debug||null};
 });
 let samples={};
 try{
