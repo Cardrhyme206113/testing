@@ -40,6 +40,7 @@ replace_exact('''    const call = state.call;
         (call.method === "Init" || call.method === "SetLabel") &&
         typeof call.args[0] === "string") {
       owner.lce96TipMarkup = call.args[0];
+      globalThis.__lce96SeenNativeLabel = (globalThis.__lce96SeenNativeLabel || 0) + 1;
     }
     const value = owner.api.webIggyCall(call.path, call.method, call.args);''')
 
@@ -61,6 +62,7 @@ inject='''  // LCE_FIX96_ORIGINAL_LOADING_TIPS: replaces only the damaged Flash 
   function repairOriginalLoadingTip(record) {
     if (record.filename !== "FullscreenProgress720.swf" ||
         !state.root || record.pendingDestroy) return;
+    globalThis.__lce96RepairCalled = (globalThis.__lce96RepairCalled || 0) + 1;
     if (record.lce96TipRequestedVisible === undefined) {
       try { record.lce96TipRequestedVisible =
         record.api.webIggyGet("Tip", "visible") !== false; }
@@ -69,6 +71,7 @@ inject='''  // LCE_FIX96_ORIGINAL_LOADING_TIPS: replaces only the damaged Flash 
     let overlay = record.lce96TipOverlay;
     const hasText = !!String(record.lce96TipMarkup || "").replace(/<[^>]*>/g, "").trim();
     const show = !!record.lce96TipRequestedVisible && hasText && record.visible;
+    globalThis.__lce96Debug = {id:record.id, requested:record.lce96TipRequestedVisible, visible:record.visible, hasText, markup:String(record.lce96TipMarkup||'').slice(0,240), actualVisible:record.api.webIggyGet('Tip','visible'), show};
     if (!show) {
       if (overlay) { overlay.dataset.lcePanelVisible = "0"; overlay.style.visibility = "hidden"; }
       return;
