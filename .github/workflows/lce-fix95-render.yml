@@ -1,7 +1,7 @@
 name: LCE Web / Fix95 targeted nine-grid art + Fix94 credits
 on:
   push:
-    branches: [lce-fix95-credits-alpha-foreground-create-frame-20261016]
+    branches: [lce-fix95-createworld-ninegrid-nav-20261016]
     paths: ['.github/workflows/lce-fix95-render.yml', 'tools/lce-fix95-ninegrid.py', 'tools/lce-ruffle-patch85-xz.b64', 'tools/lce-fix94-credits-hide-foreground.py', 'tools/lce-fix94-credits-create-js.py', 'tools/lce-fix92-create-panes.py', 'tools/lce-fix88-unclip-js.py', 'tools/lce-fix86-apply.py', 'tools/lce-fix92-visual.cjs']
   workflow_dispatch:
 permissions:
