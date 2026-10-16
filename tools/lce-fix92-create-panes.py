@@ -6,7 +6,7 @@ p=Path(sys.argv[1] if len(sys.argv)>1 else "site/lce_web_demo.js")
 s=p.read_text()
 marker="LCE_FIX92_CREATEWORLD_NONOVERLAPPING_PANES"
 if marker in s:raise SystemExit("already patched")
-old='''    if (key === "world-options-main") height = Math.max(height, Math.round(screenHeight * .47));'''
+old='''    style = Number(style) | 0;'''
 new='''    // LCE_FIX92_CREATEWORLD_NONOVERLAPPING_PANES: the texture pack list is
     // authored inside MainPanel. Its native backing had been drawn a second
     // time over the world-name, seed and buttons. Only draw the distinct
@@ -21,7 +21,7 @@ new='''    // LCE_FIX92_CREATEWORLD_NONOVERLAPPING_PANES: the texture pack list 
         if (ix * iy > width * height * 0.16) visible = false;
       }
     }
-    if (key === "world-options-main") height = Math.max(height, Math.round(screenHeight * .47));'''
+    style = Number(style) | 0;'''
 if s.count(old)!=1:raise SystemExit("scale9 panel anchor count=%d"%s.count(old))
 s=s.replace(old,new,1)
 start=s.index("  function setNativeScale9Panel(")
