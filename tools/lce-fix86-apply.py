@@ -64,7 +64,7 @@ insert='''  // LCE_FIX86_CREDITS_VIEWPORT: original CreditsMenu720.swf animates 
   function repairCreditsOriginalScrollViewport(record) {
     if (!record || record.pendingDestroy ||
         !/^(Credits|CreditsMenu)720[.]swf$/i.test(String(record.filename || ""))) return;
-    if (record.__lceFix86CreditsClipped) return;
+    if (record.player.style.clipPath === 'inset(33% 13% 16.5% 13%)') return;
     record.__lceFix86CreditsClipped = true;
     const clip = "inset(33% 13% 16.5% 13%)";
     record.player.style.clipPath = clip;
@@ -73,5 +73,19 @@ insert='''  // LCE_FIX86_CREDITS_VIEWPORT: original CreditsMenu720.swf animates 
   function tickPlayer(id) {'''
 if s.count(anchor)!=1:raise SystemExit("tick anchor changed")
 s=s.replace(anchor,insert,1)
+# The normal setVisible() -> applyTileClip() path otherwise resets clipPath
+# to "none" after the initial Flash tick. Apply the credits mask there too.
+old = '''  function applyTileClip(record) {
+    if (!record.tileRect) {'''
+new = '''  function applyTileClip(record) {
+    if (/^(Credits|CreditsMenu)720[.]swf$/i.test(String(record.filename || ""))) {
+      const clip = "inset(33% 13% 16.5% 13%)";
+      record.player.style.clipPath = clip;
+      record.player.style.webkitClipPath = clip;
+      return;
+    }
+    if (!record.tileRect) {'''
+if s.count(old)!=1:raise SystemExit("Credit masking tile hook missing")
+s=s.replace(old,new,1)
 p.write_text(s,encoding="utf-8")
 print("Fix86: Credits scrolling content masked; World Options backing resized")
