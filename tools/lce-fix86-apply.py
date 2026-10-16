@@ -17,13 +17,20 @@ new='''    // LCE_FIX86_WORLDOPTIONS_BACKING: retain its authored right/left/bot
     // painting 125px of empty grey space above the checkbox list.
     if (key === "world-options-main") {
       const formerBottom = y + height;
-      const desiredTop = Math.round(screenHeight * 133 / 720);
+      const desiredTop = Math.round(screenHeight * 151 / 720);
       if (y < desiredTop) {
         y = desiredTop;
         height = Math.max(1, formerBottom - desiredTop);
       }
     }'''
 if s.count(old)!=1: raise SystemExit("World Options backing anchor changed")
+s=s.replace(old,new,1)
+# Fix86: do not layer two obsolete native scale9 backgrounds behind the new
+# correctly sized World Options frame. The original movie art is already
+# suppressed by our source-level Ruffle patch.
+old = 'const backgrounds = ["BackgroundPanel", "BackgroundPanel2"];'
+new = 'if (/LaunchMoreOptionsMenu720[.]swf$/i.test(String(record.filename || ""))) return;\\n      const backgrounds = ["BackgroundPanel", "BackgroundPanel2"];'
+if s.count(old)!=1:raise SystemExit("Missing generic 9slice helper")
 s=s.replace(old,new,1)
 anchor='''    record.api.webIggyTick(timestamp);
     repairMoreOptionsOriginalMovieClips(record);
