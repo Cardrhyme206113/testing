@@ -154,32 +154,6 @@
         ],
         "overlays": [
           {
-            "key": "fix80-settings-nine-slice-frame",
-            "rect": {
-              "x": 0,
-              "y": 40,
-              "width": 1280,
-              "height": 720,
-              "top": 40,
-              "right": 1280,
-              "bottom": 760,
-              "left": 0
-            }
-          },
-          {
-            "key": "fix82-second-nine-slice-frame",
-            "rect": {
-              "x": 0,
-              "y": 40,
-              "width": 1280,
-              "height": 720,
-              "top": 40,
-              "right": 1280,
-              "bottom": 760,
-              "left": 0
-            }
-          },
-          {
             "key": "world-options-main",
             "rect": {
               "x": 0,
@@ -210,32 +184,6 @@
         ],
         "overlays": [
           {
-            "key": "fix80-settings-nine-slice-frame",
-            "rect": {
-              "x": 0,
-              "y": 40,
-              "width": 1280,
-              "height": 720,
-              "top": 40,
-              "right": 1280,
-              "bottom": 760,
-              "left": 0
-            }
-          },
-          {
-            "key": "fix82-second-nine-slice-frame",
-            "rect": {
-              "x": 0,
-              "y": 40,
-              "width": 1280,
-              "height": 720,
-              "top": 40,
-              "right": 1280,
-              "bottom": 760,
-              "left": 0
-            }
-          },
-          {
             "key": "world-options-main",
             "rect": {
               "x": 0,
@@ -260,6 +208,6 @@
     }
   ],
   "errors": [],
-  "started": "2026-10-16T04:08:15.665Z",
-  "finished": "2026-10-16T04:09:26.837Z"
+  "started": "2026-10-16T04:10:57.484Z",
+  "finished": "2026-10-16T04:12:14.749Z"
 }
