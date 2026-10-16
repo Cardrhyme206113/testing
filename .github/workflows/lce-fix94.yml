@@ -75,7 +75,6 @@ jobs:
           python3 tools/lce-fix88-unclip-js.py site/lce_web_demo.js
           python3 tools/lce-fix92-create-panes.py site/lce_web_demo.js
           python3 tools/lce-fix94-credits-create-js.py site/lce_web_demo.js
-          python3 tools/lce-fix94-credits-create-js.py site/lce_web_demo.js
           node --check site/lce_web_demo.js
           node --check tools/lce-fix92-visual.cjs
       - name: Install headless Chromium
