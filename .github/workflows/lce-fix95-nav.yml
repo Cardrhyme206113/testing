@@ -2,7 +2,7 @@ name: LCE Web / Fix95 isolated normal-menu visual inspection
 on:
   push:
     branches: [lce-fix95-createworld-ninegrid-nav-20261016]
-    paths: ['.github/workflows/lce-fix95-nav.yml']
+    paths: ['.github/workflows/lce-fix95-nav.yml', 'tools/lce-fix95-normal-navigation.cjs']
   workflow_dispatch:
 permissions:
   contents: read
