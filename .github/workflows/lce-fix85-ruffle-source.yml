@@ -1,0 +1,122 @@
+name: LCE Web / Fix85 rebuild patched Ruffle rendering core
+on:
+  push:
+    branches: [lce-fix82-ui-global-audit-20261016]
+    paths: ['.github/workflows/lce-fix85-ruffle-source.yml', 'tools/lce-ruffle-patch85-xz.b64']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build-ruffle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact original WebIggy Ruffle patch source
+        run: |
+          base64 --decode tools/lce-ruffle-patch85-xz.b64 | xz --decompress > tools/patch_ruffle_webiggy.py
+          python3 -m py_compile tools/patch_ruffle_webiggy.py
+          grep -q LCE_WEBIGGY_RUFFLE_PATCH_16 tools/patch_ruffle_webiggy.py
+      - name: Clone pinned Ruffle v0.6.0
+        run: |
+          git clone --depth 1 --branch v0.6.0 https://github.com/ruffle-rs/ruffle.git ruffle
+          test "$(git -C ruffle rev-parse HEAD)" = cac5c99ce4a17e606f4ee3090389bb878f852055
+          python3 tools/patch_ruffle_webiggy.py ruffle
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ruffle/target
+          key: fix85-ruffle-rust-0.6-patch16-${{ runner.os }}
+      - name: Install pinned Rust/WASM toolchain
+        run: |
+          rustup target add wasm32-unknown-unknown
+          rustc --version
+          cargo install wasm-bindgen-cli --version 0.2.127 --locked --force
+      - name: Compile Ruffle WebIggy core and selfhosted JavaScript
+        working-directory: ruffle/web
+        run: |
+          npm ci
+          npm run build --workspace=ruffle-core
+          npm run build --workspace=ruffle-selfhosted
+          test -s packages/selfhosted/dist/ruffle.js
+      - name: Upload compiled replacement Ruffle
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix85-ruffle-renderer
+          path: ruffle/web/packages/selfhosted/dist/
+          compression-level: 1
+          retention-days: 14
+          if-no-files-found: error
+  full-browser-regression:
+    needs: build-ruffle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore LCE compiled C++/Emscripten engine
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38789030016
+          name: lce-web-fix80-playable
+          github-token: ${{ github.token }}
+          path: site
+      - uses: actions/download-artifact@v4
+        with:
+          name: lce-fix85-ruffle-renderer
+          path: site/vendor/ruffle
+      - name: Apply shared Flash backing repair
+        run: |
+          python3 tools/lce-fix82-apply.py site/lce_web_demo.js
+          node --check site/lce_web_demo.js
+          node --check tools/lce-fix82-matrix.cjs
+      - name: Install headless Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Serve original engine with isolation headers
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 2
+          curl -fsSI http://127.0.0.1:8000/lce_web_demo.html
+      - name: Record all actual front-end screen captures
+        shell: bash
+        run: |
+          mkdir -p fix85-evidence
+          set +e
+          UI_GROUP=front UI_TEST_OUT=fix85-evidence timeout 1000s node tools/lce-fix82-matrix.cjs > fix85-evidence/matrix.log 2>&1
+          status=$?
+          echo "STRICT_MATRIX_EXIT=$status"
+          cat fix85-evidence/SUMMARY.txt 2>/dev/null || true
+          exit "$status"
+      - name: Upload regression evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix85-source-ruffle-all-ui-evidence
+          path: fix85-evidence/
+          retention-days: 14
+          compression-level: 1
+      - name: Upload patched playable browser runtime
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix85-source-patched-playable
+          path: site/
+          compression-level: 1
+          retention-days: 14
