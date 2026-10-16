@@ -1,0 +1,46 @@
+name: LCE Web / Fix96 inspect native loading tips
+on:
+  push:
+    branches: [lce-fix96-loadingtips-panorama-20261016]
+    paths: ['.github/workflows/lce-fix96-diagnose.yml','tools/lce-fix96-diagnose.cjs']
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38912783122
+          name: lce-fix95-createworld-pane-playable
+          github-token: ${{ github.token }}
+          path: site
+      - run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Serve original game
+        run: |
+          cat > server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../server.py > ../server.log 2>&1) &
+          sleep 2
+      - run: timeout 150s node tools/lce-fix96-diagnose.cjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix96-native-tip-diagnostics
+          path: fix96-diagnostics/
+          retention-days: 14
