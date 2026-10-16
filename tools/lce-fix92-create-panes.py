@@ -11,14 +11,22 @@ new='''    // LCE_FIX92_CREATEWORLD_NONOVERLAPPING_PANES: the texture pack list 
     // authored inside MainPanel. Its native backing had been drawn a second
     // time over the world-name, seed and buttons. Only draw the distinct
     // TexturePackPanel backing when the original SWF slides it to one side.
-    if (key === "createworld-texture-list") visible = false;
+    if (key === "createworld-texture-list") {
+      const oldPanel = record.nativeScale9Panels?.get(key);
+      if (oldPanel) { oldPanel.dataset.lcePanelVisible = "0"; oldPanel.style.visibility = "hidden"; }
+      return;
+    }
     if (key === "createworld-texture-panel" && visible) {
       const main = record.nativeScale9Panels?.get("createworld-main");
       const r = main?.__lceStageRect;
       if (r) {
         const ix = Math.max(0, Math.min(x + width, r.x + r.width) - Math.max(x, r.x));
         const iy = Math.max(0, Math.min(y + height, r.y + r.height) - Math.max(y, r.y));
-        if (ix * iy > width * height * 0.16) visible = false;
+        if (ix * iy > width * height * 0.16) {
+          const oldPanel = record.nativeScale9Panels?.get(key);
+          if (oldPanel) { oldPanel.dataset.lcePanelVisible = "0"; oldPanel.style.visibility = "hidden"; }
+          return;
+        }
       }
     }
     style = Number(style) | 0;'''
