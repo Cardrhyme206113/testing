@@ -2,7 +2,7 @@ name: LCE Web / Fix87 rebuild patched Ruffle rendering core
 on:
   push:
     branches: [lce-fix87-front-frame-art-20261016]
-    paths: ['.github/workflows/lce-fix87-ruffle-source.yml', 'tools/lce-ruffle-patch85-xz.b64', 'tools/lce-fix87-ruffle-nested-panels.py', 'tools/lce-fix87-js.py', 'tools/lce-fix86-apply.py', 'tools/lce-fix86-verify.cjs']
+    paths: ['.github/workflows/lce-fix87-ruffle.yml', 'tools/lce-ruffle-patch85-xz.b64', 'tools/lce-fix87-ruffle-nested-panels.py', 'tools/lce-fix87-js.py', 'tools/lce-fix86-apply.py', 'tools/lce-fix86-verify.cjs']
   workflow_dispatch:
 permissions:
   contents: read
@@ -100,6 +100,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p fix87-evidence
+          set -o pipefail
           set +e
           timeout 320s node tools/lce-fix86-verify.cjs | tee fix87-evidence/matrix.log
           status=$?
