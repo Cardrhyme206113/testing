@@ -25,6 +25,7 @@ new='''  // LCE_FIX94_ORIGINAL_CREDITS_AND_CREATE_CHROME.
       const layer = document.createElement("canvas");
       layer.className = "lce-webiggy-credits-backdrop";
       layer.dataset.lcePanelKey = "fix94-credits-dark-gradient";
+      layer.dataset.lcePanelVisible = "1";
       layer.width = 1280; layer.height = 720;
       Object.assign(layer.style, {
         position: "absolute", pointerEvents: "none", touchAction: "none",
@@ -64,6 +65,7 @@ new='''  // LCE_FIX94_ORIGINAL_CREDITS_AND_CREATE_CHROME.
       layer=document.createElement("canvas");
       layer.className="lce-webiggy-createworld-frame-cleanup";
       layer.dataset.lcePanelKey="fix94-createworld-crisp-edge";
+      layer.dataset.lcePanelVisible="1";
       layer.width=1280; layer.height=720;
       Object.assign(layer.style,{
         position:"absolute", pointerEvents:"none",touchAction:"none",
