@@ -1,0 +1,80 @@
+name: LCE Web / Fix95 texture pane and nine-grid regression
+on:
+  push:
+    branches: [lce-fix95-createworld-ninegrid-nav-20261016]
+    paths: ['.github/workflows/lce-fix95-panel-check.yml', 'tools/lce-fix95-texture-preview.py']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  browser-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch existing compiled game and Fix95 renderer
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38846370490
+          name: lce-fix85-source-patched-playable
+          github-token: ${{ github.token }}
+          path: site
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38911576308
+          name: lce-fix95-ruffle-renderer
+          github-token: ${{ github.token }}
+          path: site/vendor/ruffle
+      - name: Apply Fix94 UI visuals and minimal Fix95 pane correction
+        run: |
+          python3 tools/lce-fix86-apply.py site/lce_web_demo.js
+          python3 tools/lce-fix88-unclip-js.py site/lce_web_demo.js
+          python3 tools/lce-fix92-create-panes.py site/lce_web_demo.js
+          python3 tools/lce-fix94-credits-create-js.py site/lce_web_demo.js
+          python3 tools/lce-fix95-texture-preview.py site/lce_web_demo.js
+          node --check site/lce_web_demo.js
+      - name: Install Chromium browser test dependencies
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Serve under WebAssembly isolation headers
+        run: |
+          cat > server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../server.py > ../server.log 2>&1) &
+          sleep 2
+      - name: Test exact Create World, Credits, World Options screenshots
+        run: timeout 310s node tools/lce-fix92-visual.cjs
+      - name: Test ordinary title to Create World navigation
+        run: timeout 295s node tools/lce-fix95-normal-navigation.cjs
+      - name: Upload screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix95-createworld-pane-visual-evidence
+          path: |
+            fix92-review/
+            fix95-nav/
+          compression-level: 1
+          retention-days: 14
+      - name: Upload complete playable if tests succeeded
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix95-createworld-pane-playable
+          path: site/
+          compression-level: 1
+          retention-days: 14
