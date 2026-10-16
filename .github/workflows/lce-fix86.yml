@@ -1,0 +1,89 @@
+name: LCE Web / Fix86 front menu frame/credits regression
+on:
+  push:
+    branches: [lce-fix86-front-frame-credits-20261016]
+    paths: ['.github/workflows/lce-fix86.yml','tools/lce-fix86-apply.py','tools/lce-fix86-verify.cjs']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 13
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: true}
+      - name: Recover original LCE game and Fix85 Ruffle
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38846370490
+          name: lce-fix85-source-patched-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Apply Credits viewport and World Options geometry correction
+        run: |
+          python3 tools/lce-fix86-apply.py site/lce_web_demo.js
+          node --check site/lce_web_demo.js
+          node --check tools/lce-fix86-verify.cjs
+          test -s site/lce_web_demo.wasm
+      - name: Install Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Start isolated original browser game
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Capture five original front menus and Credits animation
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 250s node tools/lce-fix86-verify.cjs | tee fix86-verify.log
+      - name: Publish all original screenshot captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix86-frame-credits-evidence
+          path: |
+            fix86-frames/
+            fix86-verify.log
+          compression-level: 1
+          retention-days: 14
+      - name: Commit screenshot gallery for review
+        if: success()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          d=Path('fix86-frames'); imgs=sorted(d.glob('*.png'))
+          s=['# Fix86 original Chromium front menu screenshots','',f'Captured {len(imgs)} screenshots','']
+          for p in imgs:s.extend([f'## {p.stem}',f'![{p.stem}]({p.name})',''])
+          (d/'README.md').write_text('\n'.join(s))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fix86-frames/
+          git commit -m "LCE Fix86 actual Credits clipping and World Options frame screenshots"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+      - name: Publish playable only if browser test succeeded
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-web-fix86-front-playable
+          path: site/
+          compression-level: 1
+          retention-days: 14
