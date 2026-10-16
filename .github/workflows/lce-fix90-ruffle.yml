@@ -1,7 +1,7 @@
 name: LCE Web / Fix90 rebuild patched Ruffle rendering core
 on:
   push:
-    branches: [lce-fix90-clean-front-20261016]
+    branches: [lce-fix90-targeted-ninegrid-20261016]
     paths: ['.github/workflows/lce-fix90-ruffle.yml', 'tools/lce-ruffle-patch85-xz.b64', 'tools/lce-fix88-credit-text.py', 'tools/lce-fix90-ninegrid.py', 'tools/lce-fix87-js.py', 'tools/lce-fix88-unclip-js.py', 'tools/lce-fix86-apply.py', 'tools/lce-fix86-verify.cjs']
   workflow_dispatch:
 permissions:
