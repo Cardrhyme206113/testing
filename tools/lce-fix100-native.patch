@@ -1,0 +1,233 @@
+--- a/Minecraft.Client/Common/UI/UIController.cpp
++++ b/Minecraft.Client/Common/UI/UIController.cpp
+@@ -300,15 +300,10 @@
+ 	IggyInstallPerfmon(iggy_perfmon);
+ #endif
+ 
+-#ifndef _WEB
++// Restore the original LCE startup scene. Intro720.swf and its timeline
++	// call handleAnimationEnd() through the native Iggy event path; no DOM intro.
++	app.DebugPrintf(app.USER_SR, "[LCE-Web][WebIggy] UI groups ready; entering Intro\n");
+ 	NavigateToScene(0, eUIScene_Intro);
+-#else
+-	// Web now starts at the real LCE title frontend instead of auto-booting the
+-	// TestWorld harness. Skip only the platform intro/press-start sequence; all
+-	// normal MainMenu -> Play -> Create World navigation remains shared code.
+-	app.DebugPrintf(app.USER_SR, "[LCE-Web][WebIggy] UI groups ready; entering MainMenu\n");
+-	NavigateToScene(0, eUIScene_MainMenu);
+-#endif
+ }
+ 
+ void UIController::SetupFont()
+--- a/Minecraft.Client/Common/UI/UIScene_Intro.cpp
++++ b/Minecraft.Client/Common/UI/UIScene_Intro.cpp
+@@ -18,7 +18,7 @@
+ #endif
+ 
+ 	// 4J Stu - These map to values in the Actionscript
+-#ifdef _WINDOWS64
++#if defined(_WINDOWS64) || defined(_WEB)
+ 	int platformIdx = 0;
+ #elif defined(_XBOX)
+ 	int platformIdx = 1;
+@@ -88,7 +88,7 @@
+ 				ui.NavigateToScene(0,eUIScene_EULA);			
+ 				break;
+ 			}
+-#elif defined _XBOX_ONE
++#elif defined(_XBOX_ONE) || defined(_WEB)
+ 			ui.NavigateToScene(0,eUIScene_MainMenu);
+ #else
+ 			ui.NavigateToScene(0,eUIScene_SaveMessage);
+@@ -138,7 +138,7 @@
+ 		}
+ 
+ 
+-#elif defined _XBOX_ONE
++#elif defined(_XBOX_ONE) || defined(_WEB)
+ 		// Don't navigate to the main menu if we don't have focus, as we could have the quadrant sign-in or a join game timer screen running, and then when Those finish they'll
+ 		// give the main menu focus which clears the signed in players and therefore breaks transitioning into the game
+ 		if( hasFocus( m_iPad ) )
+--- a/Minecraft.Client/Common/UI/UIScene_CreateWorldMenu.cpp
++++ b/Minecraft.Client/Common/UI/UIScene_CreateWorldMenu.cpp
+@@ -198,6 +198,12 @@
+ 
+ 		Minecraft *pMinecraft = Minecraft::GetInstance();
+ 		int texturePacksCount = pMinecraft->skins->getTexturePackCount();
++#ifdef _WEB
++		// Until Ruffle has correct selector nine-slice geometry, hide the
++		// original Flash controls only in the default-pack-only configuration.
++		// The default pack remains selected by existing native game code.
++		m_webOnlyDefaultTexturePack = texturePacksCount <= 1;
++#endif
+ 		for(unsigned int i = 0; i < texturePacksCount; ++i)
+ 		{
+ 			TexturePack *tp = pMinecraft->skins->getTexturePackByIndex(i);
+@@ -278,6 +284,13 @@
+ 
+ 
+ 		m_texturePackList.selectSlot(m_currentTexturePackIndex);
++#ifdef _WEB
++		if (m_webOnlyDefaultTexturePack)
++		{
++			m_texturePackList.setVisible(false);
++			m_controlTexturePackPanel.setVisible(false);
++		}
++#endif
+ 	}
+ }
+ 
+@@ -329,6 +342,14 @@
+ void UIScene_CreateWorldMenu::tick()
+ {
+ 	UIScene::tick();
++#ifdef _WEB
++	// Reassert native visibility if the original Flash timeline restores it.
++	if (m_webOnlyDefaultTexturePack)
++	{
++		m_texturePackList.setVisible(false);
++		m_controlTexturePackPanel.setVisible(false);
++	}
++#endif
+ 
+ #ifdef __EMSCRIPTEN__
+ 	// PATCH_14 suppresses the malformed scale9 movie-clip *drawing* in Ruffle
+@@ -387,8 +408,11 @@
+ 				screenW,screenH,0,false);
+ 		}
+ 	}
+-	drawPanelFor(m_controlTexturePackPanel, "createworld-texture-panel");
+-	drawPanelFor(m_texturePackList, "createworld-texture-list");
++	if (!m_webOnlyDefaultTexturePack)
++	{
++		drawPanelFor(m_controlTexturePackPanel, "createworld-texture-panel");
++		drawPanelFor(m_texturePackList, "createworld-texture-list");
++	}
+ #endif
+ 
+ 	if(m_iSetTexturePackDescription >= 0 )
+--- a/Minecraft.Client/Common/UI/UIScene_CreateWorldMenu.h
++++ b/Minecraft.Client/Common/UI/UIScene_CreateWorldMenu.h
+@@ -57,6 +57,9 @@
+ 
+ 	bool m_bGameModeSurvival;
+ 	bool m_bMultiplayerAllowed;
++#ifdef _WEB
++	bool m_webOnlyDefaultTexturePack = false;
++#endif
+ 	DLCPack * m_pDLCPack;
+ 	bool m_bRebuildTouchBoxes;
+ 
+--- a/Minecraft.Client/Common/UI/UIScene.h
++++ b/Minecraft.Client/Common/UI/UIScene.h
+@@ -113,6 +113,10 @@
+ #ifdef __PSVITA__
+ 	UILayer *GetParentLayer() {return m_parentLayer;}
+ 	EUIGroup GetParentLayerGroup() {return m_parentLayer->m_parentGroup->GetGroup();}
++	vector<UIControl *> *GetControls() {return &m_controls;}
++#endif
++#ifdef _WEB
++	// Read-only scene-map query used by the native Web wheel-to-slider router.
+ 	vector<UIControl *> *GetControls() {return &m_controls;}
+ #endif
+ 
+--- a/Minecraft.Client/Minecraft.cpp
++++ b/Minecraft.Client/Minecraft.cpp
+@@ -3304,7 +3304,7 @@
+ 
+ 		if (player->missTime > 0) player->missTime--;
+ 
+-#ifdef _DEBUG_MENUS_ENABLED
++#if defined(_DEBUG_MENUS_ENABLED) && !defined(_WEB)
+ 		if(app.DebugSettingsOn())
+ 		{
+ #ifndef __PSVITA__
+--- a/Minecraft.Client/Web/Web_Input.cpp
++++ b/Minecraft.Client/Web/Web_Input.cpp
+@@ -48,6 +48,7 @@
+ double gMouseDiagDX = 0.0;
+ double gMouseDiagDY = 0.0;
+ uint32_t gWheelPulse = 0;
++int gWheelDirection = 0;
+ uint16_t gKeyboardText[1024] = {};
+ 
+ // DOM callbacks may run while Asyncify/Ruffle is already on the stack. Never
+@@ -123,6 +124,7 @@
+     gMouseDX = 0.0;
+     gMouseDY = 0.0;
+     gWheelPulse = 0;
++    gWheelDirection = 0;
+     gMenuMousePending = 0;
+     gMenuMouseValid = false;
+     gInputActivityPending = false;
+@@ -133,6 +135,7 @@
+ // directly from this lightweight platform input TU.  The actual scene query
+ // lives in Web_UIController.cpp, which is already built with stdafx.h.
+ extern "C" int lce_web_ui_backquote_closes_to_gameplay();
++extern "C" int lce_web_ui_focused_control_is_slider();
+ 
+ // Pointer lock has to be requested from a trusted browser input event. The
+ // shared UI deliberately keeps menuDisplayed true for a short close countdown,
+@@ -355,14 +358,9 @@
+ 
+ EM_BOOL onWheel(int, const EmscriptenWheelEvent *ev, void *) {
+     if (webInputTextEntryActive()) return EM_FALSE;
+-    if (gPads[0].menuDisplayed) {
+-        // Treat wheel as the controller shoulder buttons while a menu is open:
+-        // scroll up = LB/previous category, scroll down = RB/next category.
+-        gWheelPulse = ev->deltaY < 0 ? _360_JOY_BUTTON_LB : _360_JOY_BUTTON_RB;
+-    } else {
+-        // Preserve the established gameplay hotbar direction.
+-        gWheelPulse = ev->deltaY < 0 ? _360_JOY_BUTTON_RB : _360_JOY_BUTTON_LB;
+-    }
++    // DOM callbacks must not query Common/UI or run scene code synchronously.
++    // Defer wheel routing until the platform's normal native Tick below.
++    if (ev->deltaY != 0.0) gWheelDirection = ev->deltaY < 0 ? -1 : 1;
+     queueInputActivity();
+     return EM_TRUE;
+ }
+@@ -513,6 +511,17 @@
+     p.triggers[TRIGGER_MAP_1] = gMouseLeft ? 255 : 0;
+     if (gMouseRight) buttons |= _360_JOY_BUTTON_LT;
+     if (gMouseLeft) buttons |= _360_JOY_BUTTON_RT;
++    if (gWheelDirection != 0) {
++        // Native Common/UI sliders consume left/right actions. Other menus
++        // retain their original shoulder navigation. Gameplay keeps hotbar.
++        if (p.menuDisplayed && lce_web_ui_focused_control_is_slider())
++            gWheelPulse = gWheelDirection < 0 ? _360_JOY_BUTTON_DPAD_LEFT : _360_JOY_BUTTON_DPAD_RIGHT;
++        else if (p.menuDisplayed)
++            gWheelPulse = gWheelDirection < 0 ? _360_JOY_BUTTON_LB : _360_JOY_BUTTON_RB;
++        else
++            gWheelPulse = gWheelDirection < 0 ? _360_JOY_BUTTON_RB : _360_JOY_BUTTON_LB;
++        gWheelDirection = 0;
++    }
+     buttons |= gWheelPulse;
+     gWheelPulse = 0;
+ 
+--- a/Minecraft.Client/Web/Web_UIController.cpp
++++ b/Minecraft.Client/Web/Web_UIController.cpp
+@@ -224,6 +224,24 @@
+ }
+ #endif
+ 
++
++// Native wheel routing: only remap wheel to directional slider input when
++// the focused Common/UI element is a real UIControl_Slider. No DOM hitboxes.
++extern "C" int lce_web_ui_focused_control_is_slider()
++{
++    UIScene *scene = ui.GetTopScene(0);
++    if (!scene || !scene->hasFocus(0)) return 0;
++    const int focused = scene->getControlFocus();
++    const std::vector<UIControl *> *controls = scene->GetControls();
++    if (!controls) return 0;
++    for (UIControl *control : *controls)
++    {
++        if (control && control->getId() == focused &&
++            control->getControlType() == UIControl::eSlider && control->getVisible())
++            return 1;
++    }
++    return 0;
++}
+ 
+ // Queried by Web_Input.cpp during the trusted Backquote keydown task.  Keeping
+ // this Common/UI scene inspection in the stdafx-backed UI translation unit
