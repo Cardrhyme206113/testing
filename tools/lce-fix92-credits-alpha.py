@@ -39,5 +39,9 @@ new='''        // LCE_FIX92_CREDITS_ALPHA_COMPOSITION
         let scene_help_panel = root_url.contains("SettingsOptionsMenu")'''
 if s.count(old)!=1: raise SystemExit("expected one patched Ruffle render anchor; got %d"%s.count(old))
 s=s.replace(old,new,1)
+# The command-list alpha-mask compositor is a CommandHandler trait method.
+use = "use ruffle_render::commands::CommandHandler;\\n"
+if "use ruffle_render::commands::CommandHandler;" not in s:
+    s = use.replace("\\\\n", "\\n") + s
 p.write_text(s)
 print("Original Credits720.BlendingMask alpha compositing installed")
