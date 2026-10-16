@@ -30,7 +30,7 @@ const OUT='fix105-evidence';fs.mkdirSync(OUT,{recursive:true});const sleep=ms=>n
     if(t%10===0){r.samples.push({t,phase:'loading',...s});if(t%30===0)await snap('03-loading-'+t)}
     if(!s.scenes.includes('CreateWorldMenu720.swf')&&!s.scenes.some(x=>/Loading|Saving|Progress/.test(x))&&t>8){
       const rc=await page.evaluate(()=>Module._lce_web_test_open_ui(20));
-      if(rc===1){r.worldLoaded=true;r.events.push({phase:'gameplayReady',t,...s});break}
+      if(rc===1){await sleep(1000);const tested=await st();if(tested.lastUi===1){r.worldLoaded=true;r.events.push({phase:'gameplayReady',t,...tested});break;}r.events.push({phase:'notReadyYet',t,code:tested.lastUi});}
     }
   }
   await snap('04-after-create');
