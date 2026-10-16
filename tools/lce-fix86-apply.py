@@ -55,7 +55,7 @@ insert='''  // LCE_FIX86_CREDITS_VIEWPORT: original CreditsMenu720.swf animates 
   // The separate Panorama, Logo and ToolTips players stay unaffected.
   function repairCreditsOriginalScrollViewport(record) {
     if (!record || record.pendingDestroy ||
-        !/^CreditsMenu720[.]swf$/i.test(String(record.filename || ""))) return;
+        !/^(Credits|CreditsMenu)720[.]swf$/i.test(String(record.filename || ""))) return;
     if (record.__lceFix86CreditsClipped) return;
     record.__lceFix86CreditsClipped = true;
     const clip = "inset(33% 13% 16.5% 13%)";
