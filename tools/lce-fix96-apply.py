@@ -130,5 +130,15 @@ replace_exact('''    repairCreditsOriginalScrollViewport(record);
     return true;''','''    repairCreditsOriginalScrollViewport(record);
     repairOriginalLoadingTip(record);
     return true;''')
+replace_exact('''    record.player.style.pointerEvents = "none";
+  }
+  function clearTile(id) {''','''    record.player.style.pointerEvents = "none";
+    // Native Iggy marks a scene visible *after* tickPlayer(). Refresh here
+    // so the original Tip.SetLabel text isn't skipped during the hidden tick.
+    if (record.filename === "FullscreenProgress720.swf" && record.visible) {
+      repairOriginalLoadingTip(record);
+    }
+  }
+  function clearTile(id) {''')
 p.write_text(s)
 print('Fix96: real localized rotating tip restored, only Panorama SWF blurred')
