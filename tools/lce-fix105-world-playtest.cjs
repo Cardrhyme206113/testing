@@ -35,6 +35,12 @@ const OUT='fix105-evidence';fs.mkdirSync(OUT,{recursive:true});const sleep=ms=>n
   }
   await snap('04-after-create');
   if(r.worldLoaded){
+    // The readiness test opens the real Inventory UI. Close it first, and
+    // record the resulting scene state, before measuring actual world controls.
+    await page.keyboard.press('Backquote');
+    await sleep(1400);
+    r.events.push({phase:'afterInventoryClose',...await st()});
+    await snap('04b-gameplay');
     // Exercise real browser input on the game; no synthetic interception.
     const plan=[['W','move-forward'],['Space','jump'],['ShiftLeft','sneak'],['ControlLeft','sprint'],['KeyE','inventory'],['Escape','pause'],['Escape','unpause'],['KeyQ','drop']];
     for(const [code,name] of plan){
