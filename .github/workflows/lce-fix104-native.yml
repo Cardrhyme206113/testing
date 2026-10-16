@@ -1,0 +1,161 @@
+name: LCE Fix104 full native rebuild / original UI
+on:
+  push:
+    branches: [lce-fix104-native-build-20261016]
+    paths: [.github/workflows/lce-fix104-native.yml, tools/lce-fix100-native.patch, tools/lce-fix100-native-verify.cjs]
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "HTTPS download of complete rooted LCE source ZIP (do not put secrets in URL)"
+        type: string
+        required: false
+      sha256:
+        description: "Optional expected SHA-256 of source ZIP"
+        type: string
+        required: false
+permissions: {contents: read, actions: read}
+jobs:
+  audit-patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit original source patch coverage
+        run: |
+          test "$(grep -c '^--- a/' tools/lce-fix100-native.patch)" -eq 8
+          grep -q 'NavigateToScene(0, eUIScene_Intro)' tools/lce-fix100-native.patch
+          grep -q 'lce_web_ui_focused_control_is_slider' tools/lce-fix100-native.patch
+          grep -q 'm_webOnlyDefaultTexturePack' tools/lce-fix100-native.patch
+          echo 'Native source patch is present. This is NOT a compiled test.'
+  rebuild:
+    if: github.event_name == 'workflow_dispatch'
+    needs: audit-patch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      SOURCE_URL: ${{ inputs.source_url || secrets.LCE_SOURCE_URL || vars.LCE_SOURCE_URL }}
+      SOURCE_SHA256: ${{ inputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Receive full rooted source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$SOURCE_URL" ]; then
+            echo '::error::Missing source archive URL. Set repo secret LCE_SOURCE_URL or provide workflow input source_url.'
+            exit 1
+          fi
+          case "$SOURCE_URL" in https://*) ;; *) echo '::error::source_url must be HTTPS'; exit 1;; esac
+          mkdir -p incoming
+          curl --fail --location --retry 3 --silent --show-error --output incoming/source.zip "$SOURCE_URL"
+          if [ -n "$SOURCE_SHA256" ]; then
+            echo "$SOURCE_SHA256  incoming/source.zip" | sha256sum --check -
+          fi
+          python3 - <<'PY'
+          import pathlib,zipfile
+          root=pathlib.Path('lce-web-work')
+          with zipfile.ZipFile('incoming/source.zip') as z:
+              if z.testzip() is not None: raise SystemExit('Bad ZIP checksum')
+              for i in z.infolist():
+                  p=pathlib.PurePosixPath(i.filename)
+                  if p.is_absolute() or '..' in p.parts or not p.parts or p.parts[0]!='lce-web-work':
+                      raise SystemExit('Unsafe or incorrect ZIP root: '+i.filename)
+                  if i.file_size > 800*1024*1024: raise SystemExit('Unreasonable ZIP entry size')
+              z.extractall('.')
+          for name in (
+            'Minecraft.Client/Web/Web_Input.cpp',
+            'Minecraft.Client/Web/Web_UIController.cpp',
+            'Minecraft.Client/Common/UI/UIScene_Intro.cpp',
+            'Minecraft.Client/Common/UI/UIScene_CreateWorldMenu.cpp',
+            'Minecraft.Client/Common/Media/MediaWindows64.arc',
+            'tools/build_web.sh',
+          ):
+              if not (root/name).is_file(): raise SystemExit('Incomplete source: '+name)
+          PY
+      - name: Apply ONLY reviewed native C++ diff
+        run: |
+          cd lce-web-work
+          git apply --check ../tools/lce-fix100-native.patch
+          git apply ../tools/lce-fix100-native.patch
+          grep -q 'entering Intro' Minecraft.Client/Common/UI/UIController.cpp
+          grep -q 'gWheelDirection' Minecraft.Client/Web/Web_Input.cpp
+      - uses: mymindstorm/setup-emsdk@v14
+        with: {version: latest, actions-cache-folder: emsdk-cache}
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake clang libpng-dev zlib1g-dev pkg-config
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38911576308
+          name: lce-fix95-ruffle-renderer
+          github-token: ${{ github.token }}
+          path: lce-web-work/Minecraft.Client/Web/vendor/ruffle
+      - name: Verify existing source-matched Ruffle bridge
+        run: |
+          test -s lce-web-work/Minecraft.Client/Web/vendor/ruffle/ruffle.js
+          python3 - <<'PY'
+          import json,pathlib
+          p=pathlib.Path('lce-web-work/Minecraft.Client/Web/vendor/ruffle/webiggy-build.json')
+          p.write_text(json.dumps({'webiggy':True,'patch':'LCE_WEBIGGY_RUFFLE_PATCH_16','ruffle_tag':'v0.6.0','source':'Fix95-compiled-source-Ruffle'}))
+          PY
+      - name: Recompile whole LCE C++ engine with Emscripten
+        shell: bash
+        run: |
+          chmod +x lce-web-work/tools/build_web.sh
+          lce-web-work/tools/build_web.sh
+          test -s lce-web-work/build-web/lce_web_demo.wasm
+          test -s lce-web-work/build-web/lce_web_demo.data
+      - name: Apply existing Fix96 browser compatibility repairs
+        run: |
+          mkdir -p site
+          cp -a lce-web-work/build-web/. site/
+          python3 tools/lce-fix86-apply.py site/lce_web_demo.js
+          python3 tools/lce-fix88-unclip-js.py site/lce_web_demo.js
+          python3 tools/lce-fix92-create-panes.py site/lce_web_demo.js
+          python3 tools/lce-fix94-credits-create-js.py site/lce_web_demo.js
+          python3 tools/lce-fix96-apply.py site/lce_web_demo.js
+          node --check site/lce_web_demo.js
+      - name: Install Playwright Chromium for real game tests
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Start isolated localhost
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+              def end_headers(self):
+                  for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]: self.send_header(k,v)
+                  super().end_headers()
+              def guess_type(self,p):
+                  if p.endswith('.wasm'): return 'application/wasm'
+                  if p.endswith('.data'): return 'application/octet-stream'
+                  return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 3
+          curl --fail --silent --show-error -I http://127.0.0.1:8000/lce_web_demo.html
+      - name: Verify original intro, normal menu and UI controls
+        run: timeout 130s node tools/lce-fix100-native-verify.cjs
+      - name: Verify rest of established UI screens
+        run: timeout 180s node tools/lce-fix92-visual.cjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix104-native-test-evidence
+          path: |
+            fix100-evidence/
+            fix92-review/
+            lce-web-work/web-build-all.log
+            server.log
+          retention-days: 14
+          compression-level: 1
+      - if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix104-native-playable
+          path: site/
+          retention-days: 14
+          compression-level: 1
