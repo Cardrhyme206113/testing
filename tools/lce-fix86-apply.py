@@ -29,7 +29,8 @@ s=s.replace(old,new,1)
 # correctly sized World Options frame. The original movie art is already
 # suppressed by our source-level Ruffle patch.
 old = 'const backgrounds = ["BackgroundPanel", "BackgroundPanel2"];'
-new = 'if (/LaunchMoreOptionsMenu720[.]swf$/i.test(String(record.filename || ""))) return;\\n      const backgrounds = ["BackgroundPanel", "BackgroundPanel2"];'
+new = """if (/LaunchMoreOptionsMenu720[.]swf$/i.test(String(record.filename || ""))) return;
+      const backgrounds = ["BackgroundPanel", "BackgroundPanel2"];"""
 if s.count(old)!=1:raise SystemExit("Missing generic 9slice helper")
 s=s.replace(old,new,1)
 anchor='''    record.api.webIggyTick(timestamp);
