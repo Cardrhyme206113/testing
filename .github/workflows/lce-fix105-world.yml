@@ -1,0 +1,51 @@
+name: LCE Fix105 real-world browser playtest
+on:
+  push:
+    branches: [lce-fix105-world-playtest-20261016]
+    paths: [.github/workflows/lce-fix105-world.yml, tools/lce-fix105-world-playtest.cjs]
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  world-playtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38917599088
+          name: lce-fix96-playable
+          github-token: ${{ github.token }}
+          path: site
+      - run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - run: |
+          cat > server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+              def end_headers(self):
+                  self.send_header('Cross-Origin-Opener-Policy','same-origin')
+                  self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+                  self.send_header('Cache-Control','no-store')
+                  super().end_headers()
+              def guess_type(self,p):
+                  if p.endswith('.wasm'): return 'application/wasm'
+                  if p.endswith('.data'): return 'application/octet-stream'
+                  return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../server.py > ../server.log 2>&1) &
+          sleep 3
+      - name: Create native world and input playtest
+        run: timeout 850s node tools/lce-fix105-world-playtest.cjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix105-world-playtest-evidence
+          path: |
+            fix105-evidence/
+            server.log
+          retention-days: 14
+          compression-level: 1
