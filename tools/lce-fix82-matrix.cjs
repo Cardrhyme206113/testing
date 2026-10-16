@@ -11,7 +11,7 @@ fs.mkdirSync(OUT,{recursive:true});
 const wait=t=>new Promise(r=>setTimeout(r,t));
 const front=[[0,'MainMenu'],[1,'HelpAndOptions'],[2,'Settings'],[3,'SettingsOptions'],[4,'SettingsAudio'],[5,'SettingsControls'],[6,'SettingsGraphics'],[7,'SettingsUI'],[8,'HowToPlay'],[9,'ControllerLayout'],[10,'SkinSelect'],[11,'Credits'],[12,'CreateWorld'],[13,'WorldOptions']];
 const ingame=[[20,'Inventory'],[21,'Crafting2x2'],[22,'Crafting3x3'],[23,'Furnace'],[24,'Chest'],[25,'Enchanting'],[26,'Brewing'],[27,'Dispenser'],[28,'Anvil'],[29,'Creative'],[30,'Pause']];
-const report={group:GROUP,created:new Date().toISOString(),cases:[],browserErrors:[],resourceFailures:[],worldLive:false,limitations:[],summary:{}};
+const report={group:GROUP,created:new Date().toISOString(),cases:[],browserErrors:[],resourceFailures:[],rendererTraces:[],worldLive:false,limitations:[],summary:{}};
 let page,context;
 const browserArgs=['--no-sandbox','--enable-webgl','--enable-unsafe-swiftshader','--use-gl=angle','--use-angle=swiftshader','--disable-dev-shm-usage','--lang=en-US'];
 const slim=x=>x?.map(v=>v.filename);
@@ -19,6 +19,7 @@ async function main(){
  const browser=await chromium.launch({headless:true,args:browserArgs});
  context=await browser.newContext({viewport:{width:1280,height:800},locale:'en-US'});
  const hook=()=>{
+  page.on('console',m=>{const msg=m.text();if(msg.includes('[frame-tree]')&&report.rendererTraces.length<150)report.rendererTraces.push(msg.slice(0,600));});
   page.on('pageerror',e=>report.browserErrors.push(String(e.stack||e).slice(0,2500)));
   page.on('crash',()=>report.browserErrors.push('page crash'));
   page.on('requestfailed',r=>report.resourceFailures.push({url:r.url(),error:r.failure()?.errorText}));
