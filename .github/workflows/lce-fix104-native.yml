@@ -27,7 +27,6 @@ jobs:
           grep -q 'm_webOnlyDefaultTexturePack' tools/lce-fix100-native.patch
           echo 'Native source patch is present. This is NOT a compiled test.'
   rebuild:
-    if: github.event_name == 'workflow_dispatch'
     needs: audit-patch
     runs-on: ubuntu-24.04
     timeout-minutes: 180
