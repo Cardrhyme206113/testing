@@ -1,0 +1,265 @@
+{
+  "cases": [
+    {
+      "id": 8,
+      "name": "HowToPlay",
+      "opened": 1,
+      "pre": {
+        "players": [
+          "ToolTips720.swf",
+          "PressStartToPlay720.swf",
+          "HowToPlayMenu720.swf"
+        ],
+        "overlays": [],
+        "clipPaths": [],
+        "root": {
+          "x": 0,
+          "y": 40,
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "later": null
+    },
+    {
+      "id": 9,
+      "name": "ControllerLayout",
+      "opened": 1,
+      "pre": {
+        "players": [
+          "ToolTips720.swf",
+          "PressStartToPlay720.swf",
+          "Controls720.swf"
+        ],
+        "overlays": [],
+        "clipPaths": [],
+        "root": {
+          "x": 0,
+          "y": 40,
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "later": null
+    },
+    {
+      "id": 11,
+      "name": "Credits",
+      "opened": 1,
+      "pre": {
+        "players": [
+          "ToolTips720.swf",
+          "PressStartToPlay720.swf",
+          "Credits720.swf",
+          "ComponentLogo720.swf"
+        ],
+        "overlays": [],
+        "clipPaths": [],
+        "root": {
+          "x": 0,
+          "y": 40,
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "later": {
+        "players": [
+          "ToolTips720.swf",
+          "PressStartToPlay720.swf",
+          "Credits720.swf",
+          "ComponentLogo720.swf"
+        ],
+        "overlays": [],
+        "clipPaths": [],
+        "root": {
+          "x": 0,
+          "y": 40,
+          "width": 1280,
+          "height": 720
+        }
+      }
+    },
+    {
+      "id": 12,
+      "name": "CreateWorld",
+      "opened": 1,
+      "pre": {
+        "players": [
+          "ToolTips720.swf",
+          "PressStartToPlay720.swf",
+          "CreateWorldMenu720.swf",
+          "Panorama720.swf"
+        ],
+        "overlays": [
+          {
+            "key": "createworld-main",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          },
+          {
+            "key": "createworld-texture-panel",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          },
+          {
+            "key": "createworld-texture-list",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          }
+        ],
+        "clipPaths": [],
+        "root": {
+          "x": 0,
+          "y": 40,
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "later": null
+    },
+    {
+      "id": 13,
+      "name": "WorldOptions",
+      "opened": 1,
+      "pre": {
+        "players": [
+          "ToolTips720.swf",
+          "PressStartToPlay720.swf",
+          "Panorama720.swf",
+          "LaunchMoreOptionsMenu720.swf"
+        ],
+        "overlays": [
+          {
+            "key": "fix80-settings-nine-slice-frame",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          },
+          {
+            "key": "fix82-second-nine-slice-frame",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          },
+          {
+            "key": "world-options-main",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          }
+        ],
+        "clipPaths": [],
+        "root": {
+          "x": 0,
+          "y": 40,
+          "width": 1280,
+          "height": 720
+        }
+      },
+      "later": {
+        "players": [
+          "ToolTips720.swf",
+          "PressStartToPlay720.swf",
+          "Panorama720.swf",
+          "LaunchMoreOptionsMenu720.swf"
+        ],
+        "overlays": [
+          {
+            "key": "fix80-settings-nine-slice-frame",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          },
+          {
+            "key": "fix82-second-nine-slice-frame",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          },
+          {
+            "key": "world-options-main",
+            "rect": {
+              "x": 0,
+              "y": 40,
+              "width": 1280,
+              "height": 720,
+              "top": 40,
+              "right": 1280,
+              "bottom": 760,
+              "left": 0
+            }
+          }
+        ],
+        "clipPaths": [],
+        "root": {
+          "x": 0,
+          "y": 40,
+          "width": 1280,
+          "height": 720
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "started": "2026-10-16T04:08:15.665Z",
+  "finished": "2026-10-16T04:09:26.837Z"
+}
