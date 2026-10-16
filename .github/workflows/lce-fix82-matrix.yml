@@ -1,0 +1,88 @@
+name: LCE Web / Fix82 complete UI coverage and global frame check
+on:
+  push:
+    branches: [lce-fix82-ui-global-audit-20261016]
+    paths: ['.github/workflows/lce-fix82-matrix.yml','tools/lce-fix82-apply.py','tools/lce-fix82-matrix.cjs']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  ui-matrix:
+    name: "UI matrix — ${{ matrix.group }}"
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [front, ingame]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore actual compiled LCE engine and patched Ruffle
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38789030016
+          name: lce-web-fix80-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Apply shared fixed-corner panel patch
+        run: |
+          python3 tools/lce-fix82-apply.py site/lce_web_demo.js
+          node --check site/lce_web_demo.js
+          node --check tools/lce-fix82-matrix.cjs
+          test -s site/lce_web_demo.wasm
+      - name: Install headless Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Start real browser engine with SharedArrayBuffer headers
+        run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [
+                ('Cross-Origin-Opener-Policy','same-origin'),
+                ('Cross-Origin-Embedder-Policy','require-corp'),
+                ('Cross-Origin-Resource-Policy','same-origin'),
+                ('Cache-Control','no-store')
+              ]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py > ../server.log 2>&1) &
+          sleep 2
+          curl -fIsS http://127.0.0.1:8000/lce_web_demo.html
+      - name: Run strict native UI scene matrix
+        shell: bash
+        env:
+          UI_GROUP: ${{ matrix.group }}
+          UI_TEST_OUT: fix82-${{ matrix.group }}
+          UI_BOOT_MS: "33000"
+        run: |
+          set -o pipefail
+          timeout 1750s node tools/lce-fix82-matrix.cjs | tee fix82-matrix-${{ matrix.group }}.log
+      - name: Upload every screenshot and hard-failure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix82-${{ matrix.group }}-matrix-all-screenshots
+          path: |
+            fix82-${{ matrix.group }}/
+            fix82-matrix-${{ matrix.group }}.log
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 1
+      - name: Publish patched runtime for local review (not a completion claim)
+        if: matrix.group == 'front'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-web-fix82-review-runtime
+          path: site/
+          retention-days: 14
+          compression-level: 1
