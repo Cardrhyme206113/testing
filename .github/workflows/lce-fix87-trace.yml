@@ -1,0 +1,47 @@
+name: LCE Web / rejected Fix87 suppressed art trace
+on:
+  push:
+    branches: [lce-fix87-front-frame-art-20261016]
+    paths: ['.github/workflows/lce-fix87-trace.yml','tools/lce-fix87-trace.cjs']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38849934175
+          name: lce-fix87-source-patched-playable
+          github-token: ${{ github.token }}
+          path: site
+      - run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - run: |
+          cat > local_server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              for k,v in [('Cross-Origin-Opener-Policy','same-origin'),('Cross-Origin-Embedder-Policy','require-corp'),('Cache-Control','no-store')]:self.send_header(k,v)
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../local_server.py >/dev/null 2>&1) &
+          sleep 2
+      - run: node tools/lce-fix87-trace.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lce-fix87-diagnostic-graphics
+          path: fix87-trace.json
+          retention-days: 14
