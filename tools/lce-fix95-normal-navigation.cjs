@@ -12,8 +12,12 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
   try{
     await page.goto('http://127.0.0.1:8000/lce_web_demo.html',{waitUntil:'domcontentloaded',timeout:120000});
     await delay(35000);await shot('01-ordinary-start');
-    const seq=[['Enter',1800],['Enter',1800],['ArrowDown',600],['Enter',2200],['Escape',1400],['Escape',1400]];
-    for(let i=0;i<seq.length;i++){const [key,pause]=seq[i];await page.keyboard.press(key);await delay(pause);await shot('0'+(i+2)+'-after-'+key.toLowerCase())}
+    // Real native mouse clicks, not a forced C++ test scene.
+    // Screen coordinates match the normal 1280x800 Play Game screenshot.
+    for (const [n,x,y] of [['02-click-play',642,310],['03-click-create-candidate',642,611],['04-click-top-candidate',641,306]]) {
+      await page.mouse.click(x,y);await delay(3600);await shot(n);
+    }
+    await page.keyboard.press('Escape');await delay(1800);await shot('05-after-escape');
     await page.goto('http://127.0.0.1:8000/lce_web_demo.html?lce_ui_test=1',{waitUntil:'domcontentloaded',timeout:120000});
     await delay(34000);
     const result=await page.evaluate(()=>Module._lce_web_test_open_ui(12));
