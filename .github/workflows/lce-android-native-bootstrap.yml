@@ -1,0 +1,39 @@
+name: LCE Android native ARM64 bootstrap
+on:
+  workflow_dispatch:
+  push:
+    branches: [lce-android-arm64-bootstrap-20261017]
+    paths:
+      - 'android-lce/**'
+      - '.github/workflows/lce-android-native-bootstrap.yml'
+permissions: {contents: read}
+jobs:
+  native-arm64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: android-lce
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK components
+        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
+        with: {gradle-version: '8.11.1'}
+      - name: Host-side archive parser unit test
+        run: |
+          python3 tests/make_fixture.py tests/fixture.arc
+          g++ -std=c++17 -Wall -Wextra -pedantic app/src/main/cpp/archive_reader.cpp tests/test_archive.cpp -o /tmp/archive-test
+          /tmp/archive-test tests/fixture.arc
+      - name: Compile true ARM64 native APK
+        run: gradle --no-daemon :app:assembleDebug
+      - if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-native-android-arm64-bootstrap
+          path: android-lce/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

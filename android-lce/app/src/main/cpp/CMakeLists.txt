@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(lceandroid LANGUAGES CXX)
+add_library(lceandroid SHARED native_main.cpp archive_reader.cpp)
+target_compile_features(lceandroid PRIVATE cxx_std_17)
+target_compile_options(lceandroid PRIVATE -Wall -Wextra)
+find_library(gles_lib GLESv3 REQUIRED)
+find_library(log_lib log REQUIRED)
+target_link_libraries(lceandroid PRIVATE ${gles_lib} ${log_lib})
