@@ -1,0 +1,51 @@
+name: LCE Fix109 interaction and world smoke test
+on:
+  push:
+    branches: [lce-fix109-selector-logo-playable-20261017]
+    paths: ['.github/workflows/lce-fix109-interaction.yml','tools/lce-fix109-interaction.cjs']
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  playtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39001132371
+          name: lce-fix109-native-flash-playable
+          github-token: ${{ github.token }}
+          path: site
+      - run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - run: |
+          cat > server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              self.send_header('Cross-Origin-Opener-Policy','same-origin')
+              self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+              self.send_header('Cache-Control','no-store')
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../server.py > ../server.log 2>&1) &
+          sleep 3
+      - name: Test native controls, texture icon, world creation and movement
+        run: timeout 390s node tools/lce-fix109-interaction.cjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix109-controls-texture-world-evidence
+          path: |
+            fix109-interactions/
+            server.log
+          retention-days: 14
+          compression-level: 1
