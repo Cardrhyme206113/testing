@@ -83,17 +83,24 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await page.mouse.click(640,605);
     await sleep(500);
     let world=false;
+    // Inventory-opening test hook can fail even after the gameplay scene has
+    // appeared. Do not let that unrelated UI test abort a memory profile.
     for(let i=0;i<150;i++){
       await sleep(1000);const s=await state();
       if(i%30===0)result.events.push({phase:'generation',second:i,...s});
-      if(i>8&&!s.scenes.includes('CreateWorldMenu720.swf')){
-        const q=await page.evaluate(()=>Module._lce_web_test_open_ui(20));
-        if(q===1){await sleep(500);if((await state()).lastUi===1){world=true;break}}
+      if(i>15 && !s.scenes.includes('CreateWorldMenu720.swf') &&
+          !s.scenes.some(x=>/FullscreenProgress|Loading|Saving/.test(x))) {
+        await sleep(5000);
+        const settled=await state();
+        if(!settled.scenes.some(x=>/FullscreenProgress|Loading|Saving/.test(x))) {
+          world=true;
+          result.events.push({phase:'postLoadingScene',second:i,...settled});
+          break;
+        }
       }
     }
-    if(!world)throw Error('World did not initialize');
-    await page.keyboard.press('Backquote');await sleep(1000);
-    result.events.push({phase:'worldReady',...await state()});
+    if(!world)throw Error('Loading screens never cleared; game could not be profiled');
+    result.events.push({phase:'postLoadingBaseline',...await state()});
     const started=Date.now(),durationSec=240;
     for(let sec=0;sec<=durationSec;sec+=10){
       if(sec>0)await sleep(10000);
