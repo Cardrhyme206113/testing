@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(lceandroid LANGUAGES CXX)
-add_library(lceandroid SHARED native_main.cpp archive_reader.cpp)
+add_library(lceandroid SHARED native_main.cpp archive_reader.cpp voxel_world.cpp)
 target_compile_features(lceandroid PRIVATE cxx_std_17)
 target_compile_options(lceandroid PRIVATE -Wall -Wextra)
 find_library(gles_lib GLESv3 REQUIRED)
