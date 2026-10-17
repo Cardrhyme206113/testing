@@ -1,0 +1,28 @@
+name: LCE Fix111 renderer allocator regression
+on:
+  push:
+    branches: [lce-fix111-command-buffer-memory-20261017]
+    paths:
+      - .github/workflows/lce-fix111-cbuffer.yml
+      - tools/lce-fix111-cbuffer-pool.hpp
+      - tools/lce-fix111-apply.py
+      - tools/lce-fix111-test.cpp
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  native-allocator-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile actual command-buffer pool under ASAN/UBSAN
+        run: |
+          g++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Itools tools/lce-fix111-test.cpp -o /tmp/lce-cbuff-test
+          ASAN_OPTIONS=detect_leaks=1 /tmp/lce-cbuff-test
+      - name: Validate patcher syntax
+        run: python3 -m py_compile tools/lce-fix111-apply.py
+      - name: Native game source availability
+        run: |
+          echo "Native source is not in the public repository."
+          echo "Full WASM compile requires a private source checkout via LCE_SOURCE_URL."
+          echo "This action validates the allocator, not a rebuilt playable game."
