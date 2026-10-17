@@ -1,0 +1,55 @@
+name: LCE Native Android - textured world v0.2
+on:
+  workflow_dispatch:
+  push:
+    branches: [lce-android-arm64-world-v2-20261017]
+    paths:
+      - 'android-lce/**'
+      - '.github/workflows/lce-android-world-v2.yml'
+permissions: {contents: read}
+jobs:
+  android-native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: android-lce
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - name: Configure SDK
+        run: |
+          export SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+          test -d "$SDK_ROOT"
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -1)
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+      - name: Install Android NDK SDK and CMake
+        run: |
+          "$SDKMANAGER" --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
+        with: {gradle-version: '8.11.1'}
+      - name: Host-side original archive reader test
+        run: |
+          python3 tests/make_fixture.py tests/fixture.arc
+          g++ -std=c++17 -Wall -Wextra -pedantic app/src/main/cpp/archive_reader.cpp tests/test_archive.cpp -o /tmp/lce-archive-test
+          /tmp/lce-archive-test tests/fixture.arc
+      - name: Host-side voxel world, terrain mesh and save/load tests
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -pedantic app/src/main/cpp/voxel_world.cpp tests/test_world.cpp -o /tmp/lce-world-test
+          /tmp/lce-world-test
+      - name: Compile ARM64 GLES3 LCE native APK
+        run: gradle --no-daemon :app:assembleDebug
+      - name: Verify real AArch64 native library in APK
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/liblceandroid.so'
+          unzip -p "$APK" lib/arm64-v8a/liblceandroid.so | head -c 4 | od -An -tx1
+      - if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-android-native-world-v02-apk
+          path: android-lce/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+          if-no-files-found: error
