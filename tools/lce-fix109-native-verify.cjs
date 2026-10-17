@@ -15,6 +15,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
    api:typeof Module?._lce_web_test_open_ui==='function',
    customLogoElements:document.querySelectorAll('.lce-webiggy-logo-replacement').length,
    customLayoutElements:document.querySelectorAll('[data-lce-panel-key="controls-layout"]').length,
+   nativePatchedSwfs:globalThis.__lceFix109SwfLoads||[],
    isolated:crossOriginIsolated
  }));
  try {
@@ -35,6 +36,9 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     if(!s.scenes.includes(expected)||s.last!==1)result.fatal.push(name+' did not load: '+JSON.stringify(s));
   }
   const state=await get();
+  for(const name of ['Controls720.swf','CreateWorldMenu720.swf']) {
+    if(!state.nativePatchedSwfs.some(x=>x.name===name))result.fatal.push('native SWF not loaded: '+name);
+  }
   if(state.customLogoElements!==0||state.customLayoutElements!==0)
     result.fatal.push('Unexpected external DOM artwork detected');
  }catch(e){result.fatal.push(String(e.stack||e))}
