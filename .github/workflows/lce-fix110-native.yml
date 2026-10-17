@@ -1,7 +1,7 @@
-name: LCE Fix110 native Flash artwork playable
+name: LCE Fix110 original-alpha native Flash logo
 on:
   push:
-    branches: [lce-fix110-selector-logo-playable-20261017]
+    branches: [lce-fix110-true-alpha-logo-profile-20261017]
     paths:
       - '.github/workflows/lce-fix110-native.yml'
       - 'tools/lce-fix110-native-swf.py'
@@ -36,7 +36,7 @@ jobs:
         run: |
           python3 -m pip install --break-system-packages pillow
           python3 tools/lce-fix110-native-swf.py site
-          python3 tools/lce-fix110-bridge-native.py site/lce_web_demo.js
+          python3 tools/lce-fix109-bridge-native.py site/lce_web_demo.js
           node --check site/lce_web_demo.js
           python3 - <<'PY'
           from pathlib import Path
@@ -68,8 +68,8 @@ jobs:
           PY
           (cd site && python3 ../server.py > ../server.log 2>&1) &
           sleep 3
-      - name: Render rebuilt Flash logo and native menus in Chromium
-        run: timeout 210s node tools/lce-fix110-native-verify.cjs
+      - name: Actually render original native menus in Chromium
+        run: timeout 210s node tools/lce-fix109-native-verify.cjs
       - name: Pixel-level original versus corrected comparison
         run: |
           python3 - <<'PY'
@@ -77,9 +77,9 @@ jobs:
           from pathlib import Path
           import json
           pairs=[
-            ('logo','original/fix103-evidence/00-main-menu.png','fix110-evidence/01-logo-main.png',(355,75,933,220)),
-            ('controller','original/fix103-evidence/10-Controls.png','fix110-evidence/02-controls.png',(398,225,883,366)),
-            ('texture-selector','original/fix103-evidence/13-CreateWorld.png','fix110-evidence/03-createworld.png',(414,392,868,487))
+            ('logo','original/fix103-evidence/00-main-menu.png','fix109-evidence/01-logo-main.png',(355,75,933,220)),
+            ('controller','original/fix103-evidence/10-Controls.png','fix109-evidence/02-controls.png',(398,225,883,366)),
+            ('texture-selector','original/fix103-evidence/13-CreateWorld.png','fix109-evidence/03-createworld.png',(414,392,868,487))
           ]
           sheet=Image.new('RGB',(1200,600),'#121212');draw=ImageDraw.Draw(sheet)
           report={}
@@ -95,23 +95,23 @@ jobs:
               sheet.paste(a.resize((550,155)),(25,ay));sheet.paste(b.resize((550,155)),(620,ay))
               draw.text((25,i*200+4),name+' — original',fill='white')
               draw.text((620,i*200+4),name+' — native Flash fix',fill='white')
-          sheet.save('fix110-evidence/side-by-side.png')
-          Path('fix110-evidence/pixel-report.json').write_text(json.dumps(report,indent=2))
+          sheet.save('fix109-evidence/side-by-side.png')
+          Path('fix109-evidence/pixel-report.json').write_text(json.dumps(report,indent=2))
           print('FIX109_PIXEL_REPORT',report)
           PY
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: lce-fix110-true-alpha-evidence
+          name: lce-fix110-original-alpha-evidence
           path: |
-            fix110-evidence/
+            fix109-evidence/
             server.log
           retention-days: 14
           compression-level: 1
       - if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: lce-fix110-true-alpha-playable
+          name: lce-fix110-original-alpha-playable
           path: site/
           retention-days: 14
           compression-level: 1
