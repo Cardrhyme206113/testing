@@ -1,0 +1,93 @@
+name: LCE original C++ ARM64 + Iggy UI (M3)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-original-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      LCE_M3_URL: ${{ secrets.LCE_ORIGINAL_M3_ZIP_URL }}
+      LCE_M3_SHA256: ${{ secrets.LCE_ORIGINAL_M3_SHA256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate private original-source archive is configured
+        run: |
+          test -n "$LCE_M3_URL" || { echo '::error::Set LCE_ORIGINAL_M3_ZIP_URL as a repository secret. Never commit third-party source to a public repository.'; exit 1; }
+          case "$LCE_M3_URL" in https://*) ;; *) echo '::error::Source archive URL must be HTTPS'; exit 1;; esac
+      - name: Download complete user-controlled original engine and UI source
+        run: |
+          mkdir -p incoming game-src
+          curl --fail --location --retry 3 --silent --show-error "$LCE_M3_URL" -o incoming/lce-m3.zip
+          if test -n "$LCE_M3_SHA256"; then
+            printf '%s  incoming/lce-m3.zip\n' "$LCE_M3_SHA256" | sha256sum --check
+          fi
+          python3 - <<'PY'
+          import pathlib,zipfile
+          root=pathlib.Path('game-src')
+          with zipfile.ZipFile('incoming/lce-m3.zip') as z:
+              assert z.testzip() is None
+              for i in z.infolist():
+                  p=pathlib.PurePosixPath(i.filename)
+                  if p.is_absolute() or '..' in p.parts or p.parts[0]!='lce-web-work':
+                      raise SystemExit('Invalid archive path '+i.filename)
+                  if i.file_size > 700*1024*1024: raise SystemExit('Too-large file '+i.filename)
+              z.extractall(root)
+          source=root/'lce-web-work'
+          for name in [
+              'Minecraft.World/Level.cpp',
+              'Minecraft.Client/Minecraft.cpp',
+              'Minecraft.Client/Web/Web_Iggy.cpp',
+              'android-real/app/src/main/cpp/IggyAndroidRpc.cpp',
+              'android-real/app/src/main/assets/ui/ruffle/ruffle.js',
+              'android-real/app/src/main/assets/ui/ui-assets/runtime/Intro720.swf',
+          ]:
+              if not (source/name).is_file():raise SystemExit('Incomplete source: '+name)
+          print('Verified original engine, patched UI suite and original SWFs')
+          PY
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - name: Locate Android SDK and accept licenses
+        run: |
+          export SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort | tail -1)
+          test -n "$SDKMANAGER"
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+      - name: Install Android SDK/NDK/CMake
+        run: |
+          "$SDKMANAGER" --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
+        with: {gradle-version: '8.11.1'}
+      - name: Test Android UI bridge
+        run: |
+          cd game-src/lce-web-work
+          node android-real/tests/test_android_iggy_rpc.js
+          g++ -std=c++14 -Wno-unused-function -Iandroid-real/app/src/main/cpp android-real/tests/test_android_iggy_shim.cpp -o /tmp/iggy-test
+          /tmp/iggy-test
+      - name: Compile complete original 4J C++ client/world as native ARM64 APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd game-src/lce-web-work/android-real
+          gradle --no-daemon --stacktrace :app:assembleDebug 2>&1 | tee ../android-m3-build.log
+      - name: Verify native AArch64 library
+        run: |
+          APK=game-src/lce-web-work/android-real/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/liblce_web_demo.so'
+      - if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-original-arm64-m3-android-apk
+          path: game-src/lce-web-work/android-real/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-original-arm64-m3-build-log
+          path: game-src/lce-web-work/android-m3-build.log
+          if-no-files-found: ignore
+          retention-days: 7
