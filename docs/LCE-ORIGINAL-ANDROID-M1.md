@@ -1,13 +1,34 @@
-# Minecraft LCE — full original-engine Android port (M1)
+# Minecraft LCE — native Android port of the original engine
 
-This branch moves beyond the standalone v0.2 voxel demonstration.
+This branch targets the actual **Fix107 LCE Web C++ game engine**, not the synthetic v0.2 voxel demonstration.
 
-- **Full source-inclusive project:** `LCE-Original-Native-Android-Source-M1.zip` is delivered in the ChatGPT conversation, not checked into this public repository.
-- **Actual 4J engine:** CMake builds the original `Minecraft.World`, `Minecraft.Client`, and `Common/UI` C++ targets, based on the existing Fix107 Web port.
-- **Android:** EGL-backed GLES3 replaces browser WebGL context setup; Android Java calls original `initialise()` and `frame()` through native JNI; original assets are read from `Common/res` and `Common/Media`.
-- **Verified on native Linux Clang:** 710-step `lce_world` build, 407-step client/UI build, full 17-step desktop-link; original media archive loads and actual terrain-generation startup executes.
-- **Unresolved:** The native Linux run crashes within original server-chunk/spawn setup after beginning terrain generation, and Android full-engine build is not yet validated. Original RAD Iggy UI still needs a native runtime.
+## Source-inclusive artifact
 
-Use the new **LCE ORIGINAL game engine Android ARM64 (source-inclusive)** GitHub Actions workflow with a private HTTPS URL to the complete packaged source ZIP. No synthetic voxel simulation is part of that source's native Android target.
+The ChatGPT delivery `LCE-Original-Native-Android-Source-M1.zip` contains the complete original C++ project, existing Web platform code, the recovered media and original resource textures, plus:
 
-Keep bug reports and native compile failures on this branch; **do not** confuse successful previous prototype APK builds with full-engine validation.
+- Original `Minecraft.World`, `Minecraft.Client` and `Common/UI` CMake targets reused.
+- Android/ARM64 shared-library target instead of a browser executable.
+- GLES3 rendering path reusing `Web_Render.cpp`, with EGL owned by `GLSurfaceView`.
+- JNI exposing the **original** `initialise()` and `frame()` functions.
+- Input mapped to original Xbox controller button and axis states.
+- Import logic for original `res.zip` and `MediaWindows64.arc` into their expected directory structure.
+- A native 64-bit pointer-size fix in `ServerChunkCache.cpp` and `MultiPlayerChunkCache.cpp`.
+
+Source is inside the downloadable private ZIP. It is not published into this public repository.
+
+## Verified results: real source, Clang on Linux x86-64
+
+- **710-step original `lce_world` build: PASS**
+- **407-step shared client/UI build: PASS**
+- **17-step original game/platform executable link: PASS**
+- Original media archive loads.
+- Original world-generation code runs and initializes host/client gameplay.
+- **`SetGameStarted - true`** and **`game world is live; entering render loop`** confirmed.
+
+The native smoke test initially crashed during the original server chunk cache's post-processing. Root cause was `#if defined(_WEB)` selecting a 32-bit pointer atomic CAS on a 64-bit native host. Restricting that branch to `__EMSCRIPTEN__` fixed the crash without changing the original algorithm or WASM behavior.
+
+**Still NOT verified:** Full-source NDK ARM64 compilation/linking and Android device rendering. No playable original-engine APK is claimed. The original Iggy/SWF menu runtime, full native audio and stable Android graphics thread behavior are later milestones.
+
+## CI
+
+Run [LCE ORIGINAL game engine Android ARM64 (source-inclusive)](../.github/workflows/lce-android-full-original-engine.yml) with the **full original ZIP** at a private HTTPS download URL, stored in the repository secret `LCE_ANDROID_FULL_SOURCE_URL` or supplied to workflow dispatch. CI deliberately fails if a complete original source tree is missing; it will never substitute the voxel demo and label it a port.
