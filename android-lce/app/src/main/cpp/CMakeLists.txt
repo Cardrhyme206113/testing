@@ -6,3 +6,16 @@ target_compile_options(lceandroid PRIVATE -Wall -Wextra)
 find_library(gles_lib GLESv3 REQUIRED)
 find_library(log_lib log REQUIRED)
 target_link_libraries(lceandroid PRIVATE ${gles_lib} ${log_lib})
+
+# Original 4J engine modules are linked only when the user's private sources
+# have been staged. Without them, the APK remains the labelled v0.2 prototype.
+get_filename_component(LCE_ANDROID_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../.." ABSOLUTE)
+target_sources(lceandroid PRIVATE "${LCE_ANDROID_ROOT}/original-engine/OriginalWorldJNI.cpp")
+if(EXISTS "${LCE_ANDROID_ROOT}/original-engine/staged/Random.cpp")
+  add_subdirectory("${LCE_ANDROID_ROOT}/original-engine" "${CMAKE_BINARY_DIR}/4j-original-world")
+  target_link_libraries(lceandroid PRIVATE original4jworld_core)
+  target_compile_definitions(lceandroid PRIVATE LCE_HAS_ORIGINAL_4J_WORLD=1)
+  message(STATUS "LCE: Original 4J world RNG/noise C++ compiled into native Android app")
+else()
+  message(STATUS "LCE: Original 4J source NOT staged. This is not a real-engine build")
+endif()
