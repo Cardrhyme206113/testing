@@ -45,6 +45,7 @@ jobs:
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
           unzip -l "$APK" | grep -q 'lib/arm64-v8a/liblceandroid.so'
+          unzip -l "$APK" | grep -q 'lib/x86_64/liblceandroid.so'
           unzip -p "$APK" lib/arm64-v8a/liblceandroid.so | head -c 4 | od -An -tx1
       - if: success()
         uses: actions/upload-artifact@v4
@@ -53,3 +54,44 @@ jobs:
           path: android-lce/app/build/outputs/apk/debug/*.apk
           retention-days: 14
           if-no-files-found: error
+  emulator-smoke:
+    needs: android-native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lce-android-native-world-v02-apk
+          path: emulator-apk
+      - name: Permit KVM acceleration
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Boot Android, launch native ARM-equivalent game and capture screenshot
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: |
+            adb install emulator-apk/app-debug.apk
+            adb shell am start -n dev.card.lceandroid.world/dev.card.lceandroid.MainActivity
+            sleep 16
+            adb logcat -d -s LCENative:I AndroidRuntime:E > native-emulator.log
+            cat native-emulator.log | tail -60
+            if grep -q 'FATAL EXCEPTION' native-emulator.log; then exit 1; fi
+            if ! grep -q 'World meshed:' native-emulator.log; then echo 'Missing native renderer frame'; exit 1; fi
+            adb shell screencap -p /sdcard/world-proof.png
+            adb pull /sdcard/world-proof.png world-proof.png
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-android-native-world-v02-emulator-evidence
+          path: |
+            native-emulator.log
+            world-proof.png
+          retention-days: 7
+          if-no-files-found: ignore
