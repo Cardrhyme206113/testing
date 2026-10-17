@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.16)
+project(Original4JWorldM1Smoke LANGUAGES CXX)
+add_subdirectory(".." original4jcore)
+add_executable(original4j_noise_test "../original4j_noise_test.cpp")
+target_link_libraries(original4j_noise_test PRIVATE original4jworld_core)
+enable_testing()
+add_test(NAME actual_4j_rng_noise_determinism COMMAND original4j_noise_test)
