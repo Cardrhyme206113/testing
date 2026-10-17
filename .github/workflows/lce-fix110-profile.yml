@@ -1,0 +1,52 @@
+name: LCE Fix110 gameplay performance diagnosis
+on:
+  push:
+    branches: [lce-fix110-true-alpha-logo-profile-20261017]
+    paths: [.github/workflows/lce-fix110-profile.yml, tools/lce-fix110-performance-profile.cjs]
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 17
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39001132371
+          name: lce-fix109-native-flash-playable
+          github-token: ${{ github.token }}
+          path: site
+      - run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Serve baseline with isolation headers
+        run: |
+          cat > server.py <<'PY'
+          from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              self.send_header('Cross-Origin-Opener-Policy','same-origin')
+              self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+              self.send_header('Cache-Control','no-store')
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../server.py >../server.log 2>&1) &
+          sleep 3
+      - name: Capture native Ruffle player ticks, CPU, WASM and browser heap
+        run: timeout 850s node tools/lce-fix110-performance-profile.cjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix110-gameplay-leak-profile
+          path: |
+            fix110-profile/
+            server.log
+          compression-level: 1
+          retention-days: 14
