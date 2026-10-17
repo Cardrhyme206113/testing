@@ -40,6 +40,7 @@ public final class MainActivity extends Activity {
     private static native boolean nativeSave(String path);
     private static native boolean nativeLoad(String path);
     private static native String nativeInspectArchive(String path);
+    private static native String nativeOriginalWorldProbe();
     private GLSurfaceView surface;
     private TouchOverlay controls;
     private TextView status;
@@ -83,7 +84,7 @@ public final class MainActivity extends Activity {
         });
         root.addView(controls,new FrameLayout.LayoutParams(-1,-1));
         status=new TextView(this);
-        status.setText("LCE native terrain prototype · import original res.zip");
+        status.setText(nativeOriginalWorldProbe()+"\nImport original res.zip to load LCE textures");
         status.setTextSize(12);
         status.setTextColor(Color.WHITE);
         status.setBackgroundColor(0x880b1826);
