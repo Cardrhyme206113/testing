@@ -5,9 +5,29 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 (async()=>{
   const browser=await chromium.launch({headless:true,args:['--no-sandbox','--enable-webgl','--enable-unsafe-swiftshader','--use-gl=angle','--use-angle=swiftshader','--disable-dev-shm-usage']});
   const page=await browser.newPage({viewport:{width:1280,height:800},locale:'en-US'});
+  // Capture the public WASM instance export only, without accessing Emscripten's unexported Module.HEAPU8 getter.
+  await page.addInitScript(() => {
+    const origInstantiate=WebAssembly.instantiate;
+    WebAssembly.instantiate=async function(...args) {
+      const result=await origInstantiate.apply(this,args);
+      const inst=result?.instance||result;
+      const memory=inst?.exports?.memory;
+      if(memory instanceof WebAssembly.Memory) globalThis.__lceCapturedWasmMemory=memory;
+      return result;
+    };
+    if(WebAssembly.instantiateStreaming){
+      const origStreaming=WebAssembly.instantiateStreaming;
+      WebAssembly.instantiateStreaming=async function(...args){
+        const result=await origStreaming.apply(this,args);
+        const memory=result?.instance?.exports?.memory;
+        if(memory instanceof WebAssembly.Memory) globalThis.__lceCapturedWasmMemory=memory;
+        return result;
+      };
+    }
+  });
   const cdp=await page.context().newCDPSession(page);
   await cdp.send('Performance.enable');
-  const result={build:'Fix109 baseline unchanged native WASM and Ruffle',exceptions:[],errors:[],samples:[],events:[],fatal:[]};
+  const result={build:'Fix109 baseline unchanged native WASM and Ruffle',memoryNote:'WASM memory null if not externally exported; CDP JS heap and CPU are measured separately.',exceptions:[],errors:[],samples:[],events:[],fatal:[]};
   page.on('pageerror',e=>result.exceptions.push(String(e.stack||e)));
   page.on('crash',()=>result.fatal.push('Chromium renderer crashed'));
   page.on('console',m=>{if(m.type()==='error'&&result.errors.length<100)result.errors.push(m.text().slice(0,300))});
@@ -21,7 +41,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
         players:(debug.players||[]).length,hidden:(debug.players||[]).filter(x=>!x.visible).length,
         canvas:document.querySelectorAll('canvas').length,
         ruffle:document.querySelectorAll('ruffle-player').length,
-        wasmBytes:globalThis.Module?.HEAPU8?.buffer?.byteLength??null,
+        wasmBytes:globalThis.__lceCapturedWasmMemory?.buffer?.byteLength??null,
         jsHeapReported:performance.memory?.usedJSHeapSize??null,
         totalTickCalls:counts.total||0,hiddenTickCalls:counts.hidden||0,
         cumulativeTickMs:counts.milliseconds||0,raf:profile.raf||0,
@@ -91,6 +111,6 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     fs.writeFileSync(path.join(dir,'report.json'),JSON.stringify(result,null,2));
     console.log('FIX110_PROFILE',JSON.stringify({samples:result.samples.length,head:result.samples[0],tail:result.samples.at(-1),fatal:result.fatal,exceptionCount:result.exceptions.length}));
     await browser.close().catch(()=>{});
-    if(result.fatal.length)process.exitCode=1;
+    if(result.fatal.length || result.exceptions.length)process.exitCode=1;
   }
 })();
