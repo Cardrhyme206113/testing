@@ -1,0 +1,118 @@
+name: LCE Fix110 native Flash artwork playable
+on:
+  push:
+    branches: [lce-fix110-selector-logo-playable-20261017]
+    paths:
+      - '.github/workflows/lce-fix110-native.yml'
+      - 'tools/lce-fix110-native-swf.py'
+      - 'tools/lce-fix109-bridge-native.py'
+      - 'tools/lce-fix110-transparent-logo.b64'
+      - 'tools/lce-fix109-native-verify.cjs'
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  native-flash-repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore playable native WebAssembly
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38917599088
+          name: lce-fix96-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Get original screenshot baselines
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 38950819058
+          name: lce-fix103-scene-regression-evidence
+          github-token: ${{ github.token }}
+          path: original
+      - name: Patch only native SWF display-list artwork and bitmaps
+        run: |
+          python3 -m pip install --break-system-packages pillow
+          python3 tools/lce-fix110-native-swf.py site
+          python3 tools/lce-fix110-bridge-native.py site/lce_web_demo.js
+          node --check site/lce_web_demo.js
+          python3 - <<'PY'
+          from pathlib import Path
+          import zlib
+          for name in ('CreateWorldMenu720.swf','Controls720.swf','platformskin.swf','platformskinHD.swf'):
+              raw=(Path('site/ui-assets/runtime')/name).read_bytes()
+              assert raw[:3]==b'CWS' and len(zlib.decompress(raw[8:]))>100
+              print('VALID_SWF',name,len(raw))
+          PY
+      - name: Install Chromium for real-game render checks
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Serve WebAssembly and Ruffle with COOP/COEP
+        run: |
+          cat > server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+            def end_headers(self):
+              self.send_header('Cross-Origin-Opener-Policy','same-origin')
+              self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+              self.send_header('Cache-Control','no-store')
+              super().end_headers()
+            def guess_type(self,p):
+              if p.endswith('.wasm'):return 'application/wasm'
+              if p.endswith('.data'):return 'application/octet-stream'
+              return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../server.py > ../server.log 2>&1) &
+          sleep 3
+      - name: Render rebuilt Flash logo and native menus in Chromium
+        run: timeout 210s node tools/lce-fix110-native-verify.cjs
+      - name: Pixel-level original versus corrected comparison
+        run: |
+          python3 - <<'PY'
+          from PIL import Image,ImageChops,ImageDraw
+          from pathlib import Path
+          import json
+          pairs=[
+            ('logo','original/fix103-evidence/00-main-menu.png','fix110-evidence/01-logo-main.png',(355,75,933,220)),
+            ('controller','original/fix103-evidence/10-Controls.png','fix110-evidence/02-controls.png',(398,225,883,366)),
+            ('texture-selector','original/fix103-evidence/13-CreateWorld.png','fix110-evidence/03-createworld.png',(414,392,868,487))
+          ]
+          sheet=Image.new('RGB',(1200,600),'#121212');draw=ImageDraw.Draw(sheet)
+          report={}
+          for i,(name,old,new,rect) in enumerate(pairs):
+              a=Image.open(old).convert('RGB');b=Image.open(new).convert('RGB')
+              assert a.size==b.size,(name,a.size,b.size)
+              a=a.crop(rect);b=b.crop(rect)
+              diff=ImageChops.difference(a,b)
+              pixels=sum(1 for p in diff.getdata() if max(p)>18)
+              report[name]={'changed_pixels':pixels,'total_pixels':a.width*a.height}
+              assert pixels>250,('visual repair not visible',name,pixels)
+              ay=i*200+24
+              sheet.paste(a.resize((550,155)),(25,ay));sheet.paste(b.resize((550,155)),(620,ay))
+              draw.text((25,i*200+4),name+' — original',fill='white')
+              draw.text((620,i*200+4),name+' — native Flash fix',fill='white')
+          sheet.save('fix110-evidence/side-by-side.png')
+          Path('fix110-evidence/pixel-report.json').write_text(json.dumps(report,indent=2))
+          print('FIX109_PIXEL_REPORT',report)
+          PY
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix110-true-alpha-evidence
+          path: |
+            fix110-evidence/
+            server.log
+          retention-days: 14
+          compression-level: 1
+      - if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix110-true-alpha-playable
+          path: site/
+          retention-days: 14
+          compression-level: 1
+          if-no-files-found: error
