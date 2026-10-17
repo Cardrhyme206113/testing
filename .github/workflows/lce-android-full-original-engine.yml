@@ -1,0 +1,70 @@
+name: LCE ORIGINAL game engine Android ARM64 (source-inclusive)
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        required: false
+        type: string
+        description: HTTPS URL to LCE-Original-Native-Android-Source-M1.zip
+permissions: {contents: read}
+jobs:
+  original-engine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      SOURCE_URL: ${{ inputs.source_url || secrets.LCE_ANDROID_FULL_SOURCE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Acquire entire original project, not the v0.2 demo
+        run: |
+          set -euo pipefail
+          test -n "$SOURCE_URL" || { echo "::error::Set private LCE_ANDROID_FULL_SOURCE_URL, or specify source_url input"; exit 1; }
+          case "$SOURCE_URL" in https://*) ;; *) echo "::error::HTTPS source URL required"; exit 1;; esac
+          mkdir -p rooted
+          curl --fail --location --retry 3 --silent --show-error "$SOURCE_URL" -o /tmp/lce-native-original.zip
+          python3 - <<'PY'
+          import zipfile,pathlib
+          root=pathlib.Path('rooted')
+          with zipfile.ZipFile('/tmp/lce-native-original.zip') as z:
+              if z.testzip() is not None:raise SystemExit('Corrupt original game source zip')
+              for item in z.infolist():
+                  p=pathlib.PurePosixPath(item.filename)
+                  if p.is_absolute() or '..' in p.parts or p.parts[0]!='lce-web-work':
+                      raise SystemExit('Unexpected source path '+item.filename)
+                  if item.file_size>400*1024*1024:raise SystemExit('Oversized item '+item.filename)
+              z.extractall(root)
+          for name in ['Minecraft.World/Level.cpp','Minecraft.Client/Minecraft.cpp','Minecraft.Client/Web/Web_Render.cpp','Minecraft.Client/Common/res/TitleUpdate/res/terrain.png','android-real/app/src/main/cpp/AndroidBridge.cpp','android-real/app/build.gradle']:
+              assert (root/'lce-web-work'/name).is_file(),name
+          print('Full original 4J source and Android-native host verified')
+          PY
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - name: Install Android SDK/NDK and CMake
+        run: |
+          set -e
+          SDKMANAGER=$(find "${ANDROID_SDK_ROOT:-${ANDROID_HOME}}/cmdline-tools" -type f -name sdkmanager | sort | tail -1)
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
+        with: {gradle-version: '8.11.1'}
+      - name: Compile full 4J game code as ARM64 JNI library (not WebAssembly)
+        working-directory: rooted/lce-web-work/android-real
+        run: gradle --no-daemon --stacktrace :app:assembleDebug | tee /tmp/lce-native-build.log
+      - name: Check original-engine shared library
+        run: |
+          APK=rooted/lce-web-work/android-real/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -l "$APK" | grep 'lib/arm64-v8a/liblce_web_demo.so'
+      - if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-original-4j-native-android-arm64-apk
+          path: rooted/lce-web-work/android-real/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-original-android-compilation-errors
+          path: /tmp/lce-native-build.log
+          retention-days: 14
+          if-no-files-found: ignore
