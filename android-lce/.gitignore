@@ -1,0 +1,5 @@
+.gradle/
+**/build/
+original-engine/staged/
+*.iml
+local.properties
