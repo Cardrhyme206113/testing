@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/lce-fix109-native.yml'
       - 'tools/lce-fix109-native-swf.py'
+      - 'tools/lce-fix109-bridge-native.py'
       - 'tools/lce-fix109-logo.b64'
       - 'tools/lce-fix109-native-verify.cjs'
   workflow_dispatch:
@@ -35,6 +36,7 @@ jobs:
         run: |
           python3 -m pip install --break-system-packages pillow
           python3 tools/lce-fix109-native-swf.py site
+          python3 tools/lce-fix109-bridge-native.py site/lce_web_demo.js
           node --check site/lce_web_demo.js
           python3 - <<'PY'
           from pathlib import Path
