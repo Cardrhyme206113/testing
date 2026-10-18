@@ -1,0 +1,57 @@
+name: LCE Fix112 DebugMenu + multi-UI leak stress
+on:
+  push:
+    branches: [lce-fix112-debug-ui-stress-20261018]
+    paths:
+      - '.github/workflows/lce-fix112-debug-stress.yml'
+      - 'tools/lce-fix112-debug-menu-stress.cjs'
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore latest verified original-alpha native Flash playable
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39003247927
+          name: lce-fix110-original-alpha-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Install Playwright Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node --check tools/lce-fix112-debug-menu-stress.cjs
+      - name: Serve isolated WASM and Ruffle
+        run: |
+          cat > server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+              def end_headers(self):
+                  self.send_header('Cross-Origin-Opener-Policy','same-origin')
+                  self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+                  self.send_header('Cache-Control','no-store')
+                  super().end_headers()
+              def guess_type(self,p):
+                  if p.endswith('.wasm'):return 'application/wasm'
+                  if p.endswith('.data'):return 'application/octet-stream'
+                  return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../server.py >../server.log 2>&1) &
+          sleep 3
+      - name: Reproduce debug-menu and mixed UI lifecycle under memory profiling
+        run: timeout 1120s node tools/lce-fix112-debug-menu-stress.cjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix112-debug-menu-ui-performance-evidence
+          path: |
+            fix112-debug-stress/
+            server.log
+          retention-days: 14
+          compression-level: 1
