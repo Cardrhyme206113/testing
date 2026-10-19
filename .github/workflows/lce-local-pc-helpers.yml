@@ -1,0 +1,31 @@
+name: LCE Local PC Profiler Helpers
+on:
+  push:
+    branches: [lce-fix113-pc-testkit-20261019]
+    paths:
+      - '.github/workflows/lce-local-pc-helpers.yml'
+      - 'tools/pc-testkit/**'
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  helpers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate cross-platform test scripts
+        run: |
+          node --check tools/pc-testkit/tests/profile.cjs
+          python3 - <<'PY'
+          from pathlib import Path
+          import ast
+          ast.parse(Path('tools/pc-testkit/server.py').read_text())
+          assert Path('tools/pc-testkit/START-GAME.cmd').is_file()
+          assert Path('tools/pc-testkit/RUN-PROFILER.cmd').is_file()
+          print('PC helper syntax validated')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lce-local-pc-testkit-helpers-only
+          path: tools/pc-testkit/
+          retention-days: 14
+          if-no-files-found: error
