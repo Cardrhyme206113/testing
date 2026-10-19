@@ -80,19 +80,31 @@ const dir='fix114-profile'; fs.mkdirSync(dir,{recursive:true});
     }
     if(!ready)throw Error('main menu not ready');
     const q=await openNative(12,'CreateWorld');
-    if(!q)throw Error('CreateWorld menu failure');
-    await page.mouse.click(640,605);
+    if(!q)throw Error('CreateWorld native constructor failure');
+    let menuReady=false;
+    for(let k=0;k<75;k++){
+      await sleep(250);
+      const a=await page.evaluate(()=>globalThis.LCEWebIggy?.debugState?.()?.players||[]);
+      if(a.some(y=>y.visible&&y.filename==='CreateWorldMenu720.swf')){menuReady=true;break}
+    }
+    out.ui.push({tag:'createworld-visible',ready:menuReady});
+    await page.screenshot({path:dir+'/01-menu-before-click.png',timeout:12000}).catch(e=>out.errors.push('screenshot '+e));
+    if(!menuReady)throw Error('CreateWorld native scene never became visible');
+    await sleep(1500);await page.mouse.click(640,605);
     let world=false;
     for(let i=0;i<150;i++){
       await sleep(1000);
       const a=await page.evaluate(()=>globalThis.LCEWebIggy?.debugState?.()?.players||[]);
-      if(i>20&&!a.filter(y=>y.visible).some(y=>/CreateWorldMenu|FullscreenProgress|Loading|Saving/.test(y.filename))){
+      const names=a.filter(y=>y.visible).map(y=>y.filename);
+      if(i===10||i===60){out.ui.push({tag:'load-'+i,scenes:names});await page.screenshot({path:dir+'/load-'+i+'.png',timeout:12000}).catch(()=>{})}
+      if(i===15&&names.includes('CreateWorldMenu720.swf'))await page.mouse.click(640,605);
+      if(i>20&&!names.some(y=>/CreateWorldMenu|FullscreenProgress|Loading|Saving/.test(y))){
         await sleep(3000);
         const b=await page.evaluate(()=>globalThis.LCEWebIggy?.debugState?.()?.players||[]);
         if(!b.filter(y=>y.visible).some(y=>/CreateWorldMenu|FullscreenProgress|Loading|Saving/.test(y.filename))){world=true;break}
       }
     }
-    if(!world)throw Error('world failed to load');
+    if(!world)throw Error('world failed to load; last visible scenes: '+JSON.stringify((await page.evaluate(()=>globalThis.LCEWebIggy?.debugState?.()?.players||[])).filter(y=>y.visible).map(y=>y.filename)));
     await page.evaluate(()=>{
       const host=globalThis.LCEWebIggy;
       const old=host.tickPlayer;
