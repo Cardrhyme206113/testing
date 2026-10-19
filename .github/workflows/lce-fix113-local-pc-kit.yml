@@ -1,0 +1,67 @@
+name: LCE Fix113 Local Windows PC Test Kit
+on:
+  push:
+    branches: [lce-fix113-pc-testkit-20261019]
+    paths:
+      - '.github/workflows/lce-fix113-local-pc-kit.yml'
+      - 'tools/pc-testkit/**'
+      - 'tools/lce-fix113-ruffle-lifecycle.py'
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  pack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact original-alpha playable used for Fix112 and Fix113
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39003247927
+          name: lce-fix110-original-alpha-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Apply verified Ruffle event-listener cleanup
+        run: |
+          python3 tools/lce-fix113-ruffle-lifecycle.py site/vendor/ruffle/ruffle.js
+          grep -Fq 'LCE_FIX113_GLOBAL_LISTENERS' site/vendor/ruffle/ruffle.js
+          node --check site/vendor/ruffle/ruffle.js
+      - name: Bundle the local Windows launchers and real-game profiler
+        run: |
+          cp -a tools/pc-testkit/. site/
+          node --check site/tests/profile.cjs
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          ast.parse(Path('site/server.py').read_text())
+          required=[
+              'START-GAME.cmd','RUN-PROFILER.cmd','server.py',
+              'tests/profile.cjs','tests/package.json','README.md',
+              'lce_web_demo.html','lce_web_demo.js','vendor/ruffle/ruffle.js'
+          ]
+          missing=[p for p in required if not (Path('site')/p).is_file()]
+          print('REQUIRED_FILES',len(required),'missing:',missing)
+          assert not missing
+          print('LCE WASM candidates',[(p.name,p.stat().st_size) for p in Path('site').glob('*.wasm')])
+          assert list(Path('site').glob('*.wasm'))
+          PY
+      - name: Verify local server and browser isolation headers on real files
+        run: |
+          python3 site/server.py --no-browser > local-server.log 2>&1 &
+          echo $! > local-server.pid
+          sleep 3
+          curl -fsSI 'http://127.0.0.1:8765/lce_web_demo.html?lce_ui_test=1' | tee server-headers.txt
+          grep -qi 'cross-origin-opener-policy: same-origin' server-headers.txt
+          grep -qi 'cross-origin-embedder-policy: require-corp' server-headers.txt
+          wasmfile="$(find site -maxdepth 1 -name '*.wasm' | head -1 | xargs basename)"
+          curl -fsSI "http://127.0.0.1:8765/$wasmfile" | grep -qi 'content-type: application/wasm'
+          kill "$(cat local-server.pid)" || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix113-windows-local-full-playable-profile-kit
+          path: site/
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
