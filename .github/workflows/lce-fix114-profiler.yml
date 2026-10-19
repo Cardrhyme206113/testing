@@ -1,0 +1,74 @@
+name: LCE Fix114 phase-based memory and render profiler
+on:
+  push:
+    branches: [lce-fix114-frame-lifecycle-probe-20261019]
+    paths:
+      - '.github/workflows/lce-fix114-profiler.yml'
+      - 'tools/lce-fix114-phase-profile.cjs'
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore exact Fix110 original-alpha playable
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39003247927
+          name: lce-fix110-original-alpha-playable
+          github-token: \${{ github.token }}
+          path: site
+      - name: Apply verified Fix113 Ruffle listener repair
+        run: |
+          python3 tools/lce-fix113-ruffle-lifecycle.py site/vendor/ruffle/ruffle.js
+          node --check site/vendor/ruffle/ruffle.js
+      - name: Audit WebIggy lifecycle source sites in compiled host
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('site/lce_web_demo.js').read_text()
+          for needle in ['tickPlayer','destroyPlayer','debugState','hidePlayer','unload','removeChild','_lce_web_test_open_ui']:
+              print('\nHOST_MARKER',needle,'COUNT',s.count(needle))
+              at=0
+              for i in range(min(2,s.count(needle))):
+                  p=s.find(needle,at)
+                  print('HOST_EXCERPT',repr(s[max(0,p-180):p+320]))
+                  at=p+len(needle)
+          PY
+      - name: Prepare Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node --check tools/lce-fix114-phase-profile.cjs
+      - name: Start localhost with WASM COOP/COEP
+        run: |
+          cat > server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+              def end_headers(self):
+                  self.send_header('Cross-Origin-Opener-Policy','same-origin')
+                  self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+                  self.send_header('Cache-Control','no-store')
+                  super().end_headers()
+              def guess_type(self,p):
+                  if p.endswith('.wasm'):return 'application/wasm'
+                  if p.endswith('.data'):return 'application/octet-stream'
+                  return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../server.py >../server.log 2>&1) &
+          sleep 3
+      - name: Run real-world phase-controlled memory and CPU tests
+        run: timeout 900s node tools/lce-fix114-phase-profile.cjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix114-phase-controlled-profile
+          path: |
+            fix114-profile/
+            server.log
+          retention-days: 14
+          compression-level: 1
