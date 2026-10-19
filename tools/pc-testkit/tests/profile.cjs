@@ -38,6 +38,7 @@ async function launchServer() {
       child = spawn(command, args, {cwd:ROOT, windowsHide:true, stdio:['ignore','pipe','pipe']});
     } catch {continue;}
     let err = '';
+    child.on('error', e => {err += ' '+e.message;});
     child.stderr.on('data', v => {err += v.toString().slice(0,600)});
     child.stdout.on('data', v => {if (v.toString().includes('local-only server'))console.log('Local server ready')});
     for(let i=0;i<35;i++) {
