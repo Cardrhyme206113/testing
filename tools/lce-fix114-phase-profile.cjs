@@ -81,24 +81,23 @@ const dir='fix114-profile'; fs.mkdirSync(dir,{recursive:true});
     if(!ready)throw Error('main menu not ready');
     const q=await openNative(12,'CreateWorld');
     if(!q)throw Error('CreateWorld native constructor failure');
-    let menuReady=false;
-    for(let k=0;k<75;k++){
-      await sleep(250);
-      const a=await page.evaluate(()=>globalThis.LCEWebIggy?.debugState?.()?.players||[]);
-      if(a.some(y=>y.visible&&y.filename==='CreateWorldMenu720.swf')){menuReady=true;break}
-    }
-    out.ui.push({tag:'createworld-visible',ready:menuReady});
-    await page.screenshot({path:dir+'/01-menu-before-click.png',timeout:12000}).catch(e=>out.errors.push('screenshot '+e));
-    if(!menuReady)throw Error('CreateWorld native scene never became visible');
-    await sleep(1500);await page.mouse.click(640,605);
+    // Fix112 succeeded only with a native early click; do not delay for scene
+    // opacity/animation, which can lose click ownership in the compiled port.
+    await page.mouse.click(640,605);
     let world=false;
-    for(let i=0;i<150;i++){
+    for(let i=0;i<155;i++){
       await sleep(1000);
       const a=await page.evaluate(()=>globalThis.LCEWebIggy?.debugState?.()?.players||[]);
       const names=a.filter(y=>y.visible).map(y=>y.filename);
-      if(i===10||i===60){out.ui.push({tag:'load-'+i,scenes:names});await page.screenshot({path:dir+'/load-'+i+'.png',timeout:12000}).catch(()=>{})}
-      if(i===15&&names.includes('CreateWorldMenu720.swf'))await page.mouse.click(640,605);
-      if(i>20&&!names.some(y=>/CreateWorldMenu|FullscreenProgress|Loading|Saving/.test(y))){
+      if(i===5||i===35||i===90){
+        out.ui.push({tag:'load-'+i,scenes:names});
+        await page.screenshot({path:dir+'/load-'+i+'.png',timeout:12000}).catch(()=>{});
+      }
+      if(i===30 && names.includes('CreateWorldMenu720.swf')) {
+        await page.keyboard.press('Enter');
+        out.ui.push({tag:'load-fallback-enter',scenes:names});
+      }
+      if(i>17 && !names.some(y=>/CreateWorldMenu|FullscreenProgress|Loading|Saving/.test(y))){
         await sleep(3000);
         const b=await page.evaluate(()=>globalThis.LCEWebIggy?.debugState?.()?.players||[]);
         if(!b.filter(y=>y.visible).some(y=>/CreateWorldMenu|FullscreenProgress|Loading|Saving/.test(y.filename))){world=true;break}
