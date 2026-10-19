@@ -11,12 +11,16 @@ import shutil,sys,re,json,hashlib
 src=Path(sys.argv[1]);dst=Path(sys.argv[2])
 if dst.exists(): shutil.rmtree(dst)
 dst.mkdir(parents=True)
+# Deploy ONLY runtime artifacts: Fix110's archive also contains large native
+# link archives, object files and CMake build directories (~300 MB of dead weight).
+runtime_dirs={'vendor','ui-assets','audio-opus'}
+runtime_files={'lce_web_demo.js','lce_web_demo.wasm','lce_web_demo.data',
+               'lce_web_demo.worker.js'}
 for path in src.iterdir():
-    if path.name in ('tests','reports','node_modules','fix112-debug-stress'):
-        continue
     if path.is_dir():
+        if path.name not in runtime_dirs: continue
         shutil.copytree(path,dst/path.name,ignore=shutil.ignore_patterns('*.map','.DS_Store'))
-    elif path.suffix not in ('.py','.cmd') and path.name not in ('lce_web_demo.html',):
+    elif path.name in runtime_files or path.suffix == '.swf':
         shutil.copy2(path,dst/path.name)
 html=(src/'lce_web_demo.html').read_text(encoding='utf-8')
 html=re.sub(r'html\.lce-debug-shell #emscripten_logo.*?#output\{display:block!important\}\s*','',html,flags=re.S)
