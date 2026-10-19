@@ -1,0 +1,50 @@
+name: Publish LCE Fix116 native-WASM test site
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/lce-fix116-publish.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+jobs:
+  deploy-lce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Obtain verified Fix116 original native-engine UI test site
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39314120630
+          name: LCE-Fix116-UI-patched-Pages-site
+          github-token: ${{ github.token }}
+          path: site
+      - name: Confirm only the verified static runtime will be published
+        run: |
+          test -s site/index.html
+          test -s site/lce_web_demo.js
+          test -s site/lce_web_demo.wasm
+          test -s site/lce_web_demo.data
+          test -s site/coi-serviceworker.js
+          test -s site/vendor/ruffle/ruffle.js
+          grep -q FIX116_MENU_CACHE site/lce_web_demo.js
+          grep -q FIX116_ESCAPE_NATIVE_BACK site/index.html
+          test ! -e site/RUN-PROFILER.cmd
+          du -sh site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - name: Publish LCE on existing authorized public Pages site
+        id: deployment
+        uses: actions/deploy-pages@v4
