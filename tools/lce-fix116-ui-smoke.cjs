@@ -10,7 +10,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   let movieRequests=0;
   page.on('request',r=>{if(/\/Controls720\.swf$/.test(r.url()))movieRequests++});
   try {
-    await page.goto('http://127.0.0.1:8765/',{waitUntil:'domcontentloaded',timeout:45000});
+    await page.goto('http://127.0.0.1:8765/?lce_ui_test=1',{waitUntil:'domcontentloaded',timeout:45000});
     await page.waitForFunction(()=>crossOriginIsolated&&!!navigator.serviceWorker.controller,{timeout:25000});
     reports.push({phase:'crossOriginIsolation',...await page.evaluate(()=>({isolated:crossOriginIsolated,sharedArrayBuffer:typeof SharedArrayBuffer==='function',worker:!!navigator.serviceWorker.controller}))});
     await page.waitForFunction(()=>globalThis.LCEWebIggy?.debugState?.()?.players?.some(x=>x.visible&&/MainMenu720.swf/.test(x.filename)),{timeout:110000});
