@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/lce-fix115-pages-release.yml'
       - 'tools/lce-fix115-pages-package.py'
+      - 'tools/lce-fix115-coi-smoke.cjs'
       - 'tools/lce-fix113-ruffle-lifecycle.py'
   workflow_dispatch:
 permissions: {contents: read, actions: read}
@@ -49,6 +50,17 @@ jobs:
           assert len(list(p.rglob('*.opus'))) >= 400
           print('STATIC_PACKAGE_VALIDATED',m['files'],m['bytes'])
           PY
+      - name: Verify GitHub Pages COOP/COEP shim in real Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node --check tools/lce-fix115-coi-smoke.cjs
+          (cd pages && python3 -m http.server 8765 > ../pages-smoke-server.log 2>&1) &
+          sleep 2
+          timeout 75s node tools/lce-fix115-coi-smoke.cjs
+      - name: Clean package after browser smoke
+        if: always()
+        run: rm -f pages/coi-smoke.html
       - uses: actions/upload-artifact@v4
         with:
           name: LCE-Fix115-GitHub-Pages-ready-existing-native-WASM
