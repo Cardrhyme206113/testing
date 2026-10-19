@@ -5,7 +5,7 @@ import sys
 target=Path(sys.argv[1])
 s=target.read_text(encoding='utf-8')
 import re
-anchor_match=re.search(r'\\b(?:const|var|let)\\s+RUNTIME_BASE_URL\\s*=',s)
+anchor_match=re.search(r'\b(?:const|var|let)\s+RUNTIME_BASE_URL\s*=',s)
 assert anchor_match, 'RUNTIME_BASE_URL declaration not found'
 anchor_start=anchor_match.start()
 anchor_end=s.find(';', anchor_start)+1
