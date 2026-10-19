@@ -1,0 +1,40 @@
+name: LCE Fix116 inspect native bridge, UI input and saves
+on:
+  push:
+    branches: [lce-fix116-native-ui-storage-20261019]
+    paths: [.github/workflows/lce-fix116-audit.yml]
+permissions: {contents: read, actions: read}
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39003247927
+          name: lce-fix110-original-alpha-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Examine actual compiled runtime and static source without modifying native behavior
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('site/lce_web_demo.js').read_text()
+          needles=['function tickPlayer(id)','function destroyPlayerNow','function createRufflePlayer','function setVisible','function setPlayerVisible','function showPlayer','function hidePlayer','function scheduleDeferredRuffleFlush','function flushDeferredRuffle','function deferRuffleOp','function ensureRuffle','function waitFor','function syncRootToGameCanvas','function lce_web_iggy_js','addEventListener("keydown"','addEventListener("pointer','function getInput','pointermove','mouseup','mousedown','"Escape"','"Backquote"','FS.syncfs','FS.mount','IDBFS','syncfs','localStorage','save_file','SaveData']
+          for key in needles:
+              ix=s.find(key)
+              print('AUDIT',repr(key),'count',s.count(key),'index',ix)
+              if ix>=0:
+                  if key.startswith('function '):
+                      j=s.find('\n  function ',ix+20)
+                      k=s.find('\n  return ',ix+20)
+                      end= min([v for v in (j,k) if v>ix],default=ix+6000)
+                      excerpt=s[max(0,ix-220):min(end,ix+6500)]
+                  else:
+                      excerpt=s[max(0,ix-220):ix+450]
+                  print('EXCERPT_BEGIN',key,'\n',excerpt,'\nEXCERPT_END')
+          print('ROOT_FILES')
+          for x in Path('site').iterdir():
+              if x.is_file():print('ROOT_FILE',x.name,x.stat().st_size)
+          PY
