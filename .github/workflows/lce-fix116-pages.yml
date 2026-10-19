@@ -1,0 +1,68 @@
+name: LCE Fix116 patched native-WASM Pages preview
+on:
+  push:
+    branches: [lce-fix116-native-ui-storage-20261019]
+    paths:
+      - '.github/workflows/lce-fix116-pages.yml'
+      - 'tools/lce-fix116-menu-cache.py'
+      - 'tools/lce-fix116-escape.py'
+      - 'tools/lce-fix116-ui-smoke.cjs'
+  workflow_dispatch:
+permissions: {contents: read, actions: read, pages: write, id-token: write}
+concurrency: {group: lce-github-pages, cancel-in-progress: false}
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: github-pages
+      url: \${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore existing C++/WebAssembly engine
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39003247927
+          name: lce-fix110-original-alpha-playable
+          github-token: \${{ github.token }}
+          path: site
+      - name: Apply established lifecycle cleanup
+        run: python3 tools/lce-fix113-ruffle-lifecycle.py site/vendor/ruffle/ruffle.js
+      - name: Apply Fix116 native UI movie cache and Escape mapping
+        run: |
+          python3 tools/lce-fix116-menu-cache.py site/lce_web_demo.js
+          python3 tools/lce-fix116-escape.py site/lce_web_demo.html
+          grep -q FIX116_MENU_CACHE site/lce_web_demo.js
+          grep -q FIX116_ESCAPE_NATIVE_BACK site/lce_web_demo.html
+          node --check site/lce_web_demo.js
+      - name: Package original engine without debug shell assets and build intermediates
+        run: |
+          python3 tools/lce-fix115-pages-package.py site pages
+          touch pages/.nojekyll
+          node --check pages/lce_web_demo.js
+          node --check pages/coi-serviceworker.js
+          grep -q FIX116_MENU_CACHE pages/lce_web_demo.js
+          grep -q FIX116_ESCAPE_NATIVE_BACK pages/index.html
+      - name: Install browser test runtime
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Launch isolated local origin and test release in real Chromium
+        run: |
+          (cd pages && python3 -m http.server 8765 > ../pages-server.log 2>&1) &
+          sleep 2
+          timeout 190s node tools/lce-fix116-ui-smoke.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LCE-Fix116-UI-patched-Pages-site
+          path: pages/
+          include-hidden-files: true
+          retention-days: 14
+          compression-level: 4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with: {path: pages}
+      - name: Deploy LCE to approved existing Pages site
+        id: deployment
+        uses: actions/deploy-pages@v4
