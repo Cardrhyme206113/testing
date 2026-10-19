@@ -1,0 +1,63 @@
+name: LCE Fix113 Ruffle lifecycle regression stress
+on:
+  push:
+    branches: [lce-fix113-ruffle-listener-cleanup-20261019]
+    paths:
+      - '.github/workflows/lce-fix113-leak-retest.yml'
+      - 'tools/lce-fix113-ruffle-lifecycle.py'
+      - 'tools/lce-fix112-debug-menu-stress.cjs'
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 23
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore identical original-alpha playable tested by Fix112
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39003247927
+          name: lce-fix110-original-alpha-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Apply source-compatible Ruffle listener lifecycle fix
+        run: |
+          python3 tools/lce-fix113-ruffle-lifecycle.py site/vendor/ruffle/ruffle.js
+          node --check site/vendor/ruffle/ruffle.js
+          grep -Fq LCE_FIX113_GLOBAL_LISTENERS site/vendor/ruffle/ruffle.js
+      - name: Install Playwright Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node --check tools/lce-fix112-debug-menu-stress.cjs
+      - name: Serve isolated WASM and native Flash
+        run: |
+          cat > server.py <<'PY'
+          from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+          class H(SimpleHTTPRequestHandler):
+              def end_headers(self):
+                  self.send_header('Cross-Origin-Opener-Policy','same-origin')
+                  self.send_header('Cross-Origin-Embedder-Policy','require-corp')
+                  self.send_header('Cache-Control','no-store')
+                  super().end_headers()
+              def guess_type(self,p):
+                  if p.endswith('.wasm'):return 'application/wasm'
+                  if p.endswith('.data'):return 'application/octet-stream'
+                  return super().guess_type(p)
+          ThreadingHTTPServer(('127.0.0.1',8000),H).serve_forever()
+          PY
+          (cd site && python3 ../server.py >../server.log 2>&1) &
+          sleep 3
+      - name: Re-run exact Fix112 real DebugMenu and 20-cycle mixed UI stress
+        run: timeout 1150s node tools/lce-fix112-debug-menu-stress.cjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lce-fix113-ruffle-cleanup-stress-evidence
+          path: |
+            fix112-debug-stress/
+            server.log
+          retention-days: 14
+          compression-level: 1
