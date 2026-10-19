@@ -19,7 +19,7 @@ jobs:
           repository: Cardrhyme206113/testing
           run-id: 39003247927
           name: lce-fix110-original-alpha-playable
-          github-token: \${{ github.token }}
+          github-token: ${{ github.token }}
           path: site
       - name: Apply verified Fix113 Ruffle listener repair
         run: |
