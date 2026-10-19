@@ -4,7 +4,12 @@ from pathlib import Path
 import sys
 target=Path(sys.argv[1])
 s=target.read_text(encoding='utf-8')
-anchor="  const RUNTIME_BASE_URL = new URL('ui-assets/runtime/', document.baseURI).href;"
+import re
+anchor_match=re.search(r'\\b(?:const|var|let)\\s+RUNTIME_BASE_URL\\s*=',s)
+assert anchor_match, 'RUNTIME_BASE_URL declaration not found'
+anchor_start=anchor_match.start()
+anchor_end=s.find(';', anchor_start)+1
+assert anchor_end>anchor_start, 'RUNTIME_BASE_URL statement missing semicolon'
 patch="""  // FIX116_MENU_CACHE: corrected original SWFs must not re-fetch on every opening.
   // Keep one in-flight promise per immutable resource and retry on network failure.
   const fixedMenuMovieRequests = new Map();
@@ -39,8 +44,7 @@ patch="""  // FIX116_MENU_CACHE: corrected original SWFs must not re-fetch on ev
   }
 """
 if 'FIX116_MENU_CACHE' not in s:
-    assert s.count(anchor)==1, 'Bridge runtime base anchor changed'
-    s=s.replace(anchor,anchor+'\n'+patch,1)
+    s=s[:anchor_end]+'\n'+patch+s[anchor_end:]
 start='''        const assetUrl = new URL(nativeFlashName, RUNTIME_BASE_URL);
         const response = await fetch(assetUrl, {cache: "no-store"});
         if (!response.ok) throw new Error("Missing native Flash UI asset: " + nativeFlashName);
