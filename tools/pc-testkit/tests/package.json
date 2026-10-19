@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "name": "lce-local-pc-profile",
+  "version": "1.0.0",
+  "description": "Headed browser profiler for the user's original Minecraft LCE Web build.",
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  }
+}
