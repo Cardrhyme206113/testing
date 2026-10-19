@@ -1,0 +1,58 @@
+name: LCE Fix115 clean Pages distribution (existing native WASM)
+on:
+  push:
+    branches: [lce-fix115-pages-release-20261019]
+    paths:
+      - '.github/workflows/lce-fix115-pages-release.yml'
+      - 'tools/lce-fix115-pages-package.py'
+      - 'tools/lce-fix113-ruffle-lifecycle.py'
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  pages-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore existing playable native WebAssembly engine
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39003247927
+          name: lce-fix110-original-alpha-playable
+          github-token: ${{ github.token }}
+          path: site
+      - name: Apply tested Fix113 Ruffle listener cleanup
+        run: |
+          python3 tools/lce-fix113-ruffle-lifecycle.py site/vendor/ruffle/ruffle.js
+          node --check site/vendor/ruffle/ruffle.js
+          grep -Fq LCE_FIX113_GLOBAL_LISTENERS site/vendor/ruffle/ruffle.js
+      - name: Package existing native engine for static Pages hosting
+        run: |
+          python3 tools/lce-fix115-pages-package.py site pages
+          node --check pages/lce_web_demo.js
+          node --check pages/coi-serviceworker.js
+          test -s pages/index.html
+          test -s pages/lce_web_demo.wasm
+          test -s pages/lce_web_demo.data
+          test -s pages/vendor/ruffle/ruffle.js
+          test -f pages/.nojekyll
+          test ! -d pages/tests
+          test ! -f pages/RUN-PROFILER.cmd
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('pages')
+          m=json.loads((p/'release-manifest.json').read_text())
+          assert m['native_recompiled'] is False
+          assert len(list(p.rglob('*.swf'))) >= 150
+          assert len(list(p.rglob('*.opus'))) >= 400
+          print('STATIC_PACKAGE_VALIDATED',m['files'],m['bytes'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LCE-Fix115-GitHub-Pages-ready-existing-native-WASM
+          path: pages/
+          retention-days: 14
+          compression-level: 4
+          include-hidden-files: true
