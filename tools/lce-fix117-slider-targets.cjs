@@ -21,6 +21,13 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
    const s=await state();report.scenes.push({id,name,request:r,...s});console.log('SLIDER_SCENE',JSON.stringify(report.scenes.at(-1)));
    if(r!==1||s.last!==1)throw Error('native menu '+name+' did not complete');
    await screenshot(name+'-before');
+   if(name==='audio'){
+     await page.keyboard.down('ArrowLeft');await sleep(230);await page.keyboard.up('ArrowLeft');await sleep(750);
+     await screenshot('audio-after-arrow-left');
+     await page.mouse.move(774,320);await page.mouse.down();
+     await page.mouse.move(548,320,{steps:30});await page.mouse.up();await sleep(850);
+     await screenshot('audio-after-mousedrag');
+   }
   }
  }catch(e){report.errors.push(String(e.stack||e))}
  finally{console.log('FIX117_SLIDERS_REPORT',JSON.stringify(report));await b.close();if(report.errors.length)process.exitCode=1}
