@@ -1,0 +1,43 @@
+name: LCE Fix117 live native storage and slider diagnostic
+on:
+  push:
+    branches: [lce-fix117-ui-saves-diagnostics-20261020]
+    paths:
+      - '.github/workflows/lce-fix117-audit.yml'
+      - 'tools/lce-fix117-save-input-audit.cjs'
+  workflow_dispatch:
+permissions: {contents: read, actions: read}
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 19
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Fix116 already verified game
+        uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39314120630
+          name: LCE-Fix116-UI-patched-Pages-site
+          github-token: ${{ github.token }}
+          path: site
+      - name: Install Chromium
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node --check tools/lce-fix117-save-input-audit.cjs
+      - name: Run native input and storage diagnostics
+        run: |
+          (cd site && python3 -m http.server 8765 > ../server.log 2>&1) &
+          sleep 3
+          timeout 1050s node tools/lce-fix117-save-input-audit.cjs
+      - name: Preserve all diagnostic evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lce-fix117-native-storage-slider-diagnostics
+          path: |
+            fix117-evidence/
+            server.log
+          retention-days: 14
+          compression-level: 1
