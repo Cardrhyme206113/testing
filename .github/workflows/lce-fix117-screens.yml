@@ -1,0 +1,28 @@
+name: LCE Fix117 native sliders screenshot inspection
+on:
+  push:
+    branches: [lce-fix117-ui-saves-diagnostics-20261020]
+    paths: [.github/workflows/lce-fix117-screens.yml]
+permissions: {contents: read, actions: read}
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39369111682
+          name: lce-fix117-native-storage-slider-diagnostics
+          github-token: ${{ github.token }}
+          path: out
+      - name: Emit original options screenshots in log, base64 chunked for visual diagnostics
+        run: |
+          python3 - <<'PY'
+          import pathlib,base64
+          for p in sorted(pathlib.Path('out').rglob('*options*.png')):
+              b=base64.b64encode(p.read_bytes()).decode()
+              print('SCREEN_START',p.name,'BYTES',p.stat().st_size)
+              for i in range(0,len(b),20000):print('SCREEN_CHUNK',p.name,i//20000,b[i:i+20000])
+              print('SCREEN_END',p.name)
+          PY
