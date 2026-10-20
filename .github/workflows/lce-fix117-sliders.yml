@@ -1,0 +1,28 @@
+name: LCE Fix117 native Audio and Graphics slider controls
+on:
+  push:
+    branches: [lce-fix117-ui-saves-diagnostics-20261020]
+    paths:
+      - '.github/workflows/lce-fix117-sliders.yml'
+      - 'tools/lce-fix117-slider-targets.cjs'
+permissions: {contents: read, actions: read}
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39314120630
+          name: LCE-Fix116-UI-patched-Pages-site
+          github-token: ${{ github.token }}
+          path: site
+      - run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node --check tools/lce-fix117-slider-targets.cjs
+          (cd site && python3 -m http.server 8765 >/tmp/lce-server.log 2>&1) &
+          sleep 3
+          timeout 350s node tools/lce-fix117-slider-targets.cjs
