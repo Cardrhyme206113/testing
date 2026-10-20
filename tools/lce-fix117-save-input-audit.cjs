@@ -80,6 +80,20 @@ const output={static:{},startup:{},samples:[],nav:[],errors:[],failures:[]};
    }
    output.samples.push({phase:'world-after-load',...(await read())});
    await page.screenshot({path:dir+'/06-world-post-load.png',timeout:20000});
+   await page.keyboard.press('Escape');
+   await sleep(1800);
+   const afterEscape=await read();
+   output.samples.push({phase:'after-Escape-no-menu',...afterEscape});
+   console.log('FIX117_ESCAPE',JSON.stringify({before:output.samples.at(-2).scenes,after:afterEscape.scenes,menuVisible:afterEscape.menuVisible}));
+   await page.screenshot({path:dir+'/07-after-escape.png',timeout:20000});
+   if(!afterEscape.scenes.some(x=>/PauseMenu/.test(x))){
+     await page.keyboard.press('Backquote');
+     await sleep(1800);
+     const afterBackquote=await read();
+     output.samples.push({phase:'after-Backquote-fallback',...afterBackquote});
+     console.log('FIX117_BACKQUOTE_FALLBACK',JSON.stringify({after:afterBackquote.scenes,menuVisible:afterBackquote.menuVisible}));
+     await page.screenshot({path:dir+'/08-after-backquote.png',timeout:20000});
+   }
  }catch(e){output.failures.push(String(e.stack||e));}
  finally{
    output.errors=pageErrors.slice(0,40);
