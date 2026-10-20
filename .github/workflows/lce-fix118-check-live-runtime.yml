@@ -1,0 +1,22 @@
+name: LCE verify archived Fix116 runtime fingerprints
+on:
+  push:
+    branches: [lce-fix117-ui-saves-diagnostics-20261020]
+    paths: [.github/workflows/lce-fix118-check-live-runtime.yml]
+permissions: {contents: read, actions: read}
+jobs:
+  checksums:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          repository: Cardrhyme206113/testing
+          run-id: 39314120630
+          name: LCE-Fix116-UI-patched-Pages-site
+          github-token: ${{ github.token }}
+          path: site
+      - name: Print archived deployed runtime hashes
+        run: |
+          cd site
+          sha256sum index.html lce_web_demo.js lce_web_demo.wasm lce_web_demo.data coi-serviceworker.js vendor/ruffle/ruffle.js ui-assets/runtime/CreateWorldMenu720.swf ui-assets/runtime/Controls720.swf
