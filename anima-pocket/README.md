@@ -1,13 +1,13 @@
-# Anima Pocket — streamed-memory profile / v0.3
+# Anima Pocket — streamed-memory profile / v0.3.1
 
 Experimental offline Anima image generation for Android ARM64 using stable-diffusion.cpp.
 
 ### Required files (not bundled in APK)
 - Main Anima Turbo Q4_0 GGUF: https://huggingface.co/vanes430/Anima-Turbo-V1.1-GGUF/resolve/main/anima-turbo-v1.1-Q4_0.gguf?download=true
-- **Qwen3-0.6B-Base Q4_K_M GGUF encoder**: https://huggingface.co/Antigma/Qwen3-0.6B-Base-GGUF/resolve/main/qwen3-0.6b-base-q4_k_m.gguf?download=true
+- **Qwen3-0.6B-Base Q4_K_M GGUF encoder**: https://huggingface.co/mradermacher/Qwen3-0.6B-Base-GGUF
 - TAEW2.1 tiny decoder: https://github.com/madebyollin/taehv/raw/refs/heads/main/safetensors/taew2_1.safetensors
 
-Files are selected through the Android file picker, copied into a private working cache when necessary, and validated using their headers. The original browser downloads survive app resets. Qwen3-0.6B-Base safetensors remains compatible, but GGUF is recommended for lower memory usage. Do not substitute Qwen3 Instruct.
+Files are selected through the Android file picker. A quick format check verifies genuine GGUF or safetensors signatures **immediately after selection**, before copying into the private working cache. The recommended text-encoder link opens a model repository; choose its Q4_K_M GGUF file, not other variants or zipped downloads. The original browser downloads survive app resets. Qwen3-0.6B-Base safetensors remains compatible, but GGUF is recommended for lower memory usage. Do not substitute Qwen3 Instruct.
 
 ### Safety-focused profiles
 - **Default: CPU only**; GPU probing is not performed on launch. CPU inference can be extremely slow and may still exceed memory.
