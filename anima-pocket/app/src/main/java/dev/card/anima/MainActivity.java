@@ -34,7 +34,7 @@ public class MainActivity extends Activity {
     final String[] KEYS={"model","encoder","decoder"};
     final String[] URLS={
         "https://huggingface.co/vanes430/Anima-Turbo-V1.1-GGUF/resolve/main/anima-turbo-v1.1-Q4_0.gguf?download=true",
-        "https://huggingface.co/Antigma/Qwen3-0.6B-Base-GGUF/resolve/main/qwen3-0.6b-base-q4_k_m.gguf?download=true",
+        "https://huggingface.co/mradermacher/Qwen3-0.6B-Base-GGUF",
         "https://github.com/madebyollin/taehv/raw/refs/heads/main/safetensors/taew2_1.safetensors",
         "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true"
     };
@@ -114,7 +114,7 @@ public class MainActivity extends Activity {
             files[i]=text(preferences.getString(KEYS[i]+"_name","No file selected"),12,hint);add(root,files[i],0);
             LinearLayout r=new LinearLayout(this);
             Button pick=button("Choose file",()->pick(n));r.addView(pick,new LinearLayout.LayoutParams(0,dp(46),1));
-            Button download=button("Download ↗",()->link(URLS[n==2 && decoderType!=null && decoderType.getSelectedItemPosition()==1?3:n]));
+            Button download=button(n==1?"Browse GGUF ↗":"Download ↗",()->link(URLS[n==2 && decoderType!=null && decoderType.getSelectedItemPosition()==1?3:n]));
             LinearLayout.LayoutParams dp1=new LinearLayout.LayoutParams(0,dp(46),1);dp1.leftMargin=dp(8);r.addView(download,dp1);add(root,r,4);
         }
         add(root,text("Decoder mode",13,hint),10);
@@ -171,7 +171,34 @@ public class MainActivity extends Activity {
         try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}
         catch(SecurityException e){Toast.makeText(this,"Read grant not persistent",Toast.LENGTH_LONG).show();}
         String name=fileName(uri);
-        preferences.edit().putString(KEYS[n],uri.toString()).putString(KEYS[n]+"_name",name).apply();files[n].setText(name);
+        preferences.edit().putString(KEYS[n],uri.toString()).putString(KEYS[n]+"_name",name).apply();
+        files[n].setText(name+" · checking header...");
+        final String selectedUri=uri.toString();
+        executor.execute(()->{
+            String warning=null;
+            String fmt=null;
+            try{
+                byte[] h=sourcePrefix(uri,n);
+                validateSourceFormat(h,n,name);
+                fmt=headerFormat(h,Long.MAX_VALUE);
+                logOnUi("Selected "+n+": "+fmt+" header verified (tensor compatibility not yet checked)");
+            }catch(Exception e){
+                warning=e.getMessage();
+                logOnUi("Selected "+n+" invalid: "+warning);
+            }
+            final String error=warning, validFormat=fmt;
+            runOnUiThread(()->{
+                if(!selectedUri.equals(preferences.getString(KEYS[n],"")))return;
+                if(error==null){
+                    files[n].setText(name+" · "+validFormat+" header OK");
+                    files[n].setTextColor(0xff9ce6af);
+                }else{
+                    files[n].setText(name+" · INVALID FORMAT");
+                    files[n].setTextColor(0xffffa0a0);
+                    if(status!=null)status.setText(error);
+                }
+            });
+        });
     }
     String fileName(Uri uri){
         try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())return c.getString(0);}catch(Exception ignored){}
@@ -290,8 +317,8 @@ public class MainActivity extends Activity {
     }
     String copyModel(Uri uri,int index)throws Exception{
         byte[] originalHeader=sourcePrefix(uri,index);
-        if(!isValidHeader(originalHeader,Long.MAX_VALUE))
-            throw new IOException("File "+index+" is not a GGUF or safetensors file. Original bytes: "+bytesInfo(originalHeader));
+        // Reject wrong/mislabelled model files before copying hundreds of MB.
+        validateSourceFormat(originalHeader,index,fileName(uri));
         File dir=new File(getFilesDir(),"weights");if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create cache");
         long size=-1;try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){if(c!=null&&c.moveToFirst()&&!c.isNull(0))size=c.getLong(0);}
         if(index==0 && size>0 && size<200L*1048576L)
@@ -300,14 +327,19 @@ public class MainActivity extends Activity {
         StringBuilder key=new StringBuilder();for(int n=0;n<12;n++)key.append(String.format(Locale.US,"%02x",hash[n]));
         String suffix=fileName(uri).toLowerCase(Locale.ROOT).endsWith(".gguf")?".gguf":".safetensors";
         File to=new File(dir,"m"+index+"-"+key+suffix);
-        if(to.exists()&&to.length()>0&&(size<0||to.length()==size)){
-            byte[] cachedHeader;
-            try(FileInputStream input=new FileInputStream(to)){cachedHeader=prefix(input);}
-            if(java.util.Arrays.equals(cachedHeader,originalHeader)){
-                validateWeights(to,index);
-                return to.getAbsolutePath();
+        if(to.exists()){
+            if(to.length()>0&&(size<0||to.length()==size)){
+                byte[] cachedHeader;
+                try(FileInputStream input=new FileInputStream(to)){cachedHeader=prefix(input);}
+                if(java.util.Arrays.equals(cachedHeader,originalHeader)){
+                    try{
+                        validateWeights(to,index);
+                        return to.getAbsolutePath();
+                    }catch(IOException corrupt){
+                        logOnUi("Removing bad cached model "+index+": "+corrupt.getMessage());
+                    }
+                }
             }
-            logOnUi("Cache "+index+" header differs from the selected original: deleting stale working copy.");
             if(!to.delete())throw new IOException("Failed to remove stale cached model "+index);
         }
         if(size>0&&dir.getUsableSpace()<size+100*1048576L)throw new IOException("Not enough disk for local model cache");
@@ -320,7 +352,8 @@ public class MainActivity extends Activity {
         }catch(Exception e){tmp.delete();throw e;}
         if(size>=0&&bytes!=size){tmp.delete();throw new IOException("Incomplete model copy");}
         if(!tmp.renameTo(to)){tmp.delete();throw new IOException("Could not finish cache");}
-        validateWeights(to,index);
+        try{validateWeights(to,index);}
+        catch(IOException invalid){to.delete();throw invalid;}
         return to.getAbsolutePath();
     }
     // Read only 32 bytes: inspecting a 1.24 GB model must be immediate.
@@ -344,12 +377,53 @@ public class MainActivity extends Activity {
         }
         return "hex=["+h.toString().trim()+"] ascii=["+ascii+"]";
     }
-    boolean isValidHeader(byte[] hdr,long size){
-        boolean gguf=hdr.length>=4&&hdr[0]=='G'&&hdr[1]=='G'&&hdr[2]=='U'&&hdr[3]=='F';
+    // A filename is not proof of GGUF. Some downloads have a .gguf extension
+    // but actually contain serialized PyTorch data or an HTML error page.
+    String headerFormat(byte[] hdr,long size){
+        if(hdr.length>=8&&hdr[0]=='G'&&hdr[1]=='G'&&hdr[2]=='U'&&hdr[3]=='F'){
+            long version=((long)hdr[4]&255)|(((long)hdr[5]&255)<<8)|
+                (((long)hdr[6]&255)<<16)|(((long)hdr[7]&255)<<24);
+            if(version==2||version==3)return "GGUF";
+            return "unsupported GGUF version "+version;
+        }
         long jsonSize=0;
         if(hdr.length>=9)for(int n=0;n<8;n++)jsonSize|=(long)(hdr[n]&255)<<(8*n);
-        boolean safetensors=hdr.length>=9&&jsonSize>2&&jsonSize<100000000L&&jsonSize+8<size&&hdr[8]=='{';
-        return gguf||safetensors;
+        if(hdr.length>=9&&jsonSize>2&&jsonSize<100000000L&&
+            (size==Long.MAX_VALUE||jsonSize+8<size)&&hdr[8]=='{')
+            return "safetensors";
+        if(hdr.length>=2&&hdr[0]=='P'&&hdr[1]=='K')return "ZIP (not model weights)";
+        if(hdr.length>=2&&(hdr[0]&255)==0x80&&(hdr[1]&255)>=2)
+            return "Python pickle (not GGUF)";
+        if(hdr.length>=5&&hdr[0]=='<'&&hdr[1]=='!')return "HTML response (not model weights)";
+        if(hdr.length>=5&&hdr[0]=='<'&&hdr[1]=='h')return "HTML response (not model weights)";
+        if(hdr.length>=7&&hdr[0]=='v'&&hdr[1]=='e'&&hdr[2]=='r'&&hdr[3]=='s')
+            return "Git LFS pointer (not weights)";
+        return "unrecognized binary";
+    }
+    boolean isValidHeader(byte[] hdr,long size){
+        String fmt=headerFormat(hdr,size);
+        return fmt.equals("GGUF")||fmt.equals("safetensors");
+    }
+    void validateSourceFormat(byte[] hdr,int index,String name)throws IOException{
+        String fmt=headerFormat(hdr,Long.MAX_VALUE);
+        String lower=name.toLowerCase(Locale.ROOT);
+        boolean gguf=fmt.equals("GGUF");
+        boolean safetensors=fmt.equals("safetensors");
+        if(index==0&&!gguf)
+            throw new IOException("Anima diffusion model must be a GGUF file; actual header: "+fmt+". Select the correct Anima model.");
+        if(index==2&&!safetensors)
+            throw new IOException("TAE / VAE decoder must be safetensors; actual header: "+fmt+".");
+        if(index==1){
+            if(!gguf&&!safetensors)
+                throw new IOException("Qwen text encoder is not GGUF or safetensors (actual: "+fmt+"). "+
+                    "A .gguf extension does not convert the bytes. Download Qwen3-0.6B-Base Q4_K_M "+
+                    "from the recommended GGUF repository, then select that new file.");
+            if(lower.endsWith(".gguf")&&!gguf)
+                throw new IOException("Qwen filename says GGUF but contains "+fmt+
+                    ". Select a genuine Qwen3-0.6B-Base GGUF or a correctly named safetensors file.");
+            if(lower.endsWith(".safetensors")&&!safetensors)
+                throw new IOException("Qwen filename says safetensors but contains "+fmt+".");
+        }
     }
     void logOnUi(String value){runOnUiThread(()->appendDiagnostic(value));}
     byte[] sourcePrefix(Uri uri,int index)throws IOException{
@@ -377,7 +451,8 @@ public class MainActivity extends Activity {
                 try{
                     Uri uri=Uri.parse(preferences.getString(KEYS[i],""));
                     byte[] header=sourcePrefix(uri,i);
-                    logOnUi("Source "+i+" signature valid: "+isValidHeader(header,Long.MAX_VALUE));
+                    validateSourceFormat(header,i,fileName(uri));
+                    logOnUi("Source "+i+" format verified: "+headerFormat(header,Long.MAX_VALUE));
                 }catch(Exception e){logOnUi("Source "+i+" ERROR: "+e);}
             }
             runOnUiThread(this::showDiagnostics);
@@ -387,17 +462,14 @@ public class MainActivity extends Activity {
         byte[] hdr;
         try(FileInputStream f=new FileInputStream(file)){hdr=prefix(f);}
         logOnUi("Cached "+index+" · "+file.length()+" bytes · "+bytesInfo(hdr));
+        validateSourceFormat(hdr,index,file.getName());
         if(!isValidHeader(hdr,file.length())){
-            throw new IOException("File "+index+" signature differs from GGUF/safetensors. "+
-                "Cached header: "+bytesInfo(hdr)+". Check Source header in diagnostics.");
+            throw new IOException("File "+index+" has an invalid GGUF/safetensors header: "+bytesInfo(hdr));
         }
-        boolean gguf=hdr[0]=='G';
-        if(index==0&&!gguf)throw new IOException("The diffusion model must be the Anima GGUF file");
-        if(index==2&&gguf)throw new IOException("TAE / VAE must be a safetensors file");
         if(index==1&&file.length()<100L*1048576L)
             throw new IOException("Qwen3-0.6B encoder is unexpectedly small; select the complete GGUF or safetensors model");
         logOnUi("Validated "+index+" ("+
-            (hdr[0]=='G'?"GGUF":"safetensors")+") · "+(file.length()/1048576)+" MiB");
+            headerFormat(hdr,file.length())+") · "+(file.length()/1048576)+" MiB");
     }
     Uri save(Bitmap bmp,long id)throws IOException{
         ContentValues cv=new ContentValues();
