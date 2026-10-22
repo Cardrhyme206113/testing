@@ -129,11 +129,12 @@ public class MainActivity extends Activity {
         add(root,text("Sampling steps",13,hint),12);
         steps=spinner(new String[]{"4","6","8","10"},0);add(root,steps,2);
         add(root,text("Backend",13,hint),12);
-        backend=spinner(new String[]{"CPU only (no GPU inference)","Vulkan cautious (1.0 GiB)","Vulkan experimental (1.5 GiB)"},0);
-        add(root,text("WARNING: Vulkan budget is not a hard driver cap. The previous reboot's cause is unconfirmed. Start with CPU.",12,0xffffc278),6);add(root,backend,2);
+        backend=spinner(new String[]{"Vulkan auto (no explicit VRAM limit)","Vulkan 1.5 GiB managed budget","CPU only (slow diagnostic)"},
+            Math.min(2,Math.max(0,preferences.getInt("backend_choice",0))));
+        add(root,text("Vulkan uses shared RAM. Auto removes the app's Vulkan budget, but can still freeze or restart this phone. No 5 GiB free-RAM requirement.",12,0xffffc278),6);add(root,backend,2);
         lowRamEncoder=new CheckBox(this);
         lowRamEncoder.setText("Low RAM: stream Qwen encoder weights from disk (slower)");
-        lowRamEncoder.setChecked(preferences.getBoolean("encoder_disk",true));
+        lowRamEncoder.setChecked(preferences.getBoolean("encoder_disk",false));
         lowRamEncoder.setTextColor(hint);
         add(root,lowRamEncoder,6);
         flash=new CheckBox(this);flash.setText("Experimental diffusion Flash Attention");flash.setTextColor(hint);add(root,flash,7);
@@ -212,10 +213,10 @@ public class MainActivity extends Activity {
     }
     void start(){
         if(running)return;
-        if(backend.getSelectedItemPosition()>0){
+        if(backend.getSelectedItemPosition()!=2){
             new android.app.AlertDialog.Builder(this)
-                .setTitle("Warning: Vulkan previously rebooted this phone")
-                .setMessage("This device suffered a complete restart while loading the model. A managed Vulkan budget is not a hard physical memory limit. Continue at your own risk, or use CPU-only diagnostics.")
+                .setTitle("Vulkan memory and driver warning")
+                .setMessage("GPU allocations use shared phone RAM. Auto mode has no explicit Vulkan memory budget. This phone previously suffered a near-freeze/reboot during diffusion. Proceed only if you accept that risk; a managed budget is optional.")
                 .setNegativeButton("Cancel",null)
                 .setPositiveButton("Proceed anyway",(dialog,which)->startUnchecked())
                 .show();
@@ -228,22 +229,24 @@ public class MainActivity extends Activity {
         String p=prompt.getText().toString().trim();if(p.isEmpty()){Toast.makeText(this,"Enter a prompt",Toast.LENGTH_SHORT).show();return;}
         String[] wh=resolution.getSelectedItem().toString().replace(" ","").split("×");
         int w=Integer.parseInt(wh[0]),h=Integer.parseInt(wh[1]),s=Integer.parseInt(steps.getSelectedItem().toString());
-        String[] backends={"cpu","vulkan-1.0","vulkan-1.5"};
+        String[] backends={"vulkan-auto","vulkan-1.5","cpu"};
         String target=backends[backend.getSelectedItemPosition()];
         android.app.ActivityManager am=(android.app.ActivityManager)getSystemService(ACTIVITY_SERVICE);
         android.app.ActivityManager.MemoryInfo mi=new android.app.ActivityManager.MemoryInfo();
         if(am!=null){
             am.getMemoryInfo(mi);
-            long minFree=target.equals("cpu") ? 3L*1024*1024*1024 : 5L*1024*1024*1024;
-            if(mi.lowMemory || mi.availMem<minFree){
-                status.setText("Not starting: "+(mi.availMem/1048576)+" MiB available; profile needs "+
-                    (minFree/1048576)+" MiB free. Close other apps or select CPU.");
+            // A 5 GiB gate blocked the GPU even when Android said lowMemory=false.
+            // Respect Android's actual low-memory signal instead of a static cap.
+            if(mi.lowMemory){
+                status.setText("Android reports critical low system memory ("+
+                    (mi.availMem/1048576)+" MiB free). Close other apps before inference.");
                 return;
             }
         }
         boolean tae=decoderType.getSelectedItemPosition()==0, fa=flash.isChecked();
         boolean diskEncoder=lowRamEncoder.isChecked();
-        preferences.edit().putBoolean("encoder_disk",diskEncoder).apply();
+        preferences.edit().putBoolean("encoder_disk",diskEncoder)
+            .putInt("backend_choice",backend.getSelectedItemPosition()).apply();
         long rand;try{rand=Long.parseLong(seed.getText().toString());}catch(NumberFormatException e){rand=-1;}
         if(rand<0)rand=new SecureRandom().nextLong()&Long.MAX_VALUE;
         final long id=rand;preferences.edit().putString("prompt",p).apply();
@@ -305,7 +308,12 @@ public class MainActivity extends Activity {
         super.onTrimMemory(level);
         if(running){
             logOnUi("Android onTrimMemory level="+level);
-            if(level>=TRIM_MEMORY_RUNNING_LOW)cancelNative();
+            // 20 = TRIM_MEMORY_UI_HIDDEN, not critically low memory. Do not
+            // cancel work just because the user briefly switches apps.
+            if(level==TRIM_MEMORY_RUNNING_CRITICAL || level==TRIM_MEMORY_COMPLETE){
+                logOnUi("CRITICAL trim event; cancelling inference");
+                cancelNative();
+            }
         }
     }
     @Override protected void onDestroy(){

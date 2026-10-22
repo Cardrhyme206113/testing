@@ -1,4 +1,4 @@
-# Anima Pocket — streamed-memory profile / v0.3.1
+# Anima Pocket — Vulkan automatic profile / v0.3.2
 
 Experimental offline Anima image generation for Android ARM64 using stable-diffusion.cpp.
 
@@ -9,13 +9,14 @@ Experimental offline Anima image generation for Android ARM64 using stable-diffu
 
 Files are selected through the Android file picker. A quick format check verifies genuine GGUF or safetensors signatures **immediately after selection**, before copying into the private working cache. The recommended text-encoder link opens a model repository; choose its Q4_K_M GGUF file, not other variants or zipped downloads. The original browser downloads survive app resets. Qwen3-0.6B-Base safetensors remains compatible, but GGUF is recommended for lower memory usage. Do not substitute Qwen3 Instruct.
 
-### Safety-focused profiles
-- **Default: CPU only**; GPU probing is not performed on launch. CPU inference can be extremely slow and may still exceed memory.
-- Optional explicit-acknowledgement Vulkan profiles: 1.0 GiB or 1.5 GiB **managed Vulkan budgets**, not hard OS/driver caps. A Mali driver stall or kernel OOM can still restart the device.
+### GPU and memory profiles
+- **Default: Vulkan auto** for the diffusion model, with Qwen and decoder on CPU. GPU probing is not performed on launch. This mode sets no explicit max_vram; it does not guarantee driver-safe memory usage and previously overloaded the device.
+- Optional **Vulkan 1.5 GiB managed** profile to lower weights/runner buffer caching. This is not a hard OS/driver cap. CPU-only remains a slow diagnostic fallback.
+- Vulkan is using shared phone memory; setting auto may cause system UI stalls or reboot. Explicit confirmation required for Vulkan runs.
 - Runtime: diffusion on Vulkan, TE and VAE on CPU, or CPU for all in diagnostic mode.
-- Weights: by default diffusion=disk, te=disk, vae=disk, keeping the GGUF Qwen encoder file-backed and loaded lazily. Uncheck low-RAM encoder mode to keep TE weights in CPU RAM (faster but larger peak).
+- Weights: diffusion=disk, te=cpu, vae=disk by default, retaining Qwen's compact quantized GGUF in RAM for faster conditioning. The optional low-RAM encoder toggle uses disk-backed TE instead.
 - `auto_fit=false`, `disable_prefetch=true`, `eager_load=false`, `enable_mmap=true`, `n_threads=2`, `batched_cfg=false`, conditioning cache off. Leave segmented compute enabled for managed Vulkan budgets. Disk-backed inference can be extremely slow.
-- Preflight requires at least 3 GiB available for CPU or 5 GiB for Vulkan; 5-second memory monitoring logs available RAM and process PSS. Cancellation on low-memory is best-effort and **cannot interrupt native context creation**.
+- **No fixed free-RAM threshold**. Preflight only rejects Android's actual lowMemory=true state. 5-second memory monitoring logs RAM and process PSS. Low-memory cancellation is best-effort and **cannot interrupt native context creation**. Android's UI_HIDDEN (trim level 20) is no longer treated as critical pressure.
 - 384×384, 4 steps default. 512×512 optional. Full VAE uses tiled decoding. Flash attention defaults off.
 - On-device native engine logs, model header inspection, copy/share logs.
 - GGUF main-model provider file < 200 MiB rejected, and all invalid headers rejected before model initialization.

@@ -93,7 +93,7 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     cancelled=false;
     sd_set_log_callback(logs,nullptr);
     sd_set_progress_callback(progress,nullptr);
-    const bool gpu=(backend=="vulkan-1.0" || backend=="vulkan-1.5");
+    const bool gpu=(backend=="vulkan-auto" || backend=="vulkan-1.5");
     if(!gpu && backend!="cpu"){
         env->DeleteGlobalRef(activity);activity=nullptr;
         failure(env,"Unknown backend safety profile");return nullptr;
@@ -105,10 +105,14 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     std::string residency=diskEncoder
         ?"diffusion=disk,te=disk,vae=disk"
         :"diffusion=disk,te=cpu,vae=disk";
-    std::string vram=backend=="vulkan-1.5"?"vulkan0=1.5":"vulkan0=1.0";
-    notify(gpu?"Preparing budgeted Vulkan (experimental)...":"Preparing CPU-only...");
+    // No explicit Vulkan max_vram for auto mode: engine manages available
+    // shared memory. This is NOT a hard physical RAM cap or OOM guarantee.
+    // The legacy 5 GiB Android free-RAM admission gate is also removed.
+    std::string vram=backend=="vulkan-1.5"?"vulkan0=1.5":"";
+    notify(backend=="vulkan-auto"?"Preparing automatic Vulkan (experimental)...":
+        gpu?"Preparing budgeted Vulkan (experimental)...":"Preparing CPU-only...");
     logs(SD_LOG_INFO,(std::string("Profile=")+backend+" runtime="+runtime+
-        " weights="+residency+" maxVRAM="+(gpu?vram:"none")+
+        " weights="+residency+" maxVRAM="+(gpu?(vram.empty()?"auto":vram):"none")+
         " encoderDisk="+(diskEncoder?"true":"false")+
         " prefetch=off eager=off threads=2").c_str(),nullptr);
     sd_ctx_params_t settings{};
@@ -119,13 +123,13 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     else settings.vae_path=decoder.c_str();
     settings.backend=runtime.c_str();
     settings.params_backend=residency.c_str();
-    settings.max_vram=gpu?vram.c_str():nullptr;
+    settings.max_vram=gpu&&!vram.empty()?vram.c_str():nullptr;
     settings.auto_fit=false;
     settings.enable_mmap=true;
     settings.disable_prefetch=true;
     settings.eager_load=false;
     settings.conditioning_cache_size=0;
-    // Do not disable segmented compute: the per-device Vulkan budget requires it.
+    // Preserve segmented graph execution to reduce transient allocation spikes.
     settings.disable_segmented_compute=false;
     // Avoid simultaneous conditional/unconditional inference activation buffers.
     settings.batched_cfg=false;
