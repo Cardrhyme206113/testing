@@ -25,7 +25,8 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
       - name: Check out upstream inference engine
-        run: git clone --depth 1 --recurse-submodules https://github.com/leejet/stable-diffusion.cpp.git anima-pocket/app/src/main/cpp/stable-diffusion.cpp
+        run: |
+          git clone --depth 1 --recurse-submodules https://github.com/leejet/stable-diffusion.cpp.git anima-pocket/app/src/main/cpp/stable-diffusion.cpp
           cd anima-pocket/app/src/main/cpp/stable-diffusion.cpp
           git fetch --depth 1 origin a77d3623180b2bc1886f3dd04c0aa04156a987ef
           git checkout --detach a77d3623180b2bc1886f3dd04c0aa04156a987ef
