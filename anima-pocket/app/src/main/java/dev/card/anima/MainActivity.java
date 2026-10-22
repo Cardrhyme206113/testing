@@ -29,7 +29,7 @@ public class MainActivity extends Activity {
     public native void cancelNative();
     public native int[] generateNative(String model, String encoder, String decoder, boolean tae,
         String prompt, int width, int height, int steps, long seed, float cfg,
-        String backend, boolean flash);
+        String backend, boolean flash, boolean diskEncoder);
 
     final String[] KEYS={"model","encoder","decoder"};
     final String[] URLS={
@@ -46,7 +46,9 @@ public class MainActivity extends Activity {
     boolean logDirty=false;
     EditText prompt, seed;
     Spinner decoderType, resolution, steps, backend;
-    CheckBox flash;
+    CheckBox flash, lowRamEncoder;
+    final ScheduledExecutorService memoryWatcher=Executors.newSingleThreadScheduledExecutor();
+    volatile ScheduledFuture<?> memoryTask;
     ImageView image;
     Button go, stop;
     volatile boolean running=false;
@@ -103,7 +105,7 @@ public class MainActivity extends Activity {
         ScrollView scroll=new ScrollView(this);scroll.setBackgroundColor(bg);scroll.setFillViewport(true);
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(20),dp(20),dp(20),dp(40));scroll.addView(root);setContentView(scroll);
         TextView title=text("ANIMA / POCKET",24,Color.WHITE);title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);add(root,title,0);
-        add(root,text("ARM64 · safe memory profiles · GGUF Qwen supported",12,hint),0);
+        add(root,text("ARM64 · Qwen3-0.6B-Base GGUF · streamed low-RAM profiles",12,hint),0);
         add(root,text("MODEL FILES",17,accent),22);
         add(root,text("Download in your browser, then select local files. Browser Downloads survive app resets. The app caches working copies.",12,hint),2);
         String[] labels={"01   Anima GGUF","02   Qwen3-0.6B-Base GGUF / safetensors","03   TAEW2.1 or full VAE"};
@@ -123,12 +125,17 @@ public class MainActivity extends Activity {
         prompt.setGravity(android.view.Gravity.TOP);prompt.setText(preferences.getString("prompt","anime illustration of a city at night"));
         prompt.setPadding(dp(14),dp(14),dp(14),dp(14));prompt.setBackground(shape(panel));add(root,prompt,5);
         add(root,text("Resolution",13,hint),12);
-        resolution=spinner(new String[]{"512 × 512","384 × 384","512 × 384","384 × 512"},0);add(root,resolution,2);
+        resolution=spinner(new String[]{"384 × 384","512 × 512","512 × 384","384 × 512"},0);add(root,resolution,2);
         add(root,text("Sampling steps",13,hint),12);
         steps=spinner(new String[]{"4","6","8","10"},0);add(root,steps,2);
         add(root,text("Backend",13,hint),12);
-        backend=spinner(new String[]{"CPU only (no GPU inference)","Vulkan conservative (1.5 GiB)","Vulkan experimental (2 GiB)"},0);
-        add(root,text("WARNING: this phone previously rebooted during Vulkan inference. Budgets do not cap all driver allocations. Try CPU mode first.",12,0xffffc278),6);add(root,backend,2);
+        backend=spinner(new String[]{"CPU only (no GPU inference)","Vulkan cautious (1.0 GiB)","Vulkan experimental (1.5 GiB)"},0);
+        add(root,text("WARNING: Vulkan budget is not a hard driver cap. The previous reboot's cause is unconfirmed. Start with CPU.",12,0xffffc278),6);add(root,backend,2);
+        lowRamEncoder=new CheckBox(this);
+        lowRamEncoder.setText("Low RAM: stream Qwen encoder weights from disk (slower)");
+        lowRamEncoder.setChecked(preferences.getBoolean("encoder_disk",true));
+        lowRamEncoder.setTextColor(hint);
+        add(root,lowRamEncoder,6);
         flash=new CheckBox(this);flash.setText("Experimental diffusion Flash Attention");flash.setTextColor(hint);add(root,flash,7);
         add(root,text("Seed (-1=random)",13,hint),7);
         seed=new EditText(this);seed.setTextColor(Color.WHITE);seed.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
@@ -194,33 +201,38 @@ public class MainActivity extends Activity {
         String p=prompt.getText().toString().trim();if(p.isEmpty()){Toast.makeText(this,"Enter a prompt",Toast.LENGTH_SHORT).show();return;}
         String[] wh=resolution.getSelectedItem().toString().replace(" ","").split("×");
         int w=Integer.parseInt(wh[0]),h=Integer.parseInt(wh[1]),s=Integer.parseInt(steps.getSelectedItem().toString());
-        String[] backends={"cpu","vulkan-1.5","vulkan-2.0"};
+        String[] backends={"cpu","vulkan-1.0","vulkan-1.5"};
         String target=backends[backend.getSelectedItemPosition()];
         android.app.ActivityManager am=(android.app.ActivityManager)getSystemService(ACTIVITY_SERVICE);
         android.app.ActivityManager.MemoryInfo mi=new android.app.ActivityManager.MemoryInfo();
         if(am!=null){
             am.getMemoryInfo(mi);
-            if(mi.lowMemory || mi.availMem<3L*1024*1024*1024){
-                status.setText("Not starting: only "+(mi.availMem/1048576)+" MiB RAM available or Android lowMemory set.");
+            long minFree=target.equals("cpu") ? 3L*1024*1024*1024 : 5L*1024*1024*1024;
+            if(mi.lowMemory || mi.availMem<minFree){
+                status.setText("Not starting: "+(mi.availMem/1048576)+" MiB available; profile needs "+
+                    (minFree/1048576)+" MiB free. Close other apps or select CPU.");
                 return;
             }
         }
         boolean tae=decoderType.getSelectedItemPosition()==0, fa=flash.isChecked();
+        boolean diskEncoder=lowRamEncoder.isChecked();
+        preferences.edit().putBoolean("encoder_disk",diskEncoder).apply();
         long rand;try{rand=Long.parseLong(seed.getText().toString());}catch(NumberFormatException e){rand=-1;}
         if(rand<0)rand=new SecureRandom().nextLong()&Long.MAX_VALUE;
         final long id=rand;preferences.edit().putString("prompt",p).apply();
         diagnostics.setLength(0);
         appendDiagnostic("Anima Pocket diagnostics, native init");
-        appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa);
+        appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder);
         if(am!=null)appendDiagnostic("Free system RAM "+(mi.availMem/1048576)+" MiB; lowMemory="+mi.lowMemory);
         for(int n=0;n<3;n++)appendDiagnostic("Selected file "+n+": "+preferences.getString(KEYS[n]+"_name","?"));
         busy(true);
+        startMemoryWatcher();
         executor.execute(()->{
             try{
                 String[] paths=new String[3];
                 for(int n=0;n<3;n++)paths[n]=copyModel(Uri.parse(selected[n]),n);
                 long began=System.nanoTime();
-                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa);
+                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder);
                 if(pixels==null||pixels.length!=w*h)throw new IOException("Invalid native output");
                 Bitmap bmp=Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888);
                 Uri saved=save(bmp,id);long seconds=(System.nanoTime()-began)/1000000000L;
@@ -232,8 +244,49 @@ public class MainActivity extends Activity {
                     status.setText("Error: "+e.getMessage()+" — tap Copy log below.");
                 });
             }
-            finally{busy(false);}
+            finally{
+                ScheduledFuture<?> task=memoryTask;
+                if(task!=null)task.cancel(false);
+                memoryTask=null;
+                busy(false);
+            }
         });
+    }
+    void startMemoryWatcher(){
+        ScheduledFuture<?> old=memoryTask;
+        if(old!=null)old.cancel(false);
+        memoryTask=memoryWatcher.scheduleAtFixedRate(()->{
+            if(!running)return;
+            try{
+                android.app.ActivityManager am=(android.app.ActivityManager)getSystemService(ACTIVITY_SERVICE);
+                if(am==null)return;
+                android.app.ActivityManager.MemoryInfo info=new android.app.ActivityManager.MemoryInfo();
+                am.getMemoryInfo(info);
+                long processPss=android.os.Debug.getPss()/1024L;
+                logOnUi("MEM free="+(info.availMem/1048576L)+"MiB processPSS="+processPss+
+                    "MiB lowMemory="+info.lowMemory+" threshold="+(info.threshold/1048576L)+"MiB");
+                // Best effort only. The loader is not cancellable until a
+                // context exists, and driver/kernel OOM may bypass this guard.
+                if(info.lowMemory || info.availMem<1024L*1048576L){
+                    logOnUi("CRITICAL memory pressure; requesting inference cancellation");
+                    cancelNative();
+                }
+            }catch(Throwable err){logOnUi("Memory telemetry: "+err);}
+        },5,5,TimeUnit.SECONDS);
+    }
+    @Override public void onTrimMemory(int level){
+        super.onTrimMemory(level);
+        if(running){
+            logOnUi("Android onTrimMemory level="+level);
+            if(level>=TRIM_MEMORY_RUNNING_LOW)cancelNative();
+        }
+    }
+    @Override protected void onDestroy(){
+        ScheduledFuture<?> task=memoryTask;
+        if(task!=null)task.cancel(false);
+        memoryWatcher.shutdownNow();
+        if(running)cancelNative();
+        super.onDestroy();
     }
     String copyModel(Uri uri,int index)throws Exception{
         byte[] originalHeader=sourcePrefix(uri,index);
@@ -338,6 +391,11 @@ public class MainActivity extends Activity {
             throw new IOException("File "+index+" signature differs from GGUF/safetensors. "+
                 "Cached header: "+bytesInfo(hdr)+". Check Source header in diagnostics.");
         }
+        boolean gguf=hdr[0]=='G';
+        if(index==0&&!gguf)throw new IOException("The diffusion model must be the Anima GGUF file");
+        if(index==2&&gguf)throw new IOException("TAE / VAE must be a safetensors file");
+        if(index==1&&file.length()<100L*1048576L)
+            throw new IOException("Qwen3-0.6B encoder is unexpectedly small; select the complete GGUF or safetensors model");
         logOnUi("Validated "+index+" ("+
             (hdr[0]=='G'?"GGUF":"safetensors")+") · "+(file.length()/1048576)+" MiB");
     }

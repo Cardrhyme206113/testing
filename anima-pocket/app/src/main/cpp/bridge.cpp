@@ -81,11 +81,11 @@ extern "C" JNIEXPORT void JNICALL Java_dev_card_anima_MainActivity_cancelNative(
 extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generateNative(
     JNIEnv* env,jobject caller,jstring modelPath,jstring encoderPath,jstring decoderPath,
     jboolean useTae,jstring promptString,jint width,jint height,jint steps,jlong seed,jfloat cfg,
-    jstring backendString,jboolean flash){
+    jstring backendString,jboolean flash,jboolean diskEncoder){
     std::string model=str(env,modelPath),llm=str(env,encoderPath),decoder=str(env,decoderPath);
     std::string prompt=str(env,promptString),backend=str(env,backendString);
     if(model.empty()||llm.empty()||decoder.empty()||prompt.empty()||width<128||height<128||
-        width>2048||height>2048||width%16||height%16||steps<1||steps>100){
+        width>512||height>512||width%16||height%16||steps<1||steps>32){
         failure(env,"Invalid model selection or generation settings");return nullptr;
     }
     env->GetJavaVM(&vm);
@@ -93,17 +93,23 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     cancelled=false;
     sd_set_log_callback(logs,nullptr);
     sd_set_progress_callback(progress,nullptr);
-    const bool gpu=(backend=="vulkan-1.5" || backend=="vulkan-2.0");
+    const bool gpu=(backend=="vulkan-1.0" || backend=="vulkan-1.5");
     if(!gpu && backend!="cpu"){
         env->DeleteGlobalRef(activity);activity=nullptr;
         failure(env,"Unknown backend safety profile");return nullptr;
     }
     std::string runtime=gpu?"diffusion=vulkan0,te=cpu,vae=cpu":"cpu";
-    std::string residency="diffusion=disk,te=cpu,vae=cpu";
-    std::string vram=backend=="vulkan-2.0"?"vulkan0=2.0":"vulkan0=1.5";
+    // `disk` is an upstream, file-backed parameter placement, not a GPU
+    // allocation limit. CPU execution still needs temporary activation buffers.
+    // In the default low-RAM mode, all weights are lazily paged from storage.
+    std::string residency=diskEncoder
+        ?"diffusion=disk,te=disk,vae=disk"
+        :"diffusion=disk,te=cpu,vae=disk";
+    std::string vram=backend=="vulkan-1.5"?"vulkan0=1.5":"vulkan0=1.0";
     notify(gpu?"Preparing budgeted Vulkan (experimental)...":"Preparing CPU-only...");
     logs(SD_LOG_INFO,(std::string("Profile=")+backend+" runtime="+runtime+
         " weights="+residency+" maxVRAM="+(gpu?vram:"none")+
+        " encoderDisk="+(diskEncoder?"true":"false")+
         " prefetch=off eager=off threads=2").c_str(),nullptr);
     sd_ctx_params_t settings{};
     sd_ctx_params_init(&settings);
@@ -119,6 +125,10 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     settings.disable_prefetch=true;
     settings.eager_load=false;
     settings.conditioning_cache_size=0;
+    // Do not disable segmented compute: the per-device Vulkan budget requires it.
+    settings.disable_segmented_compute=false;
+    // Avoid simultaneous conditional/unconditional inference activation buffers.
+    settings.batched_cfg=false;
     settings.diffusion_flash_attn=flash;
     settings.n_threads=2;
     sd_ctx_t* context=new_sd_ctx(&settings);
@@ -140,6 +150,14 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     gen.sample_params.sample_method=EULER_SAMPLE_METHOD;
     gen.sample_params.scheduler=SGM_UNIFORM_SCHEDULER;
     gen.sample_params.guidance.txt_cfg=cfg;
+    // The full Wan/Qwen VAE can have large decode activations. TAE is already
+    // compact and should not be tiled.
+    if(!useTae){
+        gen.vae_tiling_params.enabled=true;
+        gen.vae_tiling_params.tile_size_w=256;
+        gen.vae_tiling_params.tile_size_h=256;
+        gen.vae_tiling_params.target_overlap=0.1f;
+    }
     sd_image_t* results=nullptr;int count=0;
     notify("Generating...");
     bool ok=!cancelled&&generate_image(context,&gen,&results,&count);
