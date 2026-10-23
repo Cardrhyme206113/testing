@@ -63,7 +63,9 @@ replacement = """    // Anima Pocket: compressed Q4_0 storage with temporary FP1
                                     (ggml_prec)dst->op_params[0]) != nullptr);
     const bool qx_needs_dequant = mmp_map == nullptr || x_non_contig || anima_q4_fp16;
 """
-if vk_source.count(needle) != 1:
-    raise RuntimeError("Pinned GGML Vulkan Q4_0 matrix fallback anchor changed")
+# Upstream has exactly two matches: ordinary matmul, then MoE matmul.
+# Only the first one is needed for Anima's dense transformer projections.
+if vk_source.count(needle) != 2:
+    raise RuntimeError("Pinned GGML Vulkan Q4_0 matrix fallback anchors changed")
 vk.write_text(vk_source.replace(needle, replacement, 1), encoding="utf-8")
 print("Opt-in Q4_0 -> FP16 Vulkan scratch matmul patched")
