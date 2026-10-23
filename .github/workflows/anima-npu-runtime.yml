@@ -95,7 +95,9 @@ jobs:
           export ANDROID_NDK="$ANDROID_HOME/ndk/27.2.12479018"
           export ANDROID_SDK="$ANDROID_HOME"
           export ANDROID_ABIS=arm64-v8a
-          export EXECUTORCH_BUILD_EXTENSION_LLM=ON
+          # Image model uses the core Module API, not ExecuTorch's Llama JNI. Disable
+          # Llama: v1.5.1 MTKLlamaRunner is abstract against current IRunner API.
+          export EXECUTORCH_BUILD_EXTENSION_LLM=OFF
           export EXECUTORCH_CMAKE_BUILD_TYPE=Release
           export NEURON_BUFFER_ALLOCATOR_LIB="$ALLOC"
           export NEURON_USDK_ADAPTER_LIB="$ADAPTER"
