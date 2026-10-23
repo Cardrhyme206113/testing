@@ -1,0 +1,37 @@
+name: Publish Anima Pocket v0.5.1 standalone APK
+
+on:
+  push:
+    branches: [anima-pocket]
+    paths:
+      - .github/workflows/publish-anima-v051.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Download verified v0.5.1 build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p dist
+          gh run download 39908696343 --repo "$GH_REPO" --name AnimaPocket-v0.5.1-NPU-Transformer-Ops-ARM64 --dir dist
+      - name: Validate and name APK
+        run: |
+          test -s dist/app-release.apk
+          unzip -tq dist/app-release.apk
+          mv dist/app-release.apk dist/AnimaPocket-v0.5.1.apk
+          sha256sum dist/AnimaPocket-v0.5.1.apk
+      - name: Publish stable direct APK download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create anima-pocket-v0.5.1 dist/AnimaPocket-v0.5.1.apk --repo "$GH_REPO" --target "$GITHUB_SHA" --title "Anima Pocket v0.5.1 — NPU feasibility" --notes "Test-signed Android ARM64 APK built from commit 2d6a01b792df221779cf5b5f98cdde8a34d4d266 (Actions run 39908696343). This release probes MediaTek NNAPI transformer operators and FP16 projections; it does not yet accelerate full Anima diffusion." --latest=false
