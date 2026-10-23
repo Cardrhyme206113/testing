@@ -5,11 +5,16 @@
 #include <string>
 #include <vector>
 #include <cstdio>
+#include <cstdlib>
+#include <chrono>
+#include <sstream>
+#include <iomanip>
 #include "stable-diffusion.h"
 
 namespace {
 std::mutex mutex;
 std::atomic<bool> cancelled(false);
+std::atomic<int> requestedSteps(4);
 sd_ctx_t* active=nullptr;
 JavaVM* vm=nullptr;
 jobject activity=nullptr;
@@ -59,7 +64,18 @@ void logs(sd_log_level_t level,const char* msg,void*){
     if(attached)vm->DetachCurrentThread();
 }
 void progress(int step,int total,float elapsed,void*){
-    notify("Sampling "+std::to_string(step)+"/"+std::to_string(total)+" · "+std::to_string((int)elapsed)+"s");
+    std::ostringstream number;
+    number<<std::fixed<<std::setprecision(3)<<elapsed;
+    if(total!=requestedSteps.load() && total>32){
+        // Upstream shares the same callback for tensor loading and real sampling.
+        // The value is average seconds/tensor in the tensor-loading callback.
+        notify("Loading weights "+std::to_string(step)+"/"+std::to_string(total)+
+            " · "+number.str()+" s/tensor");
+    }else{
+        // Upstream reports sampling only AFTER each complete diffusion pass.
+        notify("Sampling "+std::to_string(step)+"/"+std::to_string(total)+
+            " · "+number.str()+" s/step");
+    }
 }
 void failure(JNIEnv* env,const char* msg){
     jclass ex=env->FindClass("java/lang/RuntimeException");
@@ -81,7 +97,7 @@ extern "C" JNIEXPORT void JNICALL Java_dev_card_anima_MainActivity_cancelNative(
 extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generateNative(
     JNIEnv* env,jobject caller,jstring modelPath,jstring encoderPath,jstring decoderPath,
     jboolean useTae,jstring promptString,jint width,jint height,jint steps,jlong seed,jfloat cfg,
-    jstring backendString,jboolean flash,jboolean diskEncoder){
+    jstring backendString,jboolean flash,jboolean diskEncoder,jboolean profileLayers){
     std::string model=str(env,modelPath),llm=str(env,encoderPath),decoder=str(env,decoderPath);
     std::string prompt=str(env,promptString),backend=str(env,backendString);
     if(model.empty()||llm.empty()||decoder.empty()||prompt.empty()||width<128||height<128||
@@ -91,6 +107,14 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     env->GetJavaVM(&vm);
     activity=env->NewGlobalRef(caller);
     cancelled=false;
+    requestedSteps.store(steps);
+    if(profileLayers && backend=="cpu"){
+        logs(SD_LOG_WARN,"Layer checkpoints require Vulkan; CPU will use standard graph",nullptr);
+    }
+    // The default path is untouched. Forced per-layer segmentation is opt-in
+    // because it alters memory pressure and adds synchronization overhead.
+    if(profileLayers && backend!="cpu")setenv("ANIMA_DIAG_LAYER_CUTS","1",1);
+    else unsetenv("ANIMA_DIAG_LAYER_CUTS");
     sd_set_log_callback(logs,nullptr);
     sd_set_progress_callback(progress,nullptr);
     const bool gpu=(backend=="vulkan-auto" || backend=="vulkan-1.5");
@@ -135,7 +159,11 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     settings.batched_cfg=false;
     settings.diffusion_flash_attn=flash;
     settings.n_threads=2;
+    auto contextAt=std::chrono::steady_clock::now();
     sd_ctx_t* context=new_sd_ctx(&settings);
+    auto contextMs=std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now()-contextAt).count();
+    logs(SD_LOG_INFO,("ANIMA_DIAG_CONTEXT_READY elapsed_ms="+std::to_string(contextMs)).c_str(),nullptr);
     if(!context){
         env->DeleteGlobalRef(activity);activity=nullptr;
         failure(env,"Could not initialize model. See engine diagnostics below.");return nullptr;
@@ -164,7 +192,16 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     }
     sd_image_t* results=nullptr;int count=0;
     notify("Generating...");
+    logs(SD_LOG_INFO,("ANIMA_DIAG_INFERENCE_BEGIN resolution="+
+        std::to_string(width)+"x"+std::to_string(height)+" steps="+std::to_string(steps)+
+        " layer_profile="+(profileLayers?"on":"off")).c_str(),nullptr);
+    auto inferAt=std::chrono::steady_clock::now();
     bool ok=!cancelled&&generate_image(context,&gen,&results,&count);
+    auto inferMs=std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now()-inferAt).count();
+    logs(SD_LOG_INFO,("ANIMA_DIAG_INFERENCE_END elapsed_ms="+std::to_string(inferMs)+
+        " result="+(ok?"ok":"failed")).c_str(),nullptr);
+    notify("Returning generated pixels...");
     jintArray output=nullptr;
     if(ok&&results&&count>0&&results[0].data&&results[0].width==(uint32_t)width
         &&results[0].height==(uint32_t)height&&results[0].channel>=3){

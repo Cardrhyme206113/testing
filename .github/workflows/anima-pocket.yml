@@ -31,6 +31,8 @@ jobs:
           git fetch --depth 1 origin a77d3623180b2bc1886f3dd04c0aa04156a987ef
           git checkout --detach a77d3623180b2bc1886f3dd04c0aa04156a987ef
           git submodule update --init --recursive --depth 1
+      - name: Instrument pinned upstream graph execution
+        run: python3 anima-pocket/app/src/main/cpp/instrument_upstream.py
       - name: Stage Vulkan SDK C and C++ headers
         run: |
           mkdir -p anima-pocket/app/src/main/cpp/vulkan-headers

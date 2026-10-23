@@ -1,4 +1,4 @@
-# Anima Pocket — Vulkan automatic profile / v0.3.2
+# Anima Pocket — deep GPU diagnostics / v0.3.3
 
 Experimental offline Anima image generation for Android ARM64 using stable-diffusion.cpp.
 
@@ -26,3 +26,36 @@ GitHub Actions workflow **Anima Pocket Android** builds debug signed APKs on the
 The Qwen3 GGUF is passed to upstream stable-diffusion.cpp using `sd_ctx_params_t.llm_path`. Do not load a generic Qwen Instruct GGUF: Anima expects Qwen3-0.6B-Base. The app validates file signatures and a minimum encoder size; architecture and tensor compatibility still require an actual on-device loading test.
 
 **No claim of on-device correctness, a hard RAM ceiling, or reboot prevention.** Build success verifies compilation only.
+
+### v0.3.3 diagnostics
+
+No ADB or root is required. A **HEARTBEAT** is persisted every 3 seconds independently
+of the UI thread, with elapsed time, current inference stage, time since the last
+native-engine log, Android available memory and lowMemory, process PSS and swapped PSS,
+process RSS and VmSwap, global SwapTotal/SwapFree and swap-page deltas, zram compression
+usage if readable, native inference thread state and CPU tick delta, and system thermal
+status. Unsupported /proc or sysfs fields show n/a/-1 rather than invented values.
+A nonzero swappedPSS or pswpin delta suggests swapping activity, not proof of GPU OOM.
+
+The native runner is patched at build time (pinned upstream revision) to log
+ANIMA_DIAG_BEGIN / ANIMA_DIAG_END timing around each actual compute segment.
+Default Vulkan inference is kept as before: **one monolithic graph** if it fits.
+An opt-in **DIAGNOSTIC: profile individual Anima transformer layers** checkbox
+forces existing graph-cut segments on Vulkan to reveal layer progress, but
+changes allocation and synchronization behavior and can make inference slower.
+Compare default mode first; layer mode is an additional experiment, not a
+performance benchmark.
+
+The misleading "Sampling 685/685 · 0s" status now reports tensor-loading progress
+separately from completed denoising steps. Elapsed time continues updating even when
+the first GPU graph produces no progress callback.
+
+Logs are written to private app storage at `files/diagnostics/last-run.txt` and
+flushed frequently; older runs move to `previous-run.txt`. On the next launch,
+**Copy saved run** recovers the last run even after a process crash/reboot;
+**Copy previous run** recovers the one before it. Android process-exit reason
+is also recorded when available. Do not uninstall the app before recovering logs:
+uninstall deletes private app files. Logs are best effort and cannot capture a
+GPU driver crash or system freeze that prevents Android from scheduling the watchdog.
+
+This is a diagnostic build, not a proven stability or inference-speed fix.

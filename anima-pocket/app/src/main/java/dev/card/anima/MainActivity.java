@@ -1,7 +1,12 @@
 package dev.card.anima;
 
 import android.app.Activity;
+import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
+import android.os.PowerManager;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
@@ -21,7 +26,10 @@ import java.io.*;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Locale;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends Activity {
     static { System.loadLibrary("animabridge"); }
@@ -29,7 +37,7 @@ public class MainActivity extends Activity {
     public native void cancelNative();
     public native int[] generateNative(String model, String encoder, String decoder, boolean tae,
         String prompt, int width, int height, int steps, long seed, float cfg,
-        String backend, boolean flash, boolean diskEncoder);
+        String backend, boolean flash, boolean diskEncoder, boolean profileLayers);
 
     final String[] KEYS={"model","encoder","decoder"};
     final String[] URLS={
@@ -40,13 +48,20 @@ public class MainActivity extends Activity {
     };
     SharedPreferences preferences;
     final TextView[] files = new TextView[3];
-    TextView status, outputs, devices, logView;
+    TextView status, outputs, devices, logView, liveMetrics;
     final StringBuilder diagnostics=new StringBuilder();
-    long lastLogRefresh=0;
-    boolean logDirty=false;
+    final Object logLock=new Object();
+    final AtomicBoolean pendingLogUi=new AtomicBoolean(false);
+    BufferedWriter sessionWriter=null;
+    long lastLogFlushMs=0, lastLogRefresh=0;
+    volatile long generationStartMs=0, stageStartMs=0, lastNativeEventMs=0;
+    volatile String stageName="Idle";
+    volatile int completedSteps=0, desiredSteps=4, workerTid=0;
+    volatile boolean profilingLayers=false;
+    long lastNativeCpuTicks=-1, lastPswpIn=-1, lastPswpOut=-1, lastMajFault=-1;
     EditText prompt, seed;
     Spinner decoderType, resolution, steps, backend;
-    CheckBox flash, lowRamEncoder;
+    CheckBox flash, lowRamEncoder, profileLayers;
     final ScheduledExecutorService memoryWatcher=Executors.newSingleThreadScheduledExecutor();
     volatile ScheduledFuture<?> memoryTask;
     ImageView image;
@@ -60,42 +75,170 @@ public class MainActivity extends Activity {
     void add(LinearLayout parent,View view,int top){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(top);parent.addView(view,p);}
     Button button(String label,Runnable click){Button b=new Button(this);b.setText(label);b.setAllCaps(false);b.setTextColor(Color.WHITE);b.setTextSize(13);b.setBackground(shape(panel));b.setOnClickListener(v->click.run());return b;}
     Spinner spinner(String[] values,int index){Spinner s=new Spinner(this);ArrayAdapter<String> a=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,values);s.setAdapter(a);s.setSelection(index);s.setBackground(shape(panel));s.setPadding(dp(12),dp(10),dp(8),dp(10));return s;}
-    void notifyStatus(String s){runOnUiThread(()->status.setText(s));}
-    @SuppressWarnings("unused") public void onNativeStatus(String s){notifyStatus(s);}
+    void notifyStatus(String s){runOnUiThread(()->{if(status!=null)status.setText(s);});}
+    void setStage(String s){
+        if(!s.equals(stageName)){
+            stageName=s;
+            stageStartMs=SystemClock.elapsedRealtime();
+        }
+    }
+    @SuppressWarnings("unused") public void onNativeStatus(String s){
+        lastNativeEventMs=SystemClock.elapsedRealtime();
+        if(s.startsWith("Sampling ")){
+            try{
+                int slash=s.indexOf('/');
+                int step=Integer.parseInt(s.substring("Sampling ".length(),slash));
+                int tail=slash+1;
+                while(tail<s.length()&&Character.isDigit(s.charAt(tail)))tail++;
+                int total=Integer.parseInt(s.substring(slash+1,tail));
+                if(total==desiredSteps){
+                    if(step>completedSteps){
+                        completedSteps=step;
+                        appendDiagnostic("STEP_DONE "+step+"/"+total+" at "+(lastNativeEventMs-generationStartMs)+"ms; "+s);
+                    }
+                    setStage(step>=total?"Sampling finished; awaiting decoder":
+                        "Diffusion step "+(step+1)+"/"+total+" (last completed "+step+")");
+                }
+            }catch(Exception ignored){setStage(s);}
+        }else if(s.startsWith("Loading weights ")){
+            setStage("Preparing "+s.substring(0,Math.min(52,s.length())));
+        }else if(s.startsWith("Preparing ")||s.startsWith("Initializing")||s.startsWith("Generating")){
+            setStage(s);
+        }else if(s.startsWith("Returning")){
+            setStage(s);
+        }
+        // Never force a synchronous status update for each weight-loading callback.
+        scheduleLogUiRefresh();
+    }
     @SuppressWarnings("unused") public void onNativeLog(int level,String message){
-        runOnUiThread(()->appendDiagnostic("ENGINE/"+level+"  "+message));
+        lastNativeEventMs=SystemClock.elapsedRealtime();
+        if(message.contains("ANIMA_DIAG_BEGIN")){
+            int layer=message.indexOf("layer=");
+            setStage("Diffusion step "+Math.min(desiredSteps,completedSteps+1)+"/"+desiredSteps+
+                " · "+(layer>=0?message.substring(layer,Math.min(message.length(),layer+50)).split(" ---")[0]:"GPU graph"));
+        }else if(message.contains("anima executing segment ")){
+            setStage("Diffusion step "+Math.min(desiredSteps,completedSteps+1)+"/"+desiredSteps+" · GPU graph running");
+        }else if(message.contains("qwen3 executing segment ")){
+            setStage("Encoding text prompt with Qwen");
+        }else if(message.contains("loading 685/685 tensors")){
+            setStage("Loading Anima diffusion weights");
+        }else if(message.contains("decoding ") && message.contains("latents")){
+            setStage("Decoding generated image");
+        }else if(message.contains("saving")){
+            setStage("Saving generated image");
+        }
+        appendDiagnostic("ENGINE/"+level+"  "+message);
+    }
+    void scheduleLogUiRefresh(){
+        long now=SystemClock.uptimeMillis();
+        if(logView==null || now-lastLogRefresh<400 || !pendingLogUi.compareAndSet(false,true))return;
+        lastLogRefresh=now;
+        runOnUiThread(()->{pendingLogUi.set(false);showDiagnostics();});
     }
     void appendDiagnostic(String message){
+        if(message==null)return;
         if(!message.endsWith("\n"))message+="\n";
-        diagnostics.append(message);
-        if(diagnostics.length()>220000)diagnostics.delete(0,diagnostics.length()-160000);
-        if(logView!=null){
-            long now=android.os.SystemClock.uptimeMillis();
-            if(now-lastLogRefresh>350 || message.startsWith("ENGINE/4")){
-                lastLogRefresh=now;
-                String recent=diagnostics.toString();
-                if(recent.length()>16000)recent=recent.substring(recent.length()-16000);
-                logView.setText(recent);
+        final String written=message;
+        synchronized(logLock){
+            diagnostics.append(written);
+            if(diagnostics.length()>260000)diagnostics.delete(0,diagnostics.length()-210000);
+            if(sessionWriter!=null){
+                try{
+                    sessionWriter.write(written);
+                    long now=SystemClock.elapsedRealtime();
+                    if(now-lastLogFlushMs>=1800 || written.contains("ANIMA_DIAG_") ||
+                       written.contains("STEP_DONE") || written.contains("ERROR ")){
+                        sessionWriter.flush();
+                        lastLogFlushMs=now;
+                    }
+                }catch(IOException err){android.util.Log.e("AnimaPocket","Persistent log failed",err);}
+            }
+        }
+        scheduleLogUiRefresh();
+    }
+    void showDiagnostics(){
+        if(logView==null)return;
+        String lines;
+        synchronized(logLock){
+            lines=diagnostics.toString();
+        }
+        if(lines.length()>24000)lines=lines.substring(lines.length()-24000);
+        logView.setText(lines.isEmpty()?"No logs captured yet.":lines);
+    }
+    void beginSessionLog(){
+        synchronized(logLock){
+            closeSessionLog();
+            File dir=new File(getFilesDir(),"diagnostics");
+            if(!dir.exists()&&!dir.mkdirs())return;
+            File newest=new File(dir,"last-run.txt");
+            File previous=new File(dir,"previous-run.txt");
+            if(newest.exists()){
+                if(previous.exists())previous.delete();
+                if(!newest.renameTo(previous))android.util.Log.w("AnimaPocket","Couldn't rotate old log");
+            }
+            try{
+                sessionWriter=new BufferedWriter(new FileWriter(newest,false),16384);
+                lastLogFlushMs=0;
+            }catch(IOException err){android.util.Log.e("AnimaPocket","Cannot create persistent log",err);}
+        }
+    }
+    void closeSessionLog(){
+        synchronized(logLock){
+            if(sessionWriter!=null){
+                try{sessionWriter.flush();sessionWriter.close();}catch(IOException ignored){}
+                sessionWriter=null;
             }
         }
     }
-    void showDiagnostics(){
-        if(logView!=null){String lines=diagnostics.toString();
-            if(lines.length()>16000)lines=lines.substring(lines.length()-16000);
-            logView.setText(lines.isEmpty()?"No logs captured yet.":lines);
+    File savedLog(boolean previous){
+        return new File(new File(getFilesDir(),"diagnostics"),previous?"previous-run.txt":"last-run.txt");
+    }
+    String loadSavedLog(boolean previous)throws IOException{
+        File f=savedLog(previous);
+        if(!f.isFile())throw new IOException("No saved "+(previous?"previous":"latest")+" run yet");
+        if(f.length()>1024*1024)throw new IOException("Saved log exceeds 1 MB; use a later export method");
+        StringBuilder out=new StringBuilder();
+        try(BufferedReader in=new BufferedReader(new FileReader(f))){
+            String line;while((line=in.readLine())!=null)out.append(line).append('\n');
         }
+        return out.toString();
+    }
+    void copyText(String title,String value){
+        android.content.ClipboardManager cb=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+        cb.setPrimaryClip(android.content.ClipData.newPlainText(title,value));
+        Toast.makeText(this,title+" copied",Toast.LENGTH_SHORT).show();
     }
     void copyDiagnostics(){
-        showDiagnostics();
-        android.content.ClipboardManager cb=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
-        cb.setPrimaryClip(android.content.ClipData.newPlainText("Anima Pocket engine log",diagnostics.toString()));
-        Toast.makeText(this,"Diagnostic log copied",Toast.LENGTH_SHORT).show();
+        String s; synchronized(logLock){s=diagnostics.toString();}
+        copyText("Current Anima log",s);
+    }
+    void copySavedLog(boolean previous){
+        try{
+            // Always flush the ongoing session before exposing its last recorded state.
+            synchronized(logLock){if(sessionWriter!=null)sessionWriter.flush();}
+            copyText(previous?"Previous Anima log":"Saved Anima log",loadSavedLog(previous));
+        }catch(Exception e){Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show();}
     }
     void shareDiagnostics(){
-        showDiagnostics();
+        String s; synchronized(logLock){s=diagnostics.toString();}
         Intent i=new Intent(Intent.ACTION_SEND);i.setType("text/plain");
-        i.putExtra(Intent.EXTRA_TEXT,diagnostics.toString());
+        i.putExtra(Intent.EXTRA_TEXT,s);
         startActivity(Intent.createChooser(i,"Share Anima Pocket diagnostics"));
+    }
+    String previousProcessExit(){
+        if(Build.VERSION.SDK_INT<30)return "Process-exit history unavailable";
+        try{
+            ActivityManager am=(ActivityManager)getSystemService(ACTIVITY_SERVICE);
+            java.util.List<ApplicationExitInfo> entries=
+                am.getHistoricalProcessExitReasons(getPackageName(),0,3);
+            if(entries.isEmpty())return "No previous process-exit record";
+            ApplicationExitInfo last=entries.get(0);
+            return "Last process exit: reason="+last.getReason()+" (LMK="+
+                ApplicationExitInfo.REASON_LOW_MEMORY+", ANR="+ApplicationExitInfo.REASON_ANR+
+                ", nativeCrash="+ApplicationExitInfo.REASON_CRASH_NATIVE+
+                "), RSS="+last.getRss()+"KiB PSS="+last.getPss()+"KiB at "+
+                new java.util.Date(last.getTimestamp())+"; "+last.getDescription();
+        }catch(Exception e){return "Process-exit history error: "+e;}
     }
     void link(String s){startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(s)));}
 
@@ -138,18 +281,30 @@ public class MainActivity extends Activity {
         lowRamEncoder.setTextColor(hint);
         add(root,lowRamEncoder,6);
         flash=new CheckBox(this);flash.setText("Experimental diffusion Flash Attention");flash.setTextColor(hint);add(root,flash,7);
+        profileLayers=new CheckBox(this);
+        profileLayers.setText("DIAGNOSTIC: profile individual Anima transformer layers (slower; changes GPU execution)");
+        profileLayers.setTextColor(0xffffc278);add(root,profileLayers,7);
         add(root,text("Seed (-1=random)",13,hint),7);
         seed=new EditText(this);seed.setTextColor(Color.WHITE);seed.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
         seed.setText("-1");seed.setSingleLine();seed.setBackground(shape(panel));seed.setPadding(dp(12),dp(10),dp(12),dp(10));add(root,seed,2);
         go=button("Generate",this::start);go.setBackground(shape(accent));add(root,go,16);
         stop=button("Cancel",()->{cancelNative();notifyStatus("Cancel requested…");});stop.setEnabled(false);add(root,stop,7);
         status=text("Ready. Select three files.",13,hint);add(root,status,12);
-        add(root,text("ENGINE DIAGNOSTICS · no ADB required",15,accent),16);
+        liveMetrics=text("Live diagnostic heartbeat appears here during generation.",12,0xff9ac4ee);
+        add(root,liveMetrics,8);
+        add(root,text("ENGINE DIAGNOSTICS · persistent / no ADB required",15,accent),16);
         LinearLayout diagnosticActions=new LinearLayout(this);
         diagnosticActions.addView(button("Copy log",this::copyDiagnostics),new LinearLayout.LayoutParams(0,dp(44),1));
         LinearLayout.LayoutParams shareParams=new LinearLayout.LayoutParams(0,dp(44),1);shareParams.leftMargin=dp(8);
         diagnosticActions.addView(button("Share log",this::shareDiagnostics),shareParams);
         add(root,diagnosticActions,4);
+        LinearLayout savedActions=new LinearLayout(this);
+        savedActions.addView(button("Copy saved run",()->copySavedLog(false)),new LinearLayout.LayoutParams(0,dp(44),1));
+        LinearLayout.LayoutParams previousParams=new LinearLayout.LayoutParams(0,dp(44),1);
+        previousParams.leftMargin=dp(8);
+        savedActions.addView(button("Copy previous run",()->copySavedLog(true)),previousParams);
+        add(root,savedActions,5);
+        add(root,text("Saved logs survive app crashes/reboots, but not uninstalling the app. After a freeze, reopen this version and use Copy saved run BEFORE starting another run.",12,hint),5);
         logView=text("No logs captured yet.",11,hint);
         logView.setTextIsSelectable(true);
         logView.setTypeface(Typeface.MONOSPACE);
@@ -163,7 +318,10 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-
+        appendDiagnostic("ANIMA_DIAG v0.3.3 ready; "+previousProcessExit());
+        if(savedLog(false).isFile()){
+            appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
+        }
     }
     void pick(int n){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);startActivityForResult(i,900+n);}
     @Override protected void onActivityResult(int request,int result,Intent data){
@@ -250,9 +408,17 @@ public class MainActivity extends Activity {
         long rand;try{rand=Long.parseLong(seed.getText().toString());}catch(NumberFormatException e){rand=-1;}
         if(rand<0)rand=new SecureRandom().nextLong()&Long.MAX_VALUE;
         final long id=rand;preferences.edit().putString("prompt",p).apply();
-        diagnostics.setLength(0);
-        appendDiagnostic("Anima Pocket diagnostics, native init");
-        appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder);
+        synchronized(logLock){diagnostics.setLength(0);}
+        generationStartMs=SystemClock.elapsedRealtime();
+        lastNativeEventMs=generationStartMs;
+        stageStartMs=generationStartMs;
+        completedSteps=0; desiredSteps=s; workerTid=0;
+        profilingLayers=profileLayers.isChecked();
+        lastNativeCpuTicks=lastPswpIn=lastPswpOut=lastMajFault=-1;
+        setStage("Preparing model files");
+        beginSessionLog();
+        appendDiagnostic("Anima Pocket v0.3.3 deep diagnostics, native init");
+        appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder+"; profileLayers "+profilingLayers);
         if(am!=null)appendDiagnostic("Free system RAM "+(mi.availMem/1048576)+" MiB; lowMemory="+mi.lowMemory);
         for(int n=0;n<3;n++)appendDiagnostic("Selected file "+n+": "+preferences.getString(KEYS[n]+"_name","?"));
         busy(true);
@@ -262,13 +428,18 @@ public class MainActivity extends Activity {
                 String[] paths=new String[3];
                 for(int n=0;n<3;n++)paths[n]=copyModel(Uri.parse(selected[n]),n);
                 long began=System.nanoTime();
-                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder);
+                workerTid=android.os.Process.myTid();
+                appendDiagnostic("ANIMA_DIAG_NATIVE_THREAD tid="+workerTid);
+                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder,profilingLayers);
                 if(pixels==null||pixels.length!=w*h)throw new IOException("Invalid native output");
                 Bitmap bmp=Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888);
+                setStage("Saving finished image");
                 Uri saved=save(bmp,id);long seconds=(System.nanoTime()-began)/1000000000L;
+                appendDiagnostic("ANIMA_DIAG_SUCCESS total_ms="+(SystemClock.elapsedRealtime()-generationStartMs)+" saved="+saved);
                 runOnUiThread(()->{image.setImageBitmap(bmp);status.setText("Complete in "+seconds+"s · seed "+id);outputs.setText("Saved "+saved);});
             }catch(Throwable e){
                 runOnUiThread(()->{
+                    setStage("Generation error");
                     appendDiagnostic("ERROR "+e.toString());
                     showDiagnostics();
                     status.setText("Error: "+e.getMessage()+" — tap Copy log below.");
@@ -278,9 +449,57 @@ public class MainActivity extends Activity {
                 ScheduledFuture<?> task=memoryTask;
                 if(task!=null)task.cancel(false);
                 memoryTask=null;
+                appendDiagnostic("ANIMA_DIAG_SESSION_END elapsed_ms="+(SystemClock.elapsedRealtime()-generationStartMs));
+                closeSessionLog();
+                workerTid=0;
                 busy(false);
             }
         });
+    }
+    Map<String,Long> readKernelNumbers(String path,boolean colon){
+        Map<String,Long> m=new HashMap<>();
+        try(BufferedReader r=new BufferedReader(new FileReader(path))){
+            for(int n=0;n<300;n++){
+                String line=r.readLine();if(line==null)break;
+                String[] pieces=colon?line.split(":",2):line.trim().split("\\s+",2);
+                if(pieces.length<2)continue;
+                String[] val=pieces[1].trim().split("\\s+");
+                try{m.put(pieces[0].trim(),Long.parseLong(val[0]));}
+                catch(NumberFormatException ignored){}
+            }
+        }catch(Exception ignored){}
+        return m;
+    }
+    long count(Map<String,Long> map,String key){
+        Long n=map.get(key);return n==null?-1:n;
+    }
+    String readFirstLine(String path){
+        try(BufferedReader r=new BufferedReader(new FileReader(path))){
+            String s=r.readLine();return s==null?"":s;
+        }catch(Exception ignored){return "";}
+    }
+    String currentWorkerState(){
+        if(workerTid<=0)return "none";
+        String stat=readFirstLine("/proc/self/task/"+workerTid+"/stat");
+        int i=stat.lastIndexOf(") ");
+        if(i<0)return "unavailable";
+        try{
+            String[] fields=stat.substring(i+2).split("\\s+");
+            long ticks=Long.parseLong(fields[11])+Long.parseLong(fields[12]);
+            long delta=lastNativeCpuTicks<0?-1:ticks-lastNativeCpuTicks;
+            lastNativeCpuTicks=ticks;
+            return "state="+fields[0]+" cpuTicksDelta="+delta;
+        }catch(Exception e){return "parse-error";}
+    }
+    String zramStats(){
+        String line=readFirstLine("/sys/block/zram0/mm_stat");
+        if(line.isEmpty())return "n/a";
+        String[] parts=line.trim().split("\\s+");
+        if(parts.length<3)return "n/a";
+        try{return "original="+(Long.parseLong(parts[0])/1048576L)+
+            "MiB compressed="+(Long.parseLong(parts[1])/1048576L)+
+            "MiB allocated="+(Long.parseLong(parts[2])/1048576L)+"MiB";}
+        catch(NumberFormatException e){return "n/a";}
     }
     void startMemoryWatcher(){
         ScheduledFuture<?> old=memoryTask;
@@ -288,21 +507,47 @@ public class MainActivity extends Activity {
         memoryTask=memoryWatcher.scheduleAtFixedRate(()->{
             if(!running)return;
             try{
-                android.app.ActivityManager am=(android.app.ActivityManager)getSystemService(ACTIVITY_SERVICE);
-                if(am==null)return;
-                android.app.ActivityManager.MemoryInfo info=new android.app.ActivityManager.MemoryInfo();
-                am.getMemoryInfo(info);
-                long processPss=android.os.Debug.getPss()/1024L;
-                logOnUi("MEM free="+(info.availMem/1048576L)+"MiB processPSS="+processPss+
-                    "MiB lowMemory="+info.lowMemory+" threshold="+(info.threshold/1048576L)+"MiB");
-                // Best effort only. The loader is not cancellable until a
-                // context exists, and driver/kernel OOM may bypass this guard.
+                long now=SystemClock.elapsedRealtime();
+                ActivityManager am=(ActivityManager)getSystemService(ACTIVITY_SERVICE);
+                ActivityManager.MemoryInfo info=new ActivityManager.MemoryInfo();
+                if(am!=null)am.getMemoryInfo(info);
+                android.os.Debug.MemoryInfo process=new android.os.Debug.MemoryInfo();
+                android.os.Debug.getMemoryInfo(process);
+                Map<String,Long> mem=readKernelNumbers("/proc/meminfo",true);
+                Map<String,Long> self=readKernelNumbers("/proc/self/status",true);
+                Map<String,Long> vm=readKernelNumbers("/proc/vmstat",false);
+                long in=count(vm,"pswpin"),out=count(vm,"pswpout"),maj=count(vm,"pgmajfault");
+                String swapDelta="in="+(lastPswpIn<0?"n/a":String.valueOf(in-lastPswpIn))+
+                    " out="+(lastPswpOut<0?"n/a":String.valueOf(out-lastPswpOut))+
+                    " majfault="+(lastMajFault<0?"n/a":String.valueOf(maj-lastMajFault));
+                if(in>=0)lastPswpIn=in;
+                if(out>=0)lastPswpOut=out;
+                if(maj>=0)lastMajFault=maj;
+                PowerManager pm=(PowerManager)getSystemService(POWER_SERVICE);
+                int therm=pm==null?-1:pm.getCurrentThermalStatus();
+                String live="t="+((now-generationStartMs)/1000)+"s phase="+stageName+
+                    " phaseFor="+((now-stageStartMs)/1000)+"s noEngineLog="+((now-lastNativeEventMs)/1000)+"s"+
+                    " | MemAvailable="+(count(mem,"MemAvailable")/1024)+"MiB"+
+                    " availMemAPI="+(info.availMem/1048576)+"MiB lowMemory="+info.lowMemory+
+                    " | PSS="+(process.getTotalPss()/1024)+"MiB swappedPSS="+(process.getTotalSwappedOutPss()/1024)+"MiB"+
+                    " VmRSS="+(count(self,"VmRSS")/1024)+"MiB VmSwap="+(count(self,"VmSwap")/1024)+"MiB"+
+                    " | SwapTotal="+(count(mem,"SwapTotal")/1024)+"MiB SwapFree="+(count(mem,"SwapFree")/1024)+"MiB"+
+                    " | zram "+zramStats()+" | swapPagesDelta "+swapDelta+
+                    " | nativeThread "+currentWorkerState()+" | thermal="+therm;
+                appendDiagnostic("HEARTBEAT "+live);
+                runOnUiThread(()->{
+                    if(liveMetrics!=null)liveMetrics.setText(live);
+                    if(status!=null)status.setText(stageName+" · elapsed "+((SystemClock.elapsedRealtime()-generationStartMs)/1000)+"s");
+                });
+                // The native Vulkan device can stall without triggering an Android lowMemory signal.
+                // Continue to preserve the original best-effort critical memory cancellation only.
                 if(info.lowMemory || info.availMem<1024L*1048576L){
-                    logOnUi("CRITICAL memory pressure; requesting inference cancellation");
+                    appendDiagnostic("CRITICAL MEMORY: Android lowMemory="+info.lowMemory+
+                        " availMiB="+(info.availMem/1048576L)+"; requesting cancellation");
                     cancelNative();
                 }
-            }catch(Throwable err){logOnUi("Memory telemetry: "+err);}
-        },5,5,TimeUnit.SECONDS);
+            }catch(Throwable err){appendDiagnostic("HEARTBEAT ERROR "+err);}
+        },1,3,TimeUnit.SECONDS);
     }
     @Override public void onTrimMemory(int level){
         super.onTrimMemory(level);
@@ -321,6 +566,7 @@ public class MainActivity extends Activity {
         if(task!=null)task.cancel(false);
         memoryWatcher.shutdownNow();
         if(running)cancelNative();
+        closeSessionLog();
         super.onDestroy();
     }
     String copyModel(Uri uri,int index)throws Exception{
@@ -433,7 +679,7 @@ public class MainActivity extends Activity {
                 throw new IOException("Qwen filename says safetensors but contains "+fmt+".");
         }
     }
-    void logOnUi(String value){runOnUiThread(()->appendDiagnostic(value));}
+    void logOnUi(String value){appendDiagnostic(value);}
     byte[] sourcePrefix(Uri uri,int index)throws IOException{
         long declared=-1;
         try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){
