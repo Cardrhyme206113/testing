@@ -81,8 +81,13 @@ jobs:
 
       - name: Build MediaTek-enabled ExecuTorch Android AAR (not generic CPU AAR)
         run: |
-          git clone --depth 1 --branch v1.5.1 --recurse-submodules \
+          git clone --depth 1 --branch v1.5.1 \
             https://github.com/pytorch/executorch.git "$RUNNER_TEMP/executorch"
+          # Official GitLab Eigen occasionally denies submodule clones on shared runners.
+          # Google hosts a commit-compatible mirror of the real Eigen upstream.
+          git -C "$RUNNER_TEMP/executorch" config \
+            submodule.kernels/optimized/third-party/eigen.url https://eigen.googlesource.com/mirror
+          git -C "$RUNNER_TEMP/executorch" submodule update --init --recursive --depth 1 --jobs 4
           cd "$RUNNER_TEMP/executorch"
           HEADER=$(find "$RUNNER_TEMP/mtk" -name 'NeuronAdapter.h' -type f -print -quit)
           ALLOC=$(find "$RUNNER_TEMP/mtk" -name 'libneuron_buffer_allocator.so' -type f -print -quit)
