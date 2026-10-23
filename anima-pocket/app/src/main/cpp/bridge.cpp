@@ -97,7 +97,7 @@ extern "C" JNIEXPORT void JNICALL Java_dev_card_anima_MainActivity_cancelNative(
 extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generateNative(
     JNIEnv* env,jobject caller,jstring modelPath,jstring encoderPath,jstring decoderPath,
     jboolean useTae,jstring promptString,jint width,jint height,jint steps,jlong seed,jfloat cfg,
-    jstring backendString,jboolean flash,jboolean diskEncoder,jboolean profileLayers){
+    jstring backendString,jboolean flash,jboolean diskEncoder,jboolean profileLayers,jboolean residentWeights){
     std::string model=str(env,modelPath),llm=str(env,encoderPath),decoder=str(env,decoderPath);
     std::string prompt=str(env,promptString),backend=str(env,backendString);
     if(model.empty()||llm.empty()||decoder.empty()||prompt.empty()||width<128||height<128||
@@ -117,7 +117,7 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     else unsetenv("ANIMA_DIAG_LAYER_CUTS");
     sd_set_log_callback(logs,nullptr);
     sd_set_progress_callback(progress,nullptr);
-    const bool gpu=(backend=="vulkan-auto" || backend=="vulkan-1.5");
+    const bool gpu=(backend=="vulkan-auto" || backend=="vulkan-1.5" || backend=="vulkan-2.5");
     if(!gpu && backend!="cpu"){
         env->DeleteGlobalRef(activity);activity=nullptr;
         failure(env,"Unknown backend safety profile");return nullptr;
@@ -126,19 +126,21 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     // `disk` is an upstream, file-backed parameter placement, not a GPU
     // allocation limit. CPU execution still needs temporary activation buffers.
     // In the default low-RAM mode, all weights are lazily paged from storage.
-    std::string residency=diskEncoder
-        ?"diffusion=disk,te=disk,vae=disk"
-        :"diffusion=disk,te=cpu,vae=disk";
+    const std::string diffusion_params=(gpu && residentWeights)?"vulkan0":"disk";
+    const std::string te_params=diskEncoder?"disk":"cpu";
+    std::string residency="diffusion="+diffusion_params+",te="+te_params+",vae=disk";
     // No explicit Vulkan max_vram for auto mode: engine manages available
     // shared memory. This is NOT a hard physical RAM cap or OOM guarantee.
     // The legacy 5 GiB Android free-RAM admission gate is also removed.
-    std::string vram=backend=="vulkan-1.5"?"vulkan0=1.5":"";
+    std::string vram=backend=="vulkan-1.5"?"vulkan0=1.5":
+                     backend=="vulkan-2.5"?"vulkan0=2.5":"";
     notify(backend=="vulkan-auto"?"Preparing automatic Vulkan (experimental)...":
         gpu?"Preparing budgeted Vulkan (experimental)...":"Preparing CPU-only...");
     logs(SD_LOG_INFO,(std::string("Profile=")+backend+" runtime="+runtime+
         " weights="+residency+" maxVRAM="+(gpu?(vram.empty()?"auto":vram):"none")+
         " encoderDisk="+(diskEncoder?"true":"false")+
-        " prefetch=off eager=off threads=2").c_str(),nullptr);
+        " residentWeights="+(residentWeights?"true":"false")+
+        " nativeBuild=RELEASE_OPTIMIZED prefetch=off eager=off threads=2").c_str(),nullptr);
     sd_ctx_params_t settings{};
     sd_ctx_params_init(&settings);
     settings.diffusion_model_path=model.c_str();

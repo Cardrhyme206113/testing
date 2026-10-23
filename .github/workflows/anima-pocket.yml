@@ -39,9 +39,13 @@ jobs:
           cp -a /usr/include/vulkan anima-pocket/app/src/main/cpp/vulkan-headers/
           if [ -d /usr/include/vk_video ]; then cp -a /usr/include/vk_video anima-pocket/app/src/main/cpp/vulkan-headers/; fi
           cp -a /usr/include/spirv anima-pocket/app/src/main/cpp/vulkan-headers/
-      - name: Build ARM64 APK
-        run: cd anima-pocket && gradle --no-daemon --max-workers=2 assembleDebug
+      - name: Build optimized ARM64 APK (Release CMake + test signing)
+        run: cd anima-pocket && gradle --no-daemon --max-workers=2 assembleRelease
+      - name: Verify optimized signed APK exists
+        run: |
+          test -s anima-pocket/app/build/outputs/apk/release/app-release.apk
+          unzip -l anima-pocket/app/build/outputs/apk/release/app-release.apk | grep 'lib/arm64-v8a/libanimabridge.so'
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimaPocket-ARM64-APK
-          path: anima-pocket/app/build/outputs/apk/debug/app-debug.apk
+          name: AnimaPocket-v0.4.0-Performance-Lab-ARM64
+          path: anima-pocket/app/build/outputs/apk/release/app-release.apk

@@ -37,7 +37,9 @@ public class MainActivity extends Activity {
     public native void cancelNative();
     public native int[] generateNative(String model, String encoder, String decoder, boolean tae,
         String prompt, int width, int height, int steps, long seed, float cfg,
-        String backend, boolean flash, boolean diskEncoder, boolean profileLayers);
+        String backend, boolean flash, boolean diskEncoder, boolean profileLayers,
+        boolean residentWeights);
+    public native String benchmarkMatmulNative();
 
     final String[] KEYS={"model","encoder","decoder"};
     final String[] URLS={
@@ -60,8 +62,13 @@ public class MainActivity extends Activity {
     volatile boolean profilingLayers=false;
     long lastNativeCpuTicks=-1, lastPswpIn=-1, lastPswpOut=-1, lastMajFault=-1;
     EditText prompt, seed;
-    Spinner decoderType, resolution, steps, backend;
+    Spinner decoderType, resolution, steps, backend, weightsMode;
     CheckBox flash, lowRamEncoder, profileLayers;
+    Button benchmarkButton, matmulButton;
+    volatile boolean benchmarkRun=false;
+    volatile double[] lastStepSeconds=new double[33];
+    volatile String runBackend="?", runWeights="?", runResolution="?";
+    volatile boolean runFlash=false, runDiskEncoder=false;
     final ScheduledExecutorService memoryWatcher=Executors.newSingleThreadScheduledExecutor();
     volatile ScheduledFuture<?> memoryTask;
     ImageView image;
@@ -94,6 +101,11 @@ public class MainActivity extends Activity {
                 if(total==desiredSteps){
                     if(step>completedSteps){
                         completedSteps=step;
+                        try{
+                            int start=s.indexOf(" · ");
+                            int end=s.indexOf(" s/step",start);
+                            if(start>=0&&end>start)lastStepSeconds[step]=Double.parseDouble(s.substring(start+3,end));
+                        }catch(Exception ignored){}
                         appendDiagnostic("STEP_DONE "+step+"/"+total+" at "+(lastNativeEventMs-generationStartMs)+"ms; "+s);
                     }
                     setStage(step>=total?"Sampling finished; awaiting decoder":
@@ -268,19 +280,30 @@ public class MainActivity extends Activity {
         prompt.setGravity(android.view.Gravity.TOP);prompt.setText(preferences.getString("prompt","anime illustration of a city at night"));
         prompt.setPadding(dp(14),dp(14),dp(14),dp(14));prompt.setBackground(shape(panel));add(root,prompt,5);
         add(root,text("Resolution",13,hint),12);
-        resolution=spinner(new String[]{"384 × 384","512 × 512","512 × 384","384 × 512"},0);add(root,resolution,2);
+        resolution=spinner(new String[]{"384 × 384","512 × 512","512 × 384","384 × 512",
+            "256 × 256 (performance test)","320 × 320 (performance test)"},0);add(root,resolution,2);
         add(root,text("Sampling steps",13,hint),12);
         steps=spinner(new String[]{"4","6","8","10"},0);add(root,steps,2);
         add(root,text("Backend",13,hint),12);
-        backend=spinner(new String[]{"Vulkan auto (no explicit VRAM limit)","Vulkan 1.5 GiB managed budget","CPU only (slow diagnostic)"},
-            Math.min(2,Math.max(0,preferences.getInt("backend_choice",0))));
+        backend=spinner(new String[]{"Vulkan auto (no explicit VRAM limit)",
+            "Vulkan 1.5 GiB managed budget","CPU only (slow diagnostic)",
+            "Vulkan 2.5 GiB managed budget (experiment)"},
+            Math.min(3,Math.max(0,preferences.getInt("backend_choice",0))));
         add(root,text("Vulkan uses shared RAM. Auto removes the app's Vulkan budget, but can still freeze or restart this phone. No 5 GiB free-RAM requirement.",12,0xffffc278),6);add(root,backend,2);
+        add(root,text("Anima weight residency",13,hint),10);
+        weightsMode=spinner(new String[]{"Disk-backed (original, more memory-flexible)",
+            "GPU-resident weights (experimental; more memory)"},0);
+        weightsMode.setSelection(Math.min(1,Math.max(0,preferences.getInt("weights_mode",0))));
+        add(root,weightsMode,3);
+        add(root,text("Resident mode avoids disk-backed eviction but may exceed 1.5 GiB managed budget. Try with 2.5 GiB or auto only after testing the original profile. Increased risk of driver stalls/reboots.",12,0xffffc278),5);
         lowRamEncoder=new CheckBox(this);
         lowRamEncoder.setText("Low RAM: stream Qwen encoder weights from disk (slower)");
         lowRamEncoder.setChecked(preferences.getBoolean("encoder_disk",false));
         lowRamEncoder.setTextColor(hint);
         add(root,lowRamEncoder,6);
-        flash=new CheckBox(this);flash.setText("Experimental diffusion Flash Attention");flash.setTextColor(hint);add(root,flash,7);
+        flash=new CheckBox(this);flash.setText("Experimental diffusion Flash Attention");
+        flash.setChecked(preferences.getBoolean("flash_enabled",false));
+        flash.setTextColor(hint);add(root,flash,7);
         profileLayers=new CheckBox(this);
         profileLayers.setText("DIAGNOSTIC: profile individual Anima transformer layers (slower; changes GPU execution)");
         profileLayers.setTextColor(0xffffc278);add(root,profileLayers,7);
@@ -288,6 +311,12 @@ public class MainActivity extends Activity {
         seed=new EditText(this);seed.setTextColor(Color.WHITE);seed.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
         seed.setText("-1");seed.setSingleLine();seed.setBackground(shape(panel));seed.setPadding(dp(12),dp(10),dp(12),dp(10));add(root,seed,2);
         go=button("Generate",this::start);go.setBackground(shape(accent));add(root,go,16);
+        benchmarkButton=button("Benchmark selected settings (2 diffusion steps)",()->startWithMode(true));
+        add(root,benchmarkButton,7);
+        add(root,text("Runs 2 steps at selected settings, records first and warm-step times. No automatic multi-profile stress test; change one option at a time.",12,hint),2);
+        matmulButton=button("Benchmark Mali GPU Q4_0 vs FP16 kernels (no model required)",this::runMatmulBenchmark);
+        add(root,matmulButton,9);
+        add(root,button("Copy performance history (CSV)",this::copyBenchmarkHistory),6);
         stop=button("Cancel",()->{cancelNative();notifyStatus("Cancel requested…");});stop.setEnabled(false);add(root,stop,7);
         status=text("Ready. Select three files.",13,hint);add(root,status,12);
         liveMetrics=text("Live diagnostic heartbeat appears here during generation.",12,0xff9ac4ee);
@@ -318,7 +347,7 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_DIAG v0.3.3 ready; "+previousProcessExit());
+        appendDiagnostic("ANIMA_PERF v0.4.0 optimized native build ready; "+previousProcessExit());
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
         }
@@ -365,30 +394,39 @@ public class MainActivity extends Activity {
     }
     void busy(boolean b){
         running=b;runOnUiThread(()->{go.setEnabled(!b);stop.setEnabled(b);
+            if(benchmarkButton!=null)benchmarkButton.setEnabled(!b);
+            if(matmulButton!=null)matmulButton.setEnabled(!b);
             if(b)getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         });
     }
-    void start(){
+    void start(){startWithMode(false);}
+    void startWithMode(boolean benchmark){
         if(running)return;
         if(backend.getSelectedItemPosition()!=2){
             new android.app.AlertDialog.Builder(this)
-                .setTitle("Vulkan memory and driver warning")
-                .setMessage("GPU allocations use shared phone RAM. Auto mode has no explicit Vulkan memory budget. This phone previously suffered a near-freeze/reboot during diffusion. Proceed only if you accept that risk; a managed budget is optional.")
+                .setTitle(benchmark?"Benchmark GPU memory warning":"Vulkan memory and driver warning")
+                .setMessage("GPU allocations use shared RAM. GPU-resident weights and auto memory mode are experimental; either can freeze or restart this phone. Never run a performance benchmark unattended. Keep layer profiling OFF for valid timing.")
                 .setNegativeButton("Cancel",null)
-                .setPositiveButton("Proceed anyway",(dialog,which)->startUnchecked())
+                .setPositiveButton("Proceed",(dialog,which)->startUnchecked(benchmark))
                 .show();
-        }else startUnchecked();
+        }else startUnchecked(benchmark);
     }
-    void startUnchecked(){
+    void startUnchecked(boolean benchmark){
         if(running)return;
         String[] selected=new String[3];for(int n=0;n<3;n++){selected[n]=preferences.getString(KEYS[n],null);
             if(selected[n]==null){Toast.makeText(this,"Choose all model files",Toast.LENGTH_SHORT).show();return;}}
         String p=prompt.getText().toString().trim();if(p.isEmpty()){Toast.makeText(this,"Enter a prompt",Toast.LENGTH_SHORT).show();return;}
         String[] wh=resolution.getSelectedItem().toString().replace(" ","").split("×");
-        int w=Integer.parseInt(wh[0]),h=Integer.parseInt(wh[1]),s=Integer.parseInt(steps.getSelectedItem().toString());
-        String[] backends={"vulkan-auto","vulkan-1.5","cpu"};
+        int w=Integer.parseInt(wh[0]),h=Integer.parseInt(wh[1]);
+        int s=benchmark?2:Integer.parseInt(steps.getSelectedItem().toString());
+        String[] backends={"vulkan-auto","vulkan-1.5","cpu","vulkan-2.5"};
         String target=backends[backend.getSelectedItemPosition()];
+        boolean residentWeights=weightsMode.getSelectedItemPosition()==1 && backend.getSelectedItemPosition()!=2;
+        if(benchmark && profileLayers.isChecked()){
+            Toast.makeText(this,"Turn OFF transformer layer profiling for a valid speed benchmark",Toast.LENGTH_LONG).show();
+            return;
+        }
         android.app.ActivityManager am=(android.app.ActivityManager)getSystemService(ACTIVITY_SERVICE);
         android.app.ActivityManager.MemoryInfo mi=new android.app.ActivityManager.MemoryInfo();
         if(am!=null){
@@ -404,6 +442,8 @@ public class MainActivity extends Activity {
         boolean tae=decoderType.getSelectedItemPosition()==0, fa=flash.isChecked();
         boolean diskEncoder=lowRamEncoder.isChecked();
         preferences.edit().putBoolean("encoder_disk",diskEncoder)
+            .putBoolean("flash_enabled",fa)
+            .putInt("weights_mode",weightsMode.getSelectedItemPosition())
             .putInt("backend_choice",backend.getSelectedItemPosition()).apply();
         long rand;try{rand=Long.parseLong(seed.getText().toString());}catch(NumberFormatException e){rand=-1;}
         if(rand<0)rand=new SecureRandom().nextLong()&Long.MAX_VALUE;
@@ -413,12 +453,16 @@ public class MainActivity extends Activity {
         lastNativeEventMs=generationStartMs;
         stageStartMs=generationStartMs;
         completedSteps=0; desiredSteps=s; workerTid=0;
+        benchmarkRun=benchmark;
+        lastStepSeconds=new double[33];
+        runBackend=target; runWeights=residentWeights?"resident":"disk";
+        runResolution=w+"x"+h; runFlash=fa; runDiskEncoder=diskEncoder;
         profilingLayers=profileLayers.isChecked();
         lastNativeCpuTicks=lastPswpIn=lastPswpOut=lastMajFault=-1;
         setStage("Preparing model files");
         beginSessionLog();
-        appendDiagnostic("Anima Pocket v0.3.3 deep diagnostics, native init");
-        appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder+"; profileLayers "+profilingLayers);
+        appendDiagnostic("Anima Pocket v0.4.0 performance lab, optimized native build; benchmark="+benchmark);
+        appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder+"; residentWeights "+residentWeights+"; profileLayers "+profilingLayers);
         if(am!=null)appendDiagnostic("Free system RAM "+(mi.availMem/1048576)+" MiB; lowMemory="+mi.lowMemory);
         for(int n=0;n<3;n++)appendDiagnostic("Selected file "+n+": "+preferences.getString(KEYS[n]+"_name","?"));
         busy(true);
@@ -430,17 +474,21 @@ public class MainActivity extends Activity {
                 long began=System.nanoTime();
                 workerTid=android.os.Process.myTid();
                 appendDiagnostic("ANIMA_DIAG_NATIVE_THREAD tid="+workerTid);
-                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder,profilingLayers);
+                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder,profilingLayers,residentWeights);
                 if(pixels==null||pixels.length!=w*h)throw new IOException("Invalid native output");
                 Bitmap bmp=Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888);
                 setStage("Saving finished image");
                 Uri saved=save(bmp,id);long seconds=(System.nanoTime()-began)/1000000000L;
                 appendDiagnostic("ANIMA_DIAG_SUCCESS total_ms="+(SystemClock.elapsedRealtime()-generationStartMs)+" saved="+saved);
-                runOnUiThread(()->{image.setImageBitmap(bmp);status.setText("Complete in "+seconds+"s · seed "+id);outputs.setText("Saved "+saved);});
+                if(benchmark)recordBenchmarkResult(true,"OK");
+                runOnUiThread(()->{image.setImageBitmap(bmp);
+                    status.setText((benchmark?"Benchmark complete":"Complete")+" in "+seconds+"s · seed "+id);
+                    outputs.setText("Saved "+saved);});
             }catch(Throwable e){
                 runOnUiThread(()->{
                     setStage("Generation error");
                     appendDiagnostic("ERROR "+e.toString());
+                    if(benchmark)recordBenchmarkResult(false,e.getClass().getSimpleName());
                     showDiagnostics();
                     status.setText("Error: "+e.getMessage()+" — tap Copy log below.");
                 });
@@ -456,6 +504,61 @@ public class MainActivity extends Activity {
             }
         });
     }
+
+    File perfHistoryFile(){
+        return new File(getFilesDir(),"performance-benchmarks.csv");
+    }
+    void saveBenchRow(String line){
+        try(BufferedWriter writer=new BufferedWriter(new FileWriter(perfHistoryFile(),true))){
+            writer.write(line);writer.newLine();
+        }catch(IOException e){appendDiagnostic("BENCH_SAVE_ERROR "+e);}
+    }
+    void recordBenchmarkResult(boolean ok,String outcome){
+        String row=System.currentTimeMillis()+","+runBackend+","+runWeights+","+runResolution+","+
+            (runFlash?"flash":"standard")+","+(runDiskEncoder?"qwenDisk":"qwenRAM")+","+
+            (profilingLayers?"layerProfile":"normal")+","+
+            String.format(Locale.US,"%.3f",lastStepSeconds[1])+","+
+            String.format(Locale.US,"%.3f",lastStepSeconds[2])+","+
+            (SystemClock.elapsedRealtime()-generationStartMs)+","+
+            (ok?"OK":outcome);
+        appendDiagnostic("PERF_RESULT CSV="+row);
+        saveBenchRow(row);
+    }
+    void copyBenchmarkHistory(){
+        File file=perfHistoryFile();
+        if(!file.isFile()){
+            Toast.makeText(this,"No benchmark results yet",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        StringBuilder csv=new StringBuilder("timeEpochMs,backend,residency,resolution,attention,encoder,profiling,step1Seconds,step2Seconds,totalMs,result\\n");
+        try(BufferedReader reader=new BufferedReader(new FileReader(file))){
+            String line;
+            while((line=reader.readLine())!=null)csv.append(line).append('\n');
+            copyText("Anima performance history",csv.toString());
+        }catch(IOException e){Toast.makeText(this,"Could not load benchmark history: "+e,Toast.LENGTH_LONG).show();}
+    }
+    void runMatmulBenchmark(){
+        if(running)return;
+        busy(true);
+        setStage("Running Q4_0 vs FP16 Mali benchmark");
+        runOnUiThread(()->{if(status!=null)status.setText("Benchmarking isolated GPU matrix multiplication...");});
+        executor.execute(()->{
+            try{
+                String report=benchmarkMatmulNative();
+                appendDiagnostic("PERF_MATMUL_BENCH\\n"+report);
+                saveBenchRow("# MATRIX_KERNEL "+new java.util.Date()+"\\n"+report.replace('\n',';'));
+                runOnUiThread(()->{
+                    if(status!=null)status.setText("Matrix benchmark completed. Copy performance history or log.");
+                    if(liveMetrics!=null)liveMetrics.setText(report);
+                    showDiagnostics();
+                });
+            }catch(Throwable e){
+                appendDiagnostic("PERF_MATMUL_ERROR "+e);
+                runOnUiThread(()->{if(status!=null)status.setText("Matrix benchmark error: "+e);});
+            }finally{busy(false);}
+        });
+    }
+
     Map<String,Long> readKernelNumbers(String path,boolean colon){
         Map<String,Long> m=new HashMap<>();
         try(BufferedReader r=new BufferedReader(new FileReader(path))){

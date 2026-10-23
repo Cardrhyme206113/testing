@@ -1,4 +1,4 @@
-# Anima Pocket — deep GPU diagnostics / v0.3.3
+# Anima Pocket — performance lab / v0.4.0
 
 Experimental offline Anima image generation for Android ARM64 using stable-diffusion.cpp.
 
@@ -59,3 +59,35 @@ uninstall deletes private app files. Logs are best effort and cannot capture a
 GPU driver crash or system freeze that prevents Android from scheduling the watchdog.
 
 This is a diagnostic build, not a proven stability or inference-speed fix.
+
+
+### v0.4.0 performance lab
+
+- GitHub Actions now calls **assembleRelease** so the NDK/CMake GGML and
+  stable-diffusion.cpp build use optimized Release compile flags. The release APK
+  is signed using GitHub's ephemeral Android debug signing identity for testing.
+  Native engine diagnostic logs remain available. No claim of a measurable speedup
+  before a device comparison.
+- The original **disk-backed diffusion weights** mode remains default. An opt-in
+  GPU-resident diffusion weight mode uses \`params_backend=diffusion=vulkan0\`.
+  On 1.5 GiB managed Vulkan, resident model weights plus activations may not fit.
+  The optional **2.5 GiB managed budget** is a less restrictive alternative;
+  auto is still unlimited and can stall or restart the phone.
+- Selectable **256×256** and **320×320** performance-test resolutions alongside
+  existing 384/512 settings. The Anima model's quality may degrade at very low
+  resolution; these are speed experiments, not final image-quality presets.
+- A manual **Benchmark selected settings (2 diffusion steps)** button runs
+  the current settings with two steps, saves a generated PNG, and records step 1
+  (initialization) and step 2 (warm) durations to
+  \`files/performance-benchmarks.csv\`; use **Copy performance history** to export.
+  Layer profiling must be off for comparisons. No unattended multi-run stress
+  loop: a Vulkan driver stall/reboot is possible.
+- **Benchmark Mali GPU Q4_0 vs FP16 kernels** runs a small synthetic 2048×2048
+  by 2048×128 GGML matrix multiplication on Vulkan0 in both formats and compares
+  its output against a CPU backend with the same quantized weights. Reports
+  first-iteration time, mean of three warmed iterations, numerical RMSE and
+  nonfinite counts. It does **not** quantize or replace the real model.
+- Maintain the existing persistent logs, normal inference path, selectable
+  Flash Attention, and diagnostic layer-profile opt-in. Shader/kernel
+  performance must be measured on the real Mali GPU; successful GitHub
+  compilation alone does not verify runtime inference or numerical correctness.
