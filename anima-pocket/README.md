@@ -1,4 +1,4 @@
-# Anima Pocket — Q4_0 to temporary FP16 GPU computation / v0.4.1
+# Anima Pocket — fast sampling experiments / v0.4.2
 
 Experimental offline Anima image generation for Android ARM64 using stable-diffusion.cpp.
 
@@ -103,3 +103,16 @@ transient GPU memory. Default remains OFF. Benchmark the standalone Q4 native,
 Q4 temporary FP16 and FP16 paths at N=128 and N=576 before full generation.
 The two-step benchmark now exports q4ComputeMode as an additional CSV column.
 Testing runtime speed and correctness requires the real Mali GPU.
+
+### v0.4.2 Speed experiments
+
+Original 384x384 four-step inference is unchanged by default. For comparison,
+the app now exposes 2-step and 3-step sampling (quality can degrade);
+upstream EasyCache OFF/conservative threshold=0.10/balanced threshold=0.20
+(approximate reuse of denoiser outputs, quality may change); and configurable
+2/4/6 CPU threads for the text encoder and TAE decode. None of these is a
+measured full-quality speedup until tested on Mali-G720. The engine logs
+how many sampling steps EasyCache actually skips. Benchmark CSV adds
+cacheProfile, cpuThreads and steps columns. The TAE decoder heartbeat
+now correctly identifies image decoding instead of diffusion step 4/4.
+Do not run experimental Vulkan profiles unattended.

@@ -38,7 +38,7 @@ public class MainActivity extends Activity {
     public native int[] generateNative(String model, String encoder, String decoder, boolean tae,
         String prompt, int width, int height, int steps, long seed, float cfg,
         String backend, boolean flash, boolean diskEncoder, boolean profileLayers,
-        boolean residentWeights, boolean q4Fp16Compute);
+        boolean residentWeights, boolean q4Fp16Compute, int cacheProfile, int cpuThreads);
     public native String benchmarkMatmulNative();
 
     final String[] KEYS={"model","encoder","decoder"};
@@ -62,13 +62,14 @@ public class MainActivity extends Activity {
     volatile boolean profilingLayers=false;
     long lastNativeCpuTicks=-1, lastPswpIn=-1, lastPswpOut=-1, lastMajFault=-1;
     EditText prompt, seed;
-    Spinner decoderType, resolution, steps, backend, weightsMode;
+    Spinner decoderType, resolution, steps, backend, weightsMode, cacheMode, cpuThreads;
     CheckBox flash, lowRamEncoder, profileLayers, q4Fp16;
     Button benchmarkButton, matmulButton;
     volatile boolean benchmarkRun=false;
     volatile double[] lastStepSeconds=new double[33];
     volatile String runBackend="?", runWeights="?", runResolution="?";
     volatile boolean runFlash=false, runDiskEncoder=false, runQ4Fp16=false;
+    volatile int runCache=0, runThreads=2, runSteps=4;
     final ScheduledExecutorService memoryWatcher=Executors.newSingleThreadScheduledExecutor();
     volatile ScheduledFuture<?> memoryTask;
     ImageView image;
@@ -126,8 +127,10 @@ public class MainActivity extends Activity {
         lastNativeEventMs=SystemClock.elapsedRealtime();
         if(message.contains("ANIMA_DIAG_BEGIN")){
             int layer=message.indexOf("layer=");
-            setStage("Diffusion step "+Math.min(desiredSteps,completedSteps+1)+"/"+desiredSteps+
-                " · "+(layer>=0?message.substring(layer,Math.min(message.length(),layer+50)).split(" ---")[0]:"GPU graph"));
+            String component=message.contains("model=taehv")?"Decoding image with TAE":
+                message.contains("model=qwen3")?"Encoding text with Qwen":
+                "Diffusion step "+Math.min(desiredSteps,completedSteps+1)+"/"+desiredSteps;
+            setStage(component+" · "+(layer>=0?message.substring(layer,Math.min(message.length(),layer+50)).split(" ---")[0]:"graph"));
         }else if(message.contains("anima executing segment ")){
             setStage("Diffusion step "+Math.min(desiredSteps,completedSteps+1)+"/"+desiredSteps+" · GPU graph running");
         }else if(message.contains("qwen3 executing segment ")){
@@ -283,7 +286,8 @@ public class MainActivity extends Activity {
         resolution=spinner(new String[]{"384 × 384","512 × 512","512 × 384","384 × 512",
             "256 × 256 (performance test)","320 × 320 (performance test)"},0);add(root,resolution,2);
         add(root,text("Sampling steps",13,hint),12);
-        steps=spinner(new String[]{"4","6","8","10"},0);add(root,steps,2);
+        steps=spinner(new String[]{"4","2","3","6","8","10"},0);add(root,steps,2);
+        add(root,text("2 or 3 steps are faster but can reduce output quality. Original 4 steps remain default.",12,hint),2);
         add(root,text("Backend",13,hint),12);
         backend=spinner(new String[]{"Vulkan auto (no explicit VRAM limit)",
             "Vulkan 1.5 GiB managed budget","CPU only (slow diagnostic)",
@@ -309,6 +313,15 @@ public class MainActivity extends Activity {
         q4Fp16.setChecked(preferences.getBoolean("q4_fp16_compute",false));
         q4Fp16.setTextColor(0xffffca85);add(root,q4Fp16,8);
         add(root,text("Stores compact Q4_0 weights; converts only the current matrix into a reusable FP16 GPU scratch buffer. May be faster or slower and use more transient memory.",12,0xffffc278),2);
+        add(root,text("Approximate diffusion-output caching",13,hint),10);
+        cacheMode=spinner(new String[]{"Off (original)", "EasyCache conservative (0.10)", "EasyCache balanced (0.20)"},
+            Math.min(2,Math.max(0,preferences.getInt("cache_choice",0))));
+        add(root,cacheMode,4);
+        add(root,text("Can skip entire transformer passes when successive steps are similar. Quality may change; four-step models may not benefit. Engine logs report skips.",12,0xffffc278),4);
+        add(root,text("CPU threads (Qwen / TAE decoder)",13,hint),10);
+        cpuThreads=spinner(new String[]{"2 original","4","6"},
+            Math.min(2,Math.max(0,preferences.getInt("cpu_threads_choice",0))));
+        add(root,cpuThreads,4);
         profileLayers=new CheckBox(this);
         profileLayers.setText("DIAGNOSTIC: profile individual Anima transformer layers (slower; changes GPU execution)");
         profileLayers.setTextColor(0xffffc278);add(root,profileLayers,7);
@@ -352,7 +365,7 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_PERF v0.4.1 temporary FP16 compute ready; "+previousProcessExit());
+        appendDiagnostic("ANIMA_PERF v0.4.2 fast sampling ready; "+previousProcessExit());
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
         }
@@ -447,7 +460,11 @@ public class MainActivity extends Activity {
         boolean tae=decoderType.getSelectedItemPosition()==0, fa=flash.isChecked();
         boolean diskEncoder=lowRamEncoder.isChecked();
         boolean q4Fast=q4Fp16.isChecked() && backend.getSelectedItemPosition()!=2;
-        preferences.edit().putBoolean("q4_fp16_compute",q4Fp16.isChecked())
+        int cacheProfile=cacheMode.getSelectedItemPosition();
+        int threads=new int[]{2,4,6}[cpuThreads.getSelectedItemPosition()];
+        preferences.edit().putInt("cache_choice",cacheProfile)
+            .putInt("cpu_threads_choice",cpuThreads.getSelectedItemPosition())
+            .putBoolean("q4_fp16_compute",q4Fp16.isChecked())
             .putBoolean("encoder_disk",diskEncoder)
             .putBoolean("flash_enabled",fa)
             .putInt("weights_mode",weightsMode.getSelectedItemPosition())
@@ -464,12 +481,14 @@ public class MainActivity extends Activity {
         lastStepSeconds=new double[33];
         runBackend=target; runWeights=residentWeights?"resident":"disk";
         runResolution=w+"x"+h; runFlash=fa; runDiskEncoder=diskEncoder; runQ4Fp16=q4Fast;
+        runCache=cacheProfile; runThreads=threads; runSteps=s;
         profilingLayers=profileLayers.isChecked();
         lastNativeCpuTicks=lastPswpIn=lastPswpOut=lastMajFault=-1;
         setStage("Preparing model files");
         beginSessionLog();
-        appendDiagnostic("Anima Pocket v0.4.1 Q4->FP16 experiment, optimized native build; benchmark="+benchmark);
-        appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder+"; residentWeights "+residentWeights+"; q4Fp16Compute "+q4Fast+"; profileLayers "+profilingLayers);
+        appendDiagnostic("Anima Pocket v0.4.2 fast sampling, optimized native build; benchmark="+benchmark);
+        appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder+"; residentWeights "+residentWeights+"; q4Fp16Compute "+q4Fast+"; cacheProfile "+cacheProfile+
+            "; cpuThreads "+threads+"; profileLayers "+profilingLayers);
         if(am!=null)appendDiagnostic("Free system RAM "+(mi.availMem/1048576)+" MiB; lowMemory="+mi.lowMemory);
         for(int n=0;n<3;n++)appendDiagnostic("Selected file "+n+": "+preferences.getString(KEYS[n]+"_name","?"));
         busy(true);
@@ -481,7 +500,7 @@ public class MainActivity extends Activity {
                 long began=System.nanoTime();
                 workerTid=android.os.Process.myTid();
                 appendDiagnostic("ANIMA_DIAG_NATIVE_THREAD tid="+workerTid);
-                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder,profilingLayers,residentWeights,q4Fast);
+                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder,profilingLayers,residentWeights,q4Fast,cacheProfile,threads);
                 if(pixels==null||pixels.length!=w*h)throw new IOException("Invalid native output");
                 Bitmap bmp=Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888);
                 setStage("Saving finished image");
@@ -527,7 +546,8 @@ public class MainActivity extends Activity {
             String.format(Locale.US,"%.3f",lastStepSeconds[1])+","+
             String.format(Locale.US,"%.3f",lastStepSeconds[2])+","+
             (SystemClock.elapsedRealtime()-generationStartMs)+","+
-            (ok?"OK":outcome)+","+(runQ4Fp16?"q4ToFp16":"nativeQ4");
+            (ok?"OK":outcome)+","+(runQ4Fp16?"q4ToFp16":"nativeQ4")+","+
+            runCache+","+runThreads+","+runSteps;
         appendDiagnostic("PERF_RESULT CSV="+row);
         saveBenchRow(row);
     }
@@ -537,7 +557,7 @@ public class MainActivity extends Activity {
             Toast.makeText(this,"No benchmark results yet",Toast.LENGTH_SHORT).show();
             return;
         }
-        StringBuilder csv=new StringBuilder("timeEpochMs,backend,residency,resolution,attention,encoder,profiling,step1Seconds,step2Seconds,totalMs,result,q4ComputeMode\n");
+        StringBuilder csv=new StringBuilder("timeEpochMs,backend,residency,resolution,attention,encoder,profiling,step1Seconds,step2Seconds,totalMs,result,q4ComputeMode,cacheProfile,cpuThreads,steps\n");
         try(BufferedReader reader=new BufferedReader(new FileReader(file))){
             String line;
             while((line=reader.readLine())!=null)csv.append(line).append('\n');
