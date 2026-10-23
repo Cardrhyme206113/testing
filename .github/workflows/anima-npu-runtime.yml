@@ -1,0 +1,159 @@
+name: Anima NPU Runtime - real A16W4 .pte and Android APK
+on:
+  push:
+    branches: [anima-pocket]
+    paths:
+      - '.github/workflows/anima-npu-runtime.yml'
+      - 'anima-pocket/app/**'
+      - 'anima-pocket/npu-export/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-npu-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      NEUROPILOT_URL: https://s3.ap-southeast-1.amazonaws.com/mediatek.neuropilot.com/b1c485de-fca8-4b20-836a-8b33152a3609.gz
+      NEUROPILOT_SHA256: 42155c3b25e9f9af1bef55534d0700835f32564a289e8cb1e44f0b2433ddab48
+      ANIMA_URL: https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.1.safetensors
+      ANIMA_SHA256: fba11953276b57edf59d1dc4f1857ac05aa079c56f982b4d7c20298d57d3f7eb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+          cache-dependency-path: anima-pocket/npu-export/requirements.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      - name: Install build tools and Android NDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc libvulkan-dev spirv-headers ninja-build cmake
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+          df -h .
+
+      - name: Fetch NeuroPilot Express public SDK and inspect runtime contents
+        run: |
+          curl --fail --location --retry 3 --retry-all-errors --output "$RUNNER_TEMP/neuropilot.tar.gz" "$NEUROPILOT_URL"
+          echo "$NEUROPILOT_SHA256  $RUNNER_TEMP/neuropilot.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/mtk"
+          tar -xzf "$RUNNER_TEMP/neuropilot.tar.gz" -C "$RUNNER_TEMP/mtk"
+          find "$RUNNER_TEMP/mtk" -type f -name 'libneuron*.so' -print
+          find "$RUNNER_TEMP/mtk" -type f -name 'NeuronAdapter.h' -print
+          find "$RUNNER_TEMP/mtk" -type f -name '*.whl' -print
+          df -h .
+
+      - name: Install CPU exporter and MediaTek converter
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --no-cache-dir -r anima-pocket/npu-export/requirements.txt
+          NEURON_WHL=$(find "$RUNNER_TEMP/mtk" -name 'mtk_neuron-8.2.23-*.whl' -print -quit)
+          CONVERTER_WHL=$(find "$RUNNER_TEMP/mtk" -name 'mtk_converter-8.13.0+public-cp310-*.whl' -print -quit)
+          test -n "$NEURON_WHL" && test -n "$CONVERTER_WHL"
+          python -m pip install --no-cache-dir "$NEURON_WHL" "$CONVERTER_WHL"
+          python -m pip check
+
+      - name: Compile REAL Anima FP16 attention projection to A16W4 MediaTek .pte
+        run: |
+          curl --fail --location --retry 3 --retry-all-errors --output "$RUNNER_TEMP/anima-turbo-v1.1.safetensors" "$ANIMA_URL"
+          echo "$ANIMA_SHA256  $RUNNER_TEMP/anima-turbo-v1.1.safetensors" | sha256sum -c -
+          python anima-pocket/npu-export/compile_probe.py \
+            --checkpoint "$RUNNER_TEMP/anima-turbo-v1.1.safetensors" \
+            --device mt6989 \
+            --out out/anima-real-projection-mt6989-a16w4.pte
+          test -s out/anima-real-projection-mt6989-a16w4.pte
+          python -m json.tool out/anima-real-projection-mt6989-a16w4.json
+          df -h .
+
+      - name: Build MediaTek-enabled ExecuTorch Android AAR (not generic CPU AAR)
+        run: |
+          git clone --depth 1 --branch v1.5.1 --recurse-submodules \
+            https://github.com/pytorch/executorch.git "$RUNNER_TEMP/executorch"
+          cd "$RUNNER_TEMP/executorch"
+          HEADER=$(find "$RUNNER_TEMP/mtk" -name 'NeuronAdapter.h' -type f -print -quit)
+          ALLOC=$(find "$RUNNER_TEMP/mtk" -name 'libneuron_buffer_allocator.so' -type f -print -quit)
+          ADAPTER=$(find "$RUNNER_TEMP/mtk" -name 'libneuronusdk_adapter.mtk.so' -type f -print -quit)
+          if [[ -z "$HEADER" || -z "$ALLOC" || -z "$ADAPTER" ]]; then
+            echo "::error::Missing NeuronAdapter.h or native SDK .so libraries"
+            exit 2
+          fi
+          cp "$HEADER" backends/mediatek/runtime/include/api/NeuronAdapter.h
+          export ANDROID_NDK="$ANDROID_HOME/ndk/27.2.12479018"
+          export ANDROID_SDK="$ANDROID_HOME"
+          export ANDROID_ABIS=arm64-v8a
+          export EXECUTORCH_BUILD_EXTENSION_LLM=ON
+          export EXECUTORCH_CMAKE_BUILD_TYPE=Release
+          export NEURON_BUFFER_ALLOCATOR_LIB="$ALLOC"
+          export NEURON_USDK_ADAPTER_LIB="$ADAPTER"
+          export BUILD_AAR_DIR="$GITHUB_WORKSPACE/anima-pocket/app/libs"
+          mkdir -p "$BUILD_AAR_DIR"
+          bash scripts/build_android_library.sh
+          test -s "$BUILD_AAR_DIR/executorch.aar"
+          unzip -l "$BUILD_AAR_DIR/executorch.aar" | grep -E 'libexecutorch.so|libneuron_backend.so|libneuronusdk_adapter.mtk.so|libneuron_buffer_allocator.so'
+          df -h .
+
+      - name: Check out stable-diffusion.cpp for legacy generation path
+        run: |
+          git clone --depth 1 --recurse-submodules https://github.com/leejet/stable-diffusion.cpp.git anima-pocket/app/src/main/cpp/stable-diffusion.cpp
+          cd anima-pocket/app/src/main/cpp/stable-diffusion.cpp
+          git fetch --depth 1 origin a77d3623180b2bc1886f3dd04c0aa04156a987ef
+          git checkout --detach a77d3623180b2bc1886f3dd04c0aa04156a987ef
+          git submodule update --init --recursive --depth 1
+          cd "$GITHUB_WORKSPACE"
+          python3 anima-pocket/app/src/main/cpp/instrument_upstream.py
+          mkdir -p anima-pocket/app/src/main/cpp/vulkan-headers
+          cp -a /usr/include/vulkan anima-pocket/app/src/main/cpp/vulkan-headers/
+          if [ -d /usr/include/vk_video ]; then cp -a /usr/include/vk_video anima-pocket/app/src/main/cpp/vulkan-headers/; fi
+          cp -a /usr/include/spirv anima-pocket/app/src/main/cpp/vulkan-headers/
+
+      - name: Build APK with actual ExecuTorch NPU implementation
+        run: |
+          cd anima-pocket
+          gradle --no-daemon --max-workers=2 assembleRelease
+          test -s app/build/outputs/apk/release/app-release.apk
+          unzip -l app/build/outputs/apk/release/app-release.apk | grep 'lib/arm64-v8a/libexecutorch.so'
+          unzip -l app/build/outputs/apk/release/app-release.apk | grep 'lib/arm64-v8a/libneuron_backend.so'
+          unzip -l app/build/outputs/apk/release/app-release.apk | grep 'lib/arm64-v8a/libneuronusdk_adapter.mtk.so'
+          unzip -l app/build/outputs/apk/release/app-release.apk | grep 'lib/arm64-v8a/libneuron_buffer_allocator.so'
+          unzip -l app/build/outputs/apk/release/app-release.apk | grep 'lib/arm64-v8a/libanimabridge.so'
+          df -h .
+
+      - name: Scope and limitations
+        if: always()
+        run: |
+          echo '### Anima NPU A16W4 hardware test' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The .pte contains ONE actual Anima Turbo v1.1 attention projection (FP16 activation, INT4 weight).' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The custom Android APK contains the MediaTek Neuropilot ExecuTorch runtime, and a button to load and execute that projection.' >> "$GITHUB_STEP_SUMMARY"
+          echo '**This is not yet a full image-generation model.** It requires on-device verification and full transformer+text+decoder graph export.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Do not use this experimental APK for unattended stress tests on a phone that has rebooted under load.' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Anima-NPU-INT4-A16W4-real-projection
+          path: |
+            out/*.pte
+            out/*.json
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AnimaPocket-v0.6.0-NPU-A16W4-Test-APK
+          path: anima-pocket/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: warn
+          retention-days: 7

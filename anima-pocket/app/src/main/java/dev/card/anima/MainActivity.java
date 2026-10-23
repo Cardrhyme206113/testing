@@ -65,7 +65,8 @@ public class MainActivity extends Activity {
     EditText prompt, seed;
     Spinner decoderType, resolution, steps, backend, weightsMode, cacheMode, cpuThreads;
     CheckBox flash, lowRamEncoder, profileLayers, q4Fp16;
-    Button benchmarkButton, matmulButton, npuButton;
+    Button benchmarkButton, matmulButton, npuButton, compiledNpuButton;
+    TextView compiledNpuFile;
     volatile String lastNpuReport="";
     volatile boolean benchmarkRun=false;
     volatile double[] lastStepSeconds=new double[33];
@@ -341,6 +342,13 @@ public class MainActivity extends Activity {
         add(root,npuButton,4);
         add(root,text("Strict NNAPI hardware-device selection: CPU/GPU fallback disabled. No models required; does not yet run Anima on the NPU. NNAPI may be unavailable even if LiteRT can access NeuroPilot.",12,hint),4);
         add(root,button("Copy NPU probe report",this::copyNpuProbe),5);
+        add(root,text("NEUROPILOT / REAL ANIMA A16W4 PROJECTION",15,accent),16);
+        add(root,text("Experimental INT4-weight ExecuTorch .pte runner. The downloadable test model contains ONE real Anima attention projection, not full image generation. A test success proves device-side compiled NPU inference only.",12,hint),3);
+        compiledNpuFile=text(preferences.getString("npu_pte_name","No compiled .pte selected"),12,hint);
+        add(root,compiledNpuFile,4);
+        add(root,button("Select compiled .pte model",()->pick(3)),5);
+        compiledNpuButton=button("Run real-weight INT4 NPU test (no CPU fallback)",this::runCompiledNpuTest);
+        add(root,compiledNpuButton,5);
         add(root,button("Copy performance history (CSV)",this::copyBenchmarkHistory),6);
         stop=button("Cancel",()->{cancelNative();notifyStatus("Cancel requested…");});stop.setEnabled(false);add(root,stop,7);
         status=text("Ready. Select three files.",13,hint);add(root,status,12);
@@ -379,8 +387,21 @@ public class MainActivity extends Activity {
     }
     void pick(int n){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);startActivityForResult(i,900+n);}
     @Override protected void onActivityResult(int request,int result,Intent data){
-        super.onActivityResult(request,result,data);if(result!=RESULT_OK||data==null||request<900||request>902)return;
+        super.onActivityResult(request,result,data);if(result!=RESULT_OK||data==null||request<900||request>903)return;
         int n=request-900;Uri uri=data.getData();if(uri==null)return;
+        if(n==3){
+            try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}
+            catch(SecurityException ignored){}
+            String name=fileName(uri);
+            if(!name.toLowerCase(Locale.ROOT).endsWith(".pte")){
+                Toast.makeText(this,"Expected a compiled ExecuTorch .pte model",Toast.LENGTH_LONG).show();
+                return;
+            }
+            preferences.edit().putString("npu_pte",uri.toString()).putString("npu_pte_name",name).apply();
+            compiledNpuFile.setText(name+" · selected; not yet executed");
+            appendDiagnostic("ANIMA_PTE_SELECTED "+name+" (hardware execution unverified)");
+            return;
+        }
         try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}
         catch(SecurityException e){Toast.makeText(this,"Read grant not persistent",Toast.LENGTH_LONG).show();}
         String name=fileName(uri);
@@ -422,6 +443,7 @@ public class MainActivity extends Activity {
             if(benchmarkButton!=null)benchmarkButton.setEnabled(!b);
             if(matmulButton!=null)matmulButton.setEnabled(!b);
             if(npuButton!=null)npuButton.setEnabled(!b);
+            if(compiledNpuButton!=null)compiledNpuButton.setEnabled(!b);
             if(b)getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         });
@@ -579,6 +601,64 @@ public class MainActivity extends Activity {
         }
         copyText("Anima NPU report",lastNpuReport);
     }
+    void runCompiledNpuTest(){
+        if(running)return;
+        String source=preferences.getString("npu_pte",null);
+        if(source==null){Toast.makeText(this,"Select the Anima A16W4 .pte model",Toast.LENGTH_LONG).show();return;}
+        // This is a single real transformer PROJECTION, not a diffusion or image generation path.
+        busy(true);
+        setStage("Loading compiled Anima projection");
+        appendDiagnostic("ANIMA_NPU_PTE_TEST_BEGIN model="+preferences.getString("npu_pte_name","?"));
+        executor.execute(()->{
+            try{
+                File dir=new File(getFilesDir(),"npu");
+                if(!dir.exists()&&!dir.mkdirs())throw new IOException("Cannot create NPU cache directory");
+                File target=new File(dir,"anima-projection.pte");
+                Uri uri=Uri.parse(source);
+                long size=-1;
+                try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){
+                    if(c!=null&&c.moveToFirst()&&!c.isNull(0))size=c.getLong(0);
+                }
+                if(size>100L*1048576L)throw new IOException("This diagnostic expects the 1 MiB projection .pte, not a full model. File is "+(size/1048576L)+" MiB.");
+                if(size>0 && dir.getUsableSpace()<size+32L*1048576L)throw new IOException("Insufficient free storage for .pte cache");
+                File temporary=new File(dir,"anima-projection.part");
+                long copied=0;
+                try(InputStream input=getContentResolver().openInputStream(uri);
+                    FileOutputStream output=new FileOutputStream(temporary)){
+                    if(input==null)throw new IOException("Android did not provide the selected .pte");
+                    byte[] buffer=new byte[256*1024];
+                    int n;
+                    while((n=input.read(buffer))>=0){
+                        copied+=n;
+                        if(copied>100L*1048576L)throw new IOException("Unexpectedly large diagnostic model");
+                        output.write(buffer,0,n);
+                    }
+                    output.getFD().sync();
+                }
+                if(copied<10000 || (size>=0 && copied!=size))throw new IOException("Compiled .pte length mismatch: "+copied+" vs provider="+size);
+                if(target.exists()&&!target.delete())throw new IOException("Cannot replace cached .pte");
+                if(!temporary.renameTo(target))throw new IOException("Cannot finalize cached .pte");
+                appendDiagnostic("ANIMA_NPU_PTE_LOADED bytes="+copied+" path="+target.getAbsolutePath());
+                String report=NpuPteTest.run(target);
+                appendDiagnostic("ANIMA_NPU_PTE_TEST_RESULT\n"+report);
+                lastNpuReport=report;
+                runOnUiThread(()->{
+                    status.setText("Compiled Anima NPU projection finished. Copy log for details.");
+                    liveMetrics.setText(report);
+                    showDiagnostics();
+                });
+            }catch(Throwable err){
+                String detail=android.util.Log.getStackTraceString(err);
+                appendDiagnostic("ANIMA_NPU_PTE_TEST_ERROR "+detail);
+                lastNpuReport="Compiled test FAILED: "+err;
+                runOnUiThread(()->{status.setText("NPU projection failed: "+err);liveMetrics.setText(detail);showDiagnostics();});
+            }finally{
+                appendDiagnostic("ANIMA_NPU_PTE_TEST_END");
+                busy(false);
+            }
+        });
+    }
+
     void runNpuProbe(){
         if(running)return;
         busy(true);

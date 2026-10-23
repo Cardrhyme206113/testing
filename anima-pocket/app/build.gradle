@@ -7,8 +7,8 @@ android {
         applicationId 'dev.card.anima'
         minSdk 30
         targetSdk 34
-        versionCode 11
-        versionName '0.5.1-npu-transformer-ops'
+        versionCode 12
+        versionName '0.6.0-npu-pte-runtime-alpha'
         ndk { abiFilters 'arm64-v8a' }
         externalNativeBuild { cmake { cppFlags '-std=c++17'; arguments '-DANDROID_STL=c++_shared' } }
     }
@@ -21,4 +21,17 @@ android {
         }
     }
     externalNativeBuild { cmake { path file('src/main/cpp/CMakeLists.txt'); version '3.22.1' } }
+}
+
+dependencies {
+    // Release builds with a locally compiled MediaTek-enabled AAR package the actual
+    // NeuropilotBackend. Generic app CI compiles the UI but cannot run .pte files.
+    if (file('libs/executorch.aar').exists()) {
+        implementation files('libs/executorch.aar')
+    } else {
+        compileOnly 'org.pytorch:executorch-android:1.5.1'
+    }
+    implementation 'com.facebook.fbjni:fbjni:0.7.0'
+    implementation 'com.facebook.soloader:nativeloader:0.10.5'
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:2.1.20'
 }
