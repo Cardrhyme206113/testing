@@ -1,4 +1,4 @@
-# Anima Pocket — fast sampling experiments / v0.4.2
+# Anima Pocket — NPU driver feasibility / v0.5.0
 
 Experimental offline Anima image generation for Android ARM64 using stable-diffusion.cpp.
 
@@ -116,3 +116,21 @@ how many sampling steps EasyCache actually skips. Benchmark CSV adds
 cacheProfile, cpuThreads and steps columns. The TAE decoder heartbeat
 now correctly identifies image decoding instead of diffusion step 4/4.
 Do not run experimental Vulkan profiles unattended.
+
+### v0.5.0 NPU hardware feasibility
+
+This adds a separate hardware-only NPU test without touching Anima's working
+GGML Vulkan diffusion path. The button enumerates Android NNAPI devices,
+selects only an explicitly reported dedicated accelerator or a vendor-named
+NPU (not GPU or CPU), checks FP16 FULLY_CONNECTED support, and compiles one
+64x1024 -> 64x1024 projection. Compilation uses
+ANeuralNetworksCompilation_createForDevices with exactly the hardware device,
+which **disables NNAPI CPU fallback**. It measures three warmed executions and
+checks 32 output values against a CPU mathematical reference.
+
+The Android NNAPI API was deprecated in Android 15; absence of an NNAPI NPU
+driver does not rule out using LiteRT/NeuroPilot's separate vendor runtime.
+This test does NOT port the Anima transformer yet. A successful test only
+proves one FP16 operation runs on an advertised accelerator without CPU
+fallback. No model assets, root, or ADB required. The selected device name
+and exact status are displayed and copied with Copy NPU probe report.

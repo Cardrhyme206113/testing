@@ -47,5 +47,5 @@ jobs:
           unzip -l anima-pocket/app/build/outputs/apk/release/app-release.apk | grep 'lib/arm64-v8a/libanimabridge.so'
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimaPocket-v0.4.2-Fast-Sampling-ARM64
+          name: AnimaPocket-v0.5.0-Hardware-NPU-Probe-ARM64
           path: anima-pocket/app/build/outputs/apk/release/app-release.apk

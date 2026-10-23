@@ -40,6 +40,7 @@ public class MainActivity extends Activity {
         String backend, boolean flash, boolean diskEncoder, boolean profileLayers,
         boolean residentWeights, boolean q4Fp16Compute, int cacheProfile, int cpuThreads);
     public native String benchmarkMatmulNative();
+    public native String probeNpuNative();
 
     final String[] KEYS={"model","encoder","decoder"};
     final String[] URLS={
@@ -64,7 +65,8 @@ public class MainActivity extends Activity {
     EditText prompt, seed;
     Spinner decoderType, resolution, steps, backend, weightsMode, cacheMode, cpuThreads;
     CheckBox flash, lowRamEncoder, profileLayers, q4Fp16;
-    Button benchmarkButton, matmulButton;
+    Button benchmarkButton, matmulButton, npuButton;
+    volatile String lastNpuReport="";
     volatile boolean benchmarkRun=false;
     volatile double[] lastStepSeconds=new double[33];
     volatile String runBackend="?", runWeights="?", runResolution="?";
@@ -334,6 +336,11 @@ public class MainActivity extends Activity {
         add(root,text("Runs 2 steps at selected settings, records first and warm-step times. No automatic multi-profile stress test; change one option at a time.",12,hint),2);
         matmulButton=button("Benchmark Q4_0 vs temp FP16 vs native FP16 (no model needed)",this::runMatmulBenchmark);
         add(root,matmulButton,9);
+        add(root,text("NPU PROOF OF CONCEPT",15,accent),15);
+        npuButton=button("Detect NPU and run hardware-only FP16 matrix benchmark",this::runNpuProbe);
+        add(root,npuButton,4);
+        add(root,text("Strict NNAPI hardware-device selection: CPU/GPU fallback disabled. No models required; does not yet run Anima on the NPU. NNAPI may be unavailable even if LiteRT can access NeuroPilot.",12,hint),4);
+        add(root,button("Copy NPU probe report",this::copyNpuProbe),5);
         add(root,button("Copy performance history (CSV)",this::copyBenchmarkHistory),6);
         stop=button("Cancel",()->{cancelNative();notifyStatus("Cancel requested…");});stop.setEnabled(false);add(root,stop,7);
         status=text("Ready. Select three files.",13,hint);add(root,status,12);
@@ -365,7 +372,7 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_PERF v0.4.2 fast sampling ready; "+previousProcessExit());
+        appendDiagnostic("ANIMA_NPU v0.5.0 NPU hardware feasibility ready; "+previousProcessExit());
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
         }
@@ -414,6 +421,7 @@ public class MainActivity extends Activity {
         running=b;runOnUiThread(()->{go.setEnabled(!b);stop.setEnabled(b);
             if(benchmarkButton!=null)benchmarkButton.setEnabled(!b);
             if(matmulButton!=null)matmulButton.setEnabled(!b);
+            if(npuButton!=null)npuButton.setEnabled(!b);
             if(b)getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         });
@@ -563,6 +571,35 @@ public class MainActivity extends Activity {
             while((line=reader.readLine())!=null)csv.append(line).append('\n');
             copyText("Anima performance history",csv.toString());
         }catch(IOException e){Toast.makeText(this,"Could not load benchmark history: "+e,Toast.LENGTH_LONG).show();}
+    }
+    void copyNpuProbe(){
+        if(lastNpuReport.isEmpty()){
+            Toast.makeText(this,"Run NPU probe first",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        copyText("Anima NPU report",lastNpuReport);
+    }
+    void runNpuProbe(){
+        if(running)return;
+        busy(true);
+        setStage("Probing dedicated NPU driver");
+        if(status!=null)status.setText("Checking NPU driver and compiling a hardware-only FP16 test...");
+        executor.execute(()->{
+            try{
+                String report=probeNpuNative();
+                lastNpuReport=report;
+                appendDiagnostic("ANIMA_NPU_PROBE_BEGIN\n"+report+"\nANIMA_NPU_PROBE_END");
+                saveBenchRow("# NPU_PROBE "+System.currentTimeMillis()+" "+report.replace('\n',';').replace(',','|'));
+                runOnUiThread(()->{
+                    status.setText("NPU probe finished. Tap Copy NPU probe report.");
+                    liveMetrics.setText(report);showDiagnostics();
+                });
+            }catch(Throwable e){
+                lastNpuReport="NPU probe failed: "+e;
+                appendDiagnostic("ANIMA_NPU_PROBE_ERROR "+e);
+                runOnUiThread(()->status.setText("NPU probe error: "+e));
+            }finally{busy(false);}
+        });
     }
     void runMatmulBenchmark(){
         if(running)return;
