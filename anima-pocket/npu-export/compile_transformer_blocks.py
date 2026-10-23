@@ -112,7 +112,7 @@ class AnimaTransformerBlock(torch.nn.Module):
 
 
 def weight_names(handle, index):
-    prefix = f"model.diffusion_model.net.blocks.{index}."
+    prefix = f"model.diffusion_model.blocks.{index}."
     names = {}
     # Reference Linear "1"/"2" are model state_dict keys in ComfyUI.
     for attr in ("adaln_modulation_self_attn", "adaln_modulation_cross_attn", "adaln_modulation_mlp"):
@@ -125,7 +125,7 @@ def weight_names(handle, index):
             names[f"{attr}.{norm}.weight"] = prefix + f"{attr}.{norm}.weight"
     for layer in ("layer1", "layer2"):
         names[f"mlp.{layer}.weight"] = prefix + f"mlp.{layer}.weight"
-    # Some original Comfy snapshots prepend 'net.' but others omit it.
+    # Anima Turbo v1.1 safetensors use model.diffusion_model.blocks.N directly.
     known = set(handle.keys())
     missing = [original for original in names.values() if original not in known]
     if missing:
