@@ -1,0 +1,81 @@
+name: Anima complete diffusion transformer A16W4 export
+on:
+  push:
+    branches: [anima-pocket]
+    paths:
+      - '.github/workflows/anima-npu-transformer.yml'
+      - 'anima-pocket/npu-export/compile_transformer_blocks.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-28-transformer-blocks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      NEUROPILOT_URL: https://s3.ap-southeast-1.amazonaws.com/mediatek.neuropilot.com/b1c485de-fca8-4b20-836a-8b33152a3609.gz
+      NEUROPILOT_SHA256: 42155c3b25e9f9af1bef55534d0700835f32564a289e8cb1e44f0b2433ddab48
+      ANIMA_URL: https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.1.safetensors
+      ANIMA_SHA256: fba11953276b57edf59d1dc4f1857ac05aa079c56f982b4d7c20298d57d3f7eb
+      OMP_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+          cache-dependency-path: anima-pocket/npu-export/requirements.txt
+
+      - name: Validate full transformer exporter syntax
+        run: python -m py_compile anima-pocket/npu-export/compile_transformer_blocks.py
+
+      - name: Download verified NeuroPilot compiler
+        run: |
+          curl -fL --retry 3 --retry-all-errors -o "$RUNNER_TEMP/neuropilot.tar.gz" "$NEUROPILOT_URL"
+          echo "$NEUROPILOT_SHA256  $RUNNER_TEMP/neuropilot.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/mtk"
+          tar -xzf "$RUNNER_TEMP/neuropilot.tar.gz" -C "$RUNNER_TEMP/mtk"
+
+      - name: Install CPU-only model export and MediaTek tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --no-cache-dir -r anima-pocket/npu-export/requirements.txt
+          NEURON_WHL=$(find "$RUNNER_TEMP/mtk" -name 'mtk_neuron-8.2.23-*.whl' -print -quit)
+          CONVERTER_WHL=$(find "$RUNNER_TEMP/mtk" -name 'mtk_converter-8.13.0+public-cp310-*.whl' -print -quit)
+          test -n "$NEURON_WHL" && test -n "$CONVERTER_WHL"
+          python -m pip install --no-cache-dir "$NEURON_WHL" "$CONVERTER_WHL"
+          python -m pip check
+
+      - name: Download and SHA256 verify original FP16 Anima Turbo v1.1
+        run: |
+          curl -fL --retry 3 --retry-all-errors -o "$RUNNER_TEMP/anima-turbo-v1.1.safetensors" "$ANIMA_URL"
+          echo "$ANIMA_SHA256  $RUNNER_TEMP/anima-turbo-v1.1.safetensors" | sha256sum -c -
+          df -h .
+
+      - name: Compile all 28 original transformer blocks to INT4 MT6989 NPU delegates
+        run: |
+          python -u anima-pocket/npu-export/compile_transformer_blocks.py \
+            --checkpoint "$RUNNER_TEMP/anima-turbo-v1.1.safetensors" \
+            --out-dir out/anima-transformer-a16w4 \
+            --platform mt6989 --tokens 576 --first 0 --count 28
+          python -c "import json,pathlib; p=pathlib.Path('out/anima-transformer-a16w4/manifest.json'); m=json.loads(p.read_text()); assert len(m['blocks'])==28 and m['complete_transformer'] and not m['complete_image_generation']; assert all((p.parent/b['filename']).stat().st_size for b in m['blocks'])"
+          df -h .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Anima-Turbo-v1.1-28-block-MT6989-A16W4-EXPERIMENTAL-NOT-END-TO-END
+          path: out/anima-transformer-a16w4/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Status and next integration gate
+        if: always()
+        run: |
+          echo '### Anima full diffusion transformer INT4 export' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The workflow attempts to export all 28 original Anima Turbo v1.1 denoising blocks, including real attention and MLP operations.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'These modules are NOT yet a complete runnable image-generation app: the JNI bridge must call them on every diffusion step, and prelude, Qwen conditioning, sampling, and TAESD decoding must be wired together.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'A compiled model with A16W4 metadata is not proof of NPU performance; the Xiaomi 14T Pro must execute it.' >> "$GITHUB_STEP_SUMMARY"
