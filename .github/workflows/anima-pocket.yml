@@ -31,7 +31,7 @@ jobs:
           git fetch --depth 1 origin a77d3623180b2bc1886f3dd04c0aa04156a987ef
           git checkout --detach a77d3623180b2bc1886f3dd04c0aa04156a987ef
           git submodule update --init --recursive --depth 1
-      - name: Instrument pinned upstream graph execution
+      - name: Instrument inference and patch GGML Vulkan Q4 matrix path
         run: python3 anima-pocket/app/src/main/cpp/instrument_upstream.py
       - name: Stage Vulkan SDK C and C++ headers
         run: |
@@ -47,5 +47,5 @@ jobs:
           unzip -l anima-pocket/app/build/outputs/apk/release/app-release.apk | grep 'lib/arm64-v8a/libanimabridge.so'
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimaPocket-v0.4.0-Performance-Lab-ARM64
+          name: AnimaPocket-v0.4.1-Q4-to-FP16-ARM64
           path: anima-pocket/app/build/outputs/apk/release/app-release.apk

@@ -97,7 +97,7 @@ extern "C" JNIEXPORT void JNICALL Java_dev_card_anima_MainActivity_cancelNative(
 extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generateNative(
     JNIEnv* env,jobject caller,jstring modelPath,jstring encoderPath,jstring decoderPath,
     jboolean useTae,jstring promptString,jint width,jint height,jint steps,jlong seed,jfloat cfg,
-    jstring backendString,jboolean flash,jboolean diskEncoder,jboolean profileLayers,jboolean residentWeights){
+    jstring backendString,jboolean flash,jboolean diskEncoder,jboolean profileLayers,jboolean residentWeights,jboolean q4Fp16Compute){
     std::string model=str(env,modelPath),llm=str(env,encoderPath),decoder=str(env,decoderPath);
     std::string prompt=str(env,promptString),backend=str(env,backendString);
     if(model.empty()||llm.empty()||decoder.empty()||prompt.empty()||width<128||height<128||
@@ -115,6 +115,9 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     // because it alters memory pressure and adds synchronization overhead.
     if(profileLayers && backend!="cpu")setenv("ANIMA_DIAG_LAYER_CUTS","1",1);
     else unsetenv("ANIMA_DIAG_LAYER_CUTS");
+    // Experiment only: Q4_0 GGUF stays compressed on disk and in param buffers.
+    if(q4Fp16Compute && backend!="cpu")setenv("ANIMA_VK_Q4_F16","1",1);
+    else unsetenv("ANIMA_VK_Q4_F16");
     sd_set_log_callback(logs,nullptr);
     sd_set_progress_callback(progress,nullptr);
     const bool gpu=(backend=="vulkan-auto" || backend=="vulkan-1.5" || backend=="vulkan-2.5");
@@ -140,6 +143,7 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
         " weights="+residency+" maxVRAM="+(gpu?(vram.empty()?"auto":vram):"none")+
         " encoderDisk="+(diskEncoder?"true":"false")+
         " residentWeights="+(residentWeights?"true":"false")+
+        " q4ToFp16="+(q4Fp16Compute?"true":"false")+
         " nativeBuild=RELEASE_OPTIMIZED prefetch=off eager=off threads=2").c_str(),nullptr);
     sd_ctx_params_t settings{};
     sd_ctx_params_init(&settings);

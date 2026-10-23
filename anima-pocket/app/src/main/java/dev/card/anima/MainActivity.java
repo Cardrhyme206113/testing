@@ -38,7 +38,7 @@ public class MainActivity extends Activity {
     public native int[] generateNative(String model, String encoder, String decoder, boolean tae,
         String prompt, int width, int height, int steps, long seed, float cfg,
         String backend, boolean flash, boolean diskEncoder, boolean profileLayers,
-        boolean residentWeights);
+        boolean residentWeights, boolean q4Fp16Compute);
     public native String benchmarkMatmulNative();
 
     final String[] KEYS={"model","encoder","decoder"};
@@ -63,12 +63,12 @@ public class MainActivity extends Activity {
     long lastNativeCpuTicks=-1, lastPswpIn=-1, lastPswpOut=-1, lastMajFault=-1;
     EditText prompt, seed;
     Spinner decoderType, resolution, steps, backend, weightsMode;
-    CheckBox flash, lowRamEncoder, profileLayers;
+    CheckBox flash, lowRamEncoder, profileLayers, q4Fp16;
     Button benchmarkButton, matmulButton;
     volatile boolean benchmarkRun=false;
     volatile double[] lastStepSeconds=new double[33];
     volatile String runBackend="?", runWeights="?", runResolution="?";
-    volatile boolean runFlash=false, runDiskEncoder=false;
+    volatile boolean runFlash=false, runDiskEncoder=false, runQ4Fp16=false;
     final ScheduledExecutorService memoryWatcher=Executors.newSingleThreadScheduledExecutor();
     volatile ScheduledFuture<?> memoryTask;
     ImageView image;
@@ -304,6 +304,11 @@ public class MainActivity extends Activity {
         flash=new CheckBox(this);flash.setText("Experimental diffusion Flash Attention");
         flash.setChecked(preferences.getBoolean("flash_enabled",false));
         flash.setTextColor(hint);add(root,flash,7);
+        q4Fp16=new CheckBox(this);
+        q4Fp16.setText("EXPERIMENTAL: Q4_0 -> temporary FP16 Vulkan matrix compute");
+        q4Fp16.setChecked(preferences.getBoolean("q4_fp16_compute",false));
+        q4Fp16.setTextColor(0xffffca85);add(root,q4Fp16,8);
+        add(root,text("Stores compact Q4_0 weights; converts only the current matrix into a reusable FP16 GPU scratch buffer. May be faster or slower and use more transient memory.",12,0xffffc278),2);
         profileLayers=new CheckBox(this);
         profileLayers.setText("DIAGNOSTIC: profile individual Anima transformer layers (slower; changes GPU execution)");
         profileLayers.setTextColor(0xffffc278);add(root,profileLayers,7);
@@ -314,7 +319,7 @@ public class MainActivity extends Activity {
         benchmarkButton=button("Benchmark selected settings (2 diffusion steps)",()->startWithMode(true));
         add(root,benchmarkButton,7);
         add(root,text("Runs 2 steps at selected settings, records first and warm-step times. No automatic multi-profile stress test; change one option at a time.",12,hint),2);
-        matmulButton=button("Benchmark Mali GPU Q4_0 vs FP16 kernels (no model required)",this::runMatmulBenchmark);
+        matmulButton=button("Benchmark Q4_0 vs temp FP16 vs native FP16 (no model needed)",this::runMatmulBenchmark);
         add(root,matmulButton,9);
         add(root,button("Copy performance history (CSV)",this::copyBenchmarkHistory),6);
         stop=button("Cancel",()->{cancelNative();notifyStatus("Cancel requested…");});stop.setEnabled(false);add(root,stop,7);
@@ -347,7 +352,7 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_PERF v0.4.0 optimized native build ready; "+previousProcessExit());
+        appendDiagnostic("ANIMA_PERF v0.4.1 temporary FP16 compute ready; "+previousProcessExit());
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
         }
@@ -418,7 +423,7 @@ public class MainActivity extends Activity {
             if(selected[n]==null){Toast.makeText(this,"Choose all model files",Toast.LENGTH_SHORT).show();return;}}
         String p=prompt.getText().toString().trim();if(p.isEmpty()){Toast.makeText(this,"Enter a prompt",Toast.LENGTH_SHORT).show();return;}
         String[] wh=resolution.getSelectedItem().toString().replace(" ","").split("×");
-        int w=Integer.parseInt(wh[0]),h=Integer.parseInt(wh[1]);
+        int w=Integer.parseInt(wh[0].replaceAll("[^0-9]","")),h=Integer.parseInt(wh[1].replaceAll("[^0-9]",""));
         int s=benchmark?2:Integer.parseInt(steps.getSelectedItem().toString());
         String[] backends={"vulkan-auto","vulkan-1.5","cpu","vulkan-2.5"};
         String target=backends[backend.getSelectedItemPosition()];
@@ -441,7 +446,9 @@ public class MainActivity extends Activity {
         }
         boolean tae=decoderType.getSelectedItemPosition()==0, fa=flash.isChecked();
         boolean diskEncoder=lowRamEncoder.isChecked();
-        preferences.edit().putBoolean("encoder_disk",diskEncoder)
+        boolean q4Fast=q4Fp16.isChecked() && backend.getSelectedItemPosition()!=2;
+        preferences.edit().putBoolean("q4_fp16_compute",q4Fp16.isChecked())
+            .putBoolean("encoder_disk",diskEncoder)
             .putBoolean("flash_enabled",fa)
             .putInt("weights_mode",weightsMode.getSelectedItemPosition())
             .putInt("backend_choice",backend.getSelectedItemPosition()).apply();
@@ -456,13 +463,13 @@ public class MainActivity extends Activity {
         benchmarkRun=benchmark;
         lastStepSeconds=new double[33];
         runBackend=target; runWeights=residentWeights?"resident":"disk";
-        runResolution=w+"x"+h; runFlash=fa; runDiskEncoder=diskEncoder;
+        runResolution=w+"x"+h; runFlash=fa; runDiskEncoder=diskEncoder; runQ4Fp16=q4Fast;
         profilingLayers=profileLayers.isChecked();
         lastNativeCpuTicks=lastPswpIn=lastPswpOut=lastMajFault=-1;
         setStage("Preparing model files");
         beginSessionLog();
-        appendDiagnostic("Anima Pocket v0.4.0 performance lab, optimized native build; benchmark="+benchmark);
-        appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder+"; residentWeights "+residentWeights+"; profileLayers "+profilingLayers);
+        appendDiagnostic("Anima Pocket v0.4.1 Q4->FP16 experiment, optimized native build; benchmark="+benchmark);
+        appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder+"; residentWeights "+residentWeights+"; q4Fp16Compute "+q4Fast+"; profileLayers "+profilingLayers);
         if(am!=null)appendDiagnostic("Free system RAM "+(mi.availMem/1048576)+" MiB; lowMemory="+mi.lowMemory);
         for(int n=0;n<3;n++)appendDiagnostic("Selected file "+n+": "+preferences.getString(KEYS[n]+"_name","?"));
         busy(true);
@@ -474,7 +481,7 @@ public class MainActivity extends Activity {
                 long began=System.nanoTime();
                 workerTid=android.os.Process.myTid();
                 appendDiagnostic("ANIMA_DIAG_NATIVE_THREAD tid="+workerTid);
-                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder,profilingLayers,residentWeights);
+                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder,profilingLayers,residentWeights,q4Fast);
                 if(pixels==null||pixels.length!=w*h)throw new IOException("Invalid native output");
                 Bitmap bmp=Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888);
                 setStage("Saving finished image");
@@ -520,7 +527,7 @@ public class MainActivity extends Activity {
             String.format(Locale.US,"%.3f",lastStepSeconds[1])+","+
             String.format(Locale.US,"%.3f",lastStepSeconds[2])+","+
             (SystemClock.elapsedRealtime()-generationStartMs)+","+
-            (ok?"OK":outcome);
+            (ok?"OK":outcome)+","+(runQ4Fp16?"q4ToFp16":"nativeQ4");
         appendDiagnostic("PERF_RESULT CSV="+row);
         saveBenchRow(row);
     }
@@ -530,7 +537,7 @@ public class MainActivity extends Activity {
             Toast.makeText(this,"No benchmark results yet",Toast.LENGTH_SHORT).show();
             return;
         }
-        StringBuilder csv=new StringBuilder("timeEpochMs,backend,residency,resolution,attention,encoder,profiling,step1Seconds,step2Seconds,totalMs,result\\n");
+        StringBuilder csv=new StringBuilder("timeEpochMs,backend,residency,resolution,attention,encoder,profiling,step1Seconds,step2Seconds,totalMs,result,q4ComputeMode\n");
         try(BufferedReader reader=new BufferedReader(new FileReader(file))){
             String line;
             while((line=reader.readLine())!=null)csv.append(line).append('\n');
@@ -545,8 +552,8 @@ public class MainActivity extends Activity {
         executor.execute(()->{
             try{
                 String report=benchmarkMatmulNative();
-                appendDiagnostic("PERF_MATMUL_BENCH\\n"+report);
-                saveBenchRow("# MATRIX_KERNEL "+new java.util.Date()+"\\n"+report.replace('\n',';'));
+                appendDiagnostic("PERF_MATMUL_BENCH\n"+report);
+                saveBenchRow("# MATRIX_KERNEL "+new java.util.Date()+": "+report.replace('\n',';'));
                 runOnUiThread(()->{
                     if(status!=null)status.setText("Matrix benchmark completed. Copy performance history or log.");
                     if(liveMetrics!=null)liveMetrics.setText(report);

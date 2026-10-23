@@ -48,3 +48,22 @@ swap(
 )
 p.write_text(source, encoding="utf-8")
 print("Anima graph timers and optional transformer block checkpoints installed")
+
+
+# GGML Vulkan already supports a Q4_0-to-FP16 conversion shader and reusable
+# GPU scratch buffer. Expose its existing fallback as an opt-in matrix path.
+vk = Path(__file__).resolve().parent / "stable-diffusion.cpp" / "ggml" / "src" / "ggml-vulkan" / "ggml-vulkan.cpp"
+vk_source = vk.read_text(encoding="utf-8")
+needle = "    const bool qx_needs_dequant = mmp_map == nullptr || x_non_contig;\n"
+replacement = """    // Anima Pocket: compressed Q4_0 storage with temporary FP16 compute.
+    // Only the current matrix expands into the reusable GPU scratch buffer.
+    const bool anima_q4_fp16 = (src0->type == GGML_TYPE_Q4_0) &&
+                               (getenv("ANIMA_VK_Q4_F16") != nullptr) &&
+                               (ggml_vk_get_mul_mat_mat_pipeline_map(ctx, GGML_TYPE_F16, y_kernel_type,
+                                    (ggml_prec)dst->op_params[0]) != nullptr);
+    const bool qx_needs_dequant = mmp_map == nullptr || x_non_contig || anima_q4_fp16;
+"""
+if vk_source.count(needle) != 1:
+    raise RuntimeError("Pinned GGML Vulkan Q4_0 matrix fallback anchor changed")
+vk.write_text(vk_source.replace(needle, replacement, 1), encoding="utf-8")
+print("Opt-in Q4_0 -> FP16 Vulkan scratch matmul patched")

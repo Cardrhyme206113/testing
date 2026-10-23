@@ -1,4 +1,4 @@
-# Anima Pocket — performance lab / v0.4.0
+# Anima Pocket — Q4_0 to temporary FP16 GPU computation / v0.4.1
 
 Experimental offline Anima image generation for Android ARM64 using stable-diffusion.cpp.
 
@@ -91,3 +91,15 @@ This is a diagnostic build, not a proven stability or inference-speed fix.
   Flash Attention, and diagnostic layer-profile opt-in. Shader/kernel
   performance must be measured on the real Mali GPU; successful GitHub
   compilation alone does not verify runtime inference or numerical correctness.
+
+
+### v0.4.1: Q4_0 -> temporary FP16 Vulkan matrix compute
+
+An optional checkbox forces Q4_0 multi-column matmuls through the already
+available GGML Vulkan Q4_0 dequant shader into reusable FP16 scratch, followed
+by an FP16 matrix kernel. It does not change file quantization, keep all weights
+expanded, or affect non-Q4_0 operations. It may be faster or slower and increase
+transient GPU memory. Default remains OFF. Benchmark the standalone Q4 native,
+Q4 temporary FP16 and FP16 paths at N=128 and N=576 before full generation.
+The two-step benchmark now exports q4ComputeMode as an additional CSV column.
+Testing runtime speed and correctness requires the real Mali GPU.

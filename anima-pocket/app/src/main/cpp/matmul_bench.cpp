@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -73,7 +74,7 @@ Measurement execute(ggml_backend_dev_t device,ggml_type type,
 
 std::string one(ggml_backend_dev_t gpu,ggml_backend_dev_t cpu,ggml_type type,
                 const std::vector<float>& raw,const std::vector<float>& input,
-                int k,int m,int n,const std::string& name){
+                int k,int m,int n,const std::string& name,bool q4F16=false){
     std::vector<uint8_t> weights(ggml_row_size(type,k)*(size_t)m);
     if(type==GGML_TYPE_Q4_0){
         size_t written=ggml_quantize_chunk(type,raw.data(),weights.data(),0,m,k,nullptr);
@@ -83,7 +84,11 @@ std::string one(ggml_backend_dev_t gpu,ggml_backend_dev_t cpu,ggml_type type,
         ggml_fp32_to_fp16_row(raw.data(),halves.data(),(int64_t)raw.size());
         std::memcpy(weights.data(),halves.data(),weights.size());
     }
+    // Called only on the single inference executor; Vulkan reads this at dispatch.
+    if(q4F16)setenv("ANIMA_VK_Q4_F16","1",1);
+    else unsetenv("ANIMA_VK_Q4_F16");
     Measurement g=execute(gpu,type,weights,input,k,m,n,4);
+    unsetenv("ANIMA_VK_Q4_F16");
     if(!g.error.empty())return name+": GPU error: "+g.error;
     Measurement c=execute(cpu,type,weights,input,k,m,n,1);
     if(!c.error.empty())return name+": CPU reference error: "+c.error;
@@ -121,15 +126,20 @@ Java_dev_card_anima_MainActivity_benchmarkMatmulNative(JNIEnv* env,jobject){
         std::string failed=std::string("GPU/CPU backend missing. Devices: ")+probe.data();
         return env->NewStringUTF(failed.c_str());
     }
-    constexpr int k=2048,m=2048,n=128;
+    constexpr int k=2048,m=2048;
     std::vector<float> raw((size_t)k*m);
-    std::vector<float> input((size_t)k*n);
     for(size_t i=0;i<raw.size();i++)raw[i]=std::sin(float(i%791)*0.031f)*0.09f;
-    for(size_t i=0;i<input.size();i++)input[i]=std::cos(float(i%521)*0.037f)*0.13f;
-    std::string q4=one(gpu,cpu,GGML_TYPE_Q4_0,raw,input,k,m,n,"Q4_0");
-    std::string fp16=one(gpu,cpu,GGML_TYPE_F16,raw,input,k,m,n,"FP16");
-    std::string report="Isolated GGML Vulkan matmul (3 warmed GPU iterations, CPU reference):\n"+
-        q4+"\n"+fp16+
-        "\nSame dimensions and data; reports both speed and numerical error. Small synthetic test, not full Anima throughput.";
-    return env->NewStringUTF(report.c_str());
+    std::ostringstream report;
+    report<<"GGML Mali Vulkan: Q4 native vs Q4->FP16 scratch vs FP16 weights\n";
+    for(int n : {128,576}){
+        std::vector<float> input((size_t)k*n);
+        for(size_t i=0;i<input.size();i++)input[i]=std::cos(float(i%521)*0.037f)*0.13f;
+        report<<one(gpu,cpu,GGML_TYPE_Q4_0,raw,input,k,m,n,"Q4_0 native")<<"\n";
+        report<<one(gpu,cpu,GGML_TYPE_Q4_0,raw,input,k,m,n,"Q4_0 temporary FP16",true)<<"\n";
+        report<<one(gpu,cpu,GGML_TYPE_F16,raw,input,k,m,n,"FP16 weights")<<"\n";
+    }
+    unsetenv("ANIMA_VK_Q4_F16");
+    report<<"3 warmed GPU iterations; CPU numerical reference. Temporary FP16 scratch is reusable.\n"
+          <<"Full diffusion throughput may differ.";
+    return env->NewStringUTF(report.str().c_str());
 }
