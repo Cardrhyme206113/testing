@@ -43,8 +43,8 @@ bool isNpuCandidate(const std::string& name,int32_t type){
            lower.find("npu")!=std::string::npos ||
            lower.find("apu")!=std::string::npos;
 }
-std::string bench(const ANeuralNetworksDevice* device,const std::string& name){
-    constexpr uint32_t B=64,K=1024,M=1024;
+std::string bench(const ANeuralNetworksDevice* device,const std::string& name,
+                  uint32_t B,uint32_t K,uint32_t M){
     std::ostringstream report;
     report<<"candidate="<<name<<" operation=FP16_FULLY_CONNECTED B="<<B<<" K="<<K<<" M="<<M<<"\n";
     // Model contains a transformer-shaped learned projection. Values are synthetic.
@@ -140,12 +140,135 @@ std::string bench(const ANeuralNetworksDevice* device,const std::string& name){
     report<<"CPU fallback was disabled using createForDevices and an accelerator-only device list.\n";
     return report.str();
 }
+
+// Actual operations used in Anima's 28 transformer blocks. Each model
+// contains just one operation, so getSupportedOperationsForDevices cannot
+// hide a partially supported multi-op graph. Compilations are device-only.
+std::string probeOperator(const ANeuralNetworksDevice* dev,int kind){
+    static const char* names[]={"BATCH_MATMUL","SOFTMAX","ADD","MUL",
+                                "MEAN","RSQRT","TRANSPOSE","LOGISTIC",
+                                "TANH","RESHAPE"};
+    const char* label=names[kind];
+    int32_t code=ANEURALNETWORKS_ADD;
+    switch(kind){
+        case 0:code=ANEURALNETWORKS_BATCH_MATMUL;break;
+        case 1:code=ANEURALNETWORKS_SOFTMAX;break;
+        case 2:code=ANEURALNETWORKS_ADD;break;
+        case 3:code=ANEURALNETWORKS_MUL;break;
+        case 4:code=ANEURALNETWORKS_MEAN;break;
+        case 5:code=ANEURALNETWORKS_RSQRT;break;
+        case 6:code=ANEURALNETWORKS_TRANSPOSE;break;
+        case 7:code=ANEURALNETWORKS_LOGISTIC;break;
+        case 8:code=ANEURALNETWORKS_TANH;break;
+        case 9:code=ANEURALNETWORKS_RESHAPE;break;
+    }
+    ANeuralNetworksModel* raw=nullptr;
+    int e=ANeuralNetworksModel_create(&raw);
+    if(e!=ANEURALNETWORKS_NO_ERROR)return std::string(label)+" modelCreateError="+std::to_string(e)+"\n";
+    Scope<ANeuralNetworksModel,ANeuralNetworksModel_free> model(raw,ANeuralNetworksModel_free);
+    const uint32_t flat[2]={16,128}, left[3]={1,16,128},right[3]={1,128,16},
+                   matOut[3]={1,16,16},redOut[2]={16,1},
+                   permOut[3]={1,128,16},s3[1]={3},s2[1]={2},s1[1]={1};
+    std::vector<ANeuralNetworksOperandType> types;
+    std::vector<uint32_t> opInputs;
+    std::vector<uint32_t> ioInputs;
+    // Add operand descriptors in the same order as operation inputs.
+    const auto tensor=[&](uint32_t rank,const uint32_t* dims){
+        types.push_back({ANEURALNETWORKS_TENSOR_FLOAT16,rank,dims,0.0f,0});
+    };
+    const auto scalar=[&](int32_t type){
+        types.push_back({type,0,nullptr,0.0f,0});
+    };
+    const auto intTensor=[&](uint32_t rank,const uint32_t* dims){
+        types.push_back({ANEURALNETWORKS_TENSOR_INT32,rank,dims,0.0f,0});
+    };
+    uint16_t beta=ggml_fp32_to_fp16(1.0f);
+    int32_t axis=-1,keep=1,activation=ANEURALNETWORKS_FUSED_NONE;
+    uint8_t falseFlag=0;
+    int32_t axes[1]={1}, permutation[3]={0,2,1}, reshape[2]={16,128};
+    const auto unary=[&](){tensor(2,flat);tensor(2,flat);opInputs={0};ioInputs={0};};
+    if(kind==0){
+        tensor(3,left);tensor(3,right);
+        scalar(ANEURALNETWORKS_BOOL);scalar(ANEURALNETWORKS_BOOL);
+        tensor(3,matOut);
+        opInputs={0,1,2,3};ioInputs={0,1};
+    }else if(kind==1){
+        tensor(2,flat);scalar(ANEURALNETWORKS_FLOAT16);
+        scalar(ANEURALNETWORKS_INT32);tensor(2,flat);
+        opInputs={0,1,2};ioInputs={0};
+    }else if(kind==2||kind==3){
+        tensor(2,flat);tensor(2,flat);scalar(ANEURALNETWORKS_INT32);
+        tensor(2,flat);
+        opInputs={0,1,2};ioInputs={0,1};
+    }else if(kind==4){
+        tensor(2,flat);intTensor(1,s1);scalar(ANEURALNETWORKS_INT32);
+        tensor(2,redOut);
+        opInputs={0,1,2};ioInputs={0};
+    }else if(kind==6){
+        tensor(3,left);intTensor(1,s3);tensor(3,permOut);
+        opInputs={0,1};ioInputs={0};
+    }else if(kind==9){
+        tensor(3,left);intTensor(1,s2);tensor(2,flat);
+        opInputs={0,1};ioInputs={0};
+    }else{
+        unary();
+    }
+    for(const auto& type:types){
+        e=ANeuralNetworksModel_addOperand(model.get(),&type);
+        if(e!=ANEURALNETWORKS_NO_ERROR)return std::string(label)+" addOperandError="+std::to_string(e)+"\n";
+    }
+    if(kind==0){
+        if((e=ANeuralNetworksModel_setOperandValue(model.get(),2,&falseFlag,1))!=0 ||
+           (e=ANeuralNetworksModel_setOperandValue(model.get(),3,&falseFlag,1))!=0)
+            return std::string(label)+" constantsError="+std::to_string(e)+"\n";
+    }else if(kind==1){
+        if((e=ANeuralNetworksModel_setOperandValue(model.get(),1,&beta,2))!=0 ||
+           (e=ANeuralNetworksModel_setOperandValue(model.get(),2,&axis,4))!=0)
+            return std::string(label)+" constantsError="+std::to_string(e)+"\n";
+    }else if(kind==2||kind==3){
+        if((e=ANeuralNetworksModel_setOperandValue(model.get(),2,&activation,4))!=0)
+            return std::string(label)+" constantsError="+std::to_string(e)+"\n";
+    }else if(kind==4){
+        if((e=ANeuralNetworksModel_setOperandValue(model.get(),1,axes,sizeof(axes)))!=0 ||
+           (e=ANeuralNetworksModel_setOperandValue(model.get(),2,&keep,sizeof(keep)))!=0)
+            return std::string(label)+" constantsError="+std::to_string(e)+"\n";
+    }else if(kind==6){
+        if((e=ANeuralNetworksModel_setOperandValue(model.get(),1,permutation,sizeof(permutation)))!=0)
+            return std::string(label)+" constantsError="+std::to_string(e)+"\n";
+    }else if(kind==9){
+        if((e=ANeuralNetworksModel_setOperandValue(model.get(),1,reshape,sizeof(reshape)))!=0)
+            return std::string(label)+" constantsError="+std::to_string(e)+"\n";
+    }
+    const uint32_t output={(uint32_t)(types.size()-1)};
+    e=ANeuralNetworksModel_addOperation(model.get(),code,(uint32_t)opInputs.size(),
+                                        opInputs.data(),1,&output);
+    if(e!=ANEURALNETWORKS_NO_ERROR)return std::string(label)+" addOperationError="+std::to_string(e)+"\n";
+    e=ANeuralNetworksModel_identifyInputsAndOutputs(model.get(),
+        (uint32_t)ioInputs.size(),ioInputs.data(),1,&output);
+    if(e!=ANEURALNETWORKS_NO_ERROR)return std::string(label)+" identifyError="+std::to_string(e)+"\n";
+    e=ANeuralNetworksModel_finish(model.get());
+    if(e!=ANEURALNETWORKS_NO_ERROR)return std::string(label)+" finishError="+std::to_string(e)+"\n";
+    const ANeuralNetworksDevice* devs[1]={dev};
+    bool supported=false;
+    e=ANeuralNetworksModel_getSupportedOperationsForDevices(model.get(),devs,1,&supported);
+    if(e!=ANEURALNETWORKS_NO_ERROR)return std::string(label)+" queryError="+std::to_string(e)+"\n";
+    if(!supported)return std::string(label)+" supported=NO\n";
+    // Confirm actual compilation, not just the declared op support mask.
+    ANeuralNetworksCompilation* rawCompiler=nullptr;
+    e=ANeuralNetworksCompilation_createForDevices(model.get(),devs,1,&rawCompiler);
+    if(e!=ANEURALNETWORKS_NO_ERROR)
+        return std::string(label)+" supported=YES compileCreateError="+std::to_string(e)+"\n";
+    Scope<ANeuralNetworksCompilation,ANeuralNetworksCompilation_free> compiler(rawCompiler,ANeuralNetworksCompilation_free);
+    e=ANeuralNetworksCompilation_finish(compiler.get());
+    return std::string(label)+" supported=YES compile="+(e==0?"OK":"ERROR_"+std::to_string(e))+"\n";
+}
+
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_card_anima_MainActivity_probeNpuNative(JNIEnv* env,jobject){
     std::ostringstream out;
-    out<<"Anima Pocket v0.5.0 NNAPI NPU feasibility (no model files)\n";
+    out<<"Anima Pocket v0.5.1 NPU operator support + comparable projection benchmark (no model files)\n";
     uint32_t count=0;
     int e=ANeuralNetworks_getDeviceCount(&count);
     if(e!=ANEURALNETWORKS_NO_ERROR){
@@ -178,11 +301,19 @@ Java_dev_card_anima_MainActivity_probeNpuNative(JNIEnv* env,jobject){
     }else{
         bool success=false;
         for(const auto& d:candidates){
-            const std::string result=bench(d.first,d.second);
-            out<<result;
-            if(result.find("RESULT=STRICT_HARDWARE_MATMUL_SUCCESS")!=std::string::npos){
-                success=true;break;
+            out<<"\n=== OPERATOR COMPATIBILITY "<<d.second<<" ===\n";
+            for(int op: {0,1,2,3,4,5,6,7,8,9}){
+                out<<probeOperator(d.first,op);
             }
+            out<<"=== FP16 PROJECTIONS "<<d.second<<" ===\n";
+            const std::string small=bench(d.first,d.second,64,1024,1024);
+            out<<small;
+            const bool smallSuccess=small.find("RESULT=STRICT_HARDWARE_MATMUL_SUCCESS")!=std::string::npos;
+            if(smallSuccess && (d.second.find("mdla")!=std::string::npos ||
+                                d.second.find("neuron")!=std::string::npos)){
+                out<<bench(d.first,d.second,128,2048,2048);
+            }
+            success=success||smallSuccess;
         }
         if(!success)out<<"RESULT=NO_SUCCESSFUL_STRICT_ACCELERATOR_RUN\n";
     }

@@ -1,4 +1,4 @@
-# Anima Pocket — NPU driver feasibility / v0.5.0
+# Anima Pocket — NPU transformer operation feasibility / v0.5.1
 
 Experimental offline Anima image generation for Android ARM64 using stable-diffusion.cpp.
 
@@ -134,3 +134,23 @@ This test does NOT port the Anima transformer yet. A successful test only
 proves one FP16 operation runs on an advertised accelerator without CPU
 fallback. No model assets, root, or ADB required. The selected device name
 and exact status are displayed and copied with Copy NPU probe report.
+
+
+### v0.5.1 NPU operation-level transformer feasibility
+
+Following the confirmed MTK-MDLA NNAPI FP16 result, this build probes
+**both MDLA and Neuron** rather than stopping after the first successful
+device. It checks support and *hardware-only compilation* for ten
+Anima-related FP16 operators: BATCH_MATMUL, SOFTMAX, ADD, MUL, MEAN, RSQRT,
+TRANSPOSE, LOGISTIC, TANH, and RESHAPE. These are **isolated synthetic
+operations**, not the full fused Anima attention or RMSNorm graph. If a
+device rejects an operation, it may still run via LiteRT/NeuroPilot or a
+different graph representation.
+
+The original 64x1024 FP16 projection benchmark is retained, and any
+successful MDLA or Neuron device is additionally tested on a
+**128x2048 by 2048x2048 FP16 dense projection**, matching the dimensional
+shape of the earlier Vulkan benchmark (but not identical kernels,
+quantization, or scheduling). Reports include compilation time, warm
+execution, and sampled numerical error. CPU fallback remains disabled.
+Original Vulkan generation is unchanged; no Anima weights are used.
