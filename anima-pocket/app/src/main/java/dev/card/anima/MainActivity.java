@@ -529,7 +529,7 @@ public class MainActivity extends Activity {
                     " phaseFor="+((now-stageStartMs)/1000)+"s noEngineLog="+((now-lastNativeEventMs)/1000)+"s"+
                     " | MemAvailable="+(count(mem,"MemAvailable")/1024)+"MiB"+
                     " availMemAPI="+(info.availMem/1048576)+"MiB lowMemory="+info.lowMemory+
-                    " | PSS="+(process.getTotalPss()/1024)+"MiB swappedPSS="+(process.getTotalSwappedOutPss()/1024)+"MiB"+
+                    " | PSS="+(process.getTotalPss()/1024)+"MiB swappedPSS="+(process.getTotalSwappedOut()/1024)+"MiB"+
                     " VmRSS="+(count(self,"VmRSS")/1024)+"MiB VmSwap="+(count(self,"VmSwap")/1024)+"MiB"+
                     " | SwapTotal="+(count(mem,"SwapTotal")/1024)+"MiB SwapFree="+(count(mem,"SwapFree")/1024)+"MiB"+
                     " | zram "+zramStats()+" | swapPagesDelta "+swapDelta+
