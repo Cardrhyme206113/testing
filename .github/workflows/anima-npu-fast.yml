@@ -35,6 +35,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --no-cache-dir torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --no-cache-dir PyYAML flatbuffers
       - name: Install Android build requirements
         run: |
           sudo apt-get update
