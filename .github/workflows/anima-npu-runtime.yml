@@ -97,6 +97,21 @@ jobs:
             exit 2
           fi
           cp "$HEADER" backends/mediatek/runtime/include/api/NeuronAdapter.h
+          # ExecuTorch v1.5.1 links portable operators into both JNI and
+          # the standalone MediaTek backend. Their static registrations collide
+          # at dlopen (aten::_log_softmax.out) before any model inference.
+          # Only the JNI runtime should own portable-kernel registrations.
+          python3 - <<'PY'
+          from pathlib import Path
+          cmake = Path("backends/mediatek/CMakeLists.txt")
+          source = cmake.read_text()
+          old = "neuron_backend PRIVATE executorch_core portable_ops_lib portable_kernels\n                         android log"
+          new = "neuron_backend PRIVATE executorch_core android log"
+          if source.count(old) != 1:
+              raise SystemExit("Unexpected MediaTek CMake dependency layout")
+          cmake.write_text(source.replace(old, new))
+          print("Removed duplicate portable kernels from neuron_backend")
+          PY
           # Link MediaTek backend into Android JNI even with Llama JNI disabled.
           python3 - <<'PY'
           from pathlib import Path
@@ -125,6 +140,11 @@ jobs:
           unzip -l "$BUILD_AAR_DIR/executorch.aar" | grep -E 'libexecutorch.so|libneuron_backend.so|libneuronusdk_adapter.mtk.so|libneuron_buffer_allocator.so'
           unzip -p "$BUILD_AAR_DIR/executorch.aar" jni/arm64-v8a/libexecutorch.so > "$RUNNER_TEMP/libexecutorch-npu.so"
           readelf -d "$RUNNER_TEMP/libexecutorch-npu.so" | grep -F 'Shared library: [libneuron_backend.so]'
+          unzip -p "$BUILD_AAR_DIR/executorch.aar" jni/arm64-v8a/libneuron_backend.so > "$RUNNER_TEMP/libneuron-backend.so"
+          if strings "$RUNNER_TEMP/libneuron-backend.so" | grep -Fq 'aten::_log_softmax.out'; then
+            echo "::error::MediaTek backend still contains portable kernel registrations"
+            exit 3
+          fi
           df -h .
 
       - name: Check out stable-diffusion.cpp for legacy generation path
