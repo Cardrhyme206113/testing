@@ -359,14 +359,14 @@ public class MainActivity extends Activity {
         add(root,button("E · Inspect public Neuron Adapter ABI (no model)",()->runIsolatedLoaderTest("vendor_symbols")),4);
         add(root,button("F · Run real MediaTek MDLA FP16 matrix (no CPU fallback)",()->runIsolatedLoaderTest("vendor_fp16")),4);
         add(root,text("F checks native FP16 inference with generated weights; it does not yet accelerate full Anima image generation. Experimental ExecuTorch INT4 .pte below may still crash on this firmware.",12,hint),4);
-        add(root,text("NEUROPILOT / REAL ANIMA A16W4 PROJECTION",15,accent),16);
-        add(root,text("LEGACY EXPERIMENTAL: ExecuTorch INT4-weight .pte test. This SDK-backed route previously crashed on HyperOS 3 during native initialization. Use the public Neuron FP16 button above first.",12,hint),3);
+        add(root,text("NEUROPILOT / ANIMA A16W4 PTE BLOCK TEST",15,accent),16);
+        add(root,text("EXPERIMENTAL: Run the 45.6 MiB anima_block_00_1024_mt6989_a16w4.pte file from your phone. Tests one genuine six-input transformer block in an isolated process. It may still crash if the firmware rejects the compiled network.",12,hint),3);
         compiledNpuFile=text(preferences.getString("npu_pte_name","No compiled .pte selected"),12,hint);
         add(root,compiledNpuFile,4);
         add(root,button("Select compiled .pte model",()->pick(3)),5);
-        compiledNpuButton=button("Run INT4 projection · lazy route (no CPU fallback)",this::runCompiledNpuTest);
+        compiledNpuButton=button("Run selected INT4 .pte · lazy route",this::runCompiledNpuTest);
         add(root,compiledNpuButton,5);
-        add(root,button("Run INT4 projection · backend-first route",()->runCompiledNpuTest("pte_backend")),5);
+        add(root,button("Run selected INT4 .pte · backend-first route",()->runCompiledNpuTest("pte_backend")),5);
         add(root,button("Copy performance history (CSV)",this::copyBenchmarkHistory),6);
         stop=button("Cancel",()->{cancelNative();notifyStatus("Cancel requested…");});stop.setEnabled(false);add(root,stop,7);
         status=text("Ready. Select three files.",13,hint);add(root,status,12);
@@ -398,7 +398,7 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_NPU v0.6.5 vendor-runtime ABI diagnostics; "+previousProcessExit());
+        appendDiagnostic("ANIMA_NPU v0.6.7 real transformer PTE diagnostics; "+previousProcessExit());
         recoverInterruptedNpuTest();
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
@@ -771,7 +771,7 @@ public class MainActivity extends Activity {
             npuServiceBound=bindService(new Intent(this,NpuPteService.class),npuServiceConnection,BIND_AUTO_CREATE);
             if(!npuServiceBound){isolatedNpuWorkerDied("Android refused to bind the NPU worker");return;}
             npuTimeout=()->isolatedNpuWorkerDied("No NPU worker response after 120 seconds");
-            npuUiHandler.postDelayed(npuTimeout,120000);
+            npuUiHandler.postDelayed(npuTimeout,180000);
         }catch(Exception e){isolatedNpuWorkerDied("Could not start isolated process: "+e);}
     }
 
@@ -791,13 +791,13 @@ public class MainActivity extends Activity {
     void runCompiledNpuTest(String mode){
         if(running || npuTestActive)return;
         String source=preferences.getString("npu_pte",null);
-        if(source==null){Toast.makeText(this,"Select the 1 MiB Anima A16W4 projection .pte",Toast.LENGTH_LONG).show();return;}
-        // Projection-only test. All potentially crashing vendor code runs in :npu_probe.
+        if(source==null){Toast.makeText(this,"Select one compiled Anima projection or DiT block .pte",Toast.LENGTH_LONG).show();return;}
+        // Projection or single real DiT block. Native execution remains isolated in :npu_probe.
         npuTestActive=true;
         npuDeathPending=false;
         npuCurrentMode=mode;
         busy(true);
-        setStage("Preparing isolated Anima NPU projection test: "+mode);
+        setStage("Preparing isolated Anima NPU .pte test: "+mode);
         appendDiagnostic("ANIMA_NPU_ISOLATED_PTE_TEST_BEGIN mode="+mode+" model="+preferences.getString("npu_pte_name","?"));
         executor.execute(()->{
             try{
@@ -809,7 +809,7 @@ public class MainActivity extends Activity {
                 try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){
                     if(c!=null&&c.moveToFirst()&&!c.isNull(0))size=c.getLong(0);
                 }
-                if(size>100L*1048576L)throw new IOException("This diagnostic accepts only the ~1 MiB projection .pte, NOT the 28-block NPU ZIP. File is "+(size/1048576L)+" MiB.");
+                if(size>100L*1048576L)throw new IOException("Select one .pte under 100 MiB, not a ZIP. File is "+(size/1048576L)+" MiB.");
                 if(size>0 && dir.getUsableSpace()<size+32L*1048576L)throw new IOException("Insufficient free storage for .pte cache");
                 File temporary=new File(dir,"anima-projection.part");
                 long copied=0;
@@ -820,7 +820,7 @@ public class MainActivity extends Activity {
                     int n;
                     while((n=input.read(buffer))>=0){
                         copied+=n;
-                        if(copied>100L*1048576L)throw new IOException("Unexpectedly large projection file");
+                        if(copied>100L*1048576L)throw new IOException("Unexpectedly large .pte file");
                         output.write(buffer,0,n);
                     }
                     output.getFD().sync();

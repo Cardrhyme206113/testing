@@ -71,8 +71,94 @@ public final class NpuPteTest {
         return report.toString();
     }
 
+    /** Execute one real 1024-token A16W4 transformer block in disposable process.
+     * Six inputs match compile_transformer_blocks.py exactly.
+     * A successful forward is not, by itself, proof every graph op was NPU-delegated.
+     */
+    private static String runTransformerBlock(File modelFile, boolean backendFirst) {
+        long start = System.nanoTime();
+        StringBuilder report = new StringBuilder("ANIMA_REAL_DIT_BLOCK_A16W4_TEST\n");
+        report.append("model_bytes=").append(modelFile.length()).append("\n");
+        report.append("inputs=x[1,1024,2048],context[1,512,1024],step[1,2048],");
+        report.append("temb[1,6144],cos[1024,128],sin[1024,128] FP32\n");
+        report.append("load_route=").append(backendFirst ? "backend_first" : "executorch_lazy").append("\n");
+        if (backendFirst) System.loadLibrary("neuron_backend");
+        String[] registered = ExecuTorchRuntime.getRegisteredBackends();
+        report.append("registered_backends=").append(Arrays.toString(registered)).append("\n");
+        if (!Arrays.asList(registered).contains("NeuropilotBackend")) {
+            throw new IllegalStateException("NeuropilotBackend absent from ExecuTorch runtime");
+        }
+
+        // Small deterministic amplitudes exercise non-zero residual and MLP paths.
+        Random random = new Random(4026);
+        float[] x = new float[1024 * 2048];
+        float[] context = new float[512 * 1024];
+        float[] step = new float[2048];
+        float[] temb = new float[6144];
+        for (int i = 0; i < x.length; i++) x[i] = (float)(random.nextGaussian() * 0.015);
+        for (int i = 0; i < context.length; i++) context[i] = (float)(random.nextGaussian() * 0.015);
+        for (int i = 0; i < step.length; i++) step[i] = (float)(random.nextGaussian() * 0.015);
+        for (int i = 0; i < temb.length; i++) temb[i] = (float)(random.nextGaussian() * 0.015);
+        float[] cos = new float[1024 * 128];
+        float[] sin = new float[1024 * 128];
+        for (int token = 0; token < 1024; token++) {
+            for (int d = 0; d < 128; d++) {
+                double angle = token * Math.pow(10000.0, -(d % 64) / 64.0) * 0.01;
+                cos[token * 128 + d] = (float)Math.cos(angle);
+                sin[token * 128 + d] = (float)Math.sin(angle);
+            }
+        }
+        EValue[] input = {
+            EValue.from(Tensor.fromBlob(x, new long[]{1, 1024, 2048})),
+            EValue.from(Tensor.fromBlob(context, new long[]{1, 512, 1024})),
+            EValue.from(Tensor.fromBlob(step, new long[]{1, 2048})),
+            EValue.from(Tensor.fromBlob(temb, new long[]{1, 6144})),
+            EValue.from(Tensor.fromBlob(cos, new long[]{1024, 128})),
+            EValue.from(Tensor.fromBlob(sin, new long[]{1024, 128}))
+        };
+        Module module = Module.load(modelFile.getAbsolutePath(), Module.LOAD_MODE_MMAP, 1);
+        try {
+            long tick = System.nanoTime();
+            EValue[] output = module.forward(input);
+            double elapsedMs = (System.nanoTime() - tick) / 1e6;
+            if (output == null || output.length != 1 || !output[0].isTensor()) {
+                throw new IllegalStateException("Expected one tensor output; got " +
+                    (output == null ? "null" : output.length));
+            }
+            float[] result = output[0].toTensor().getDataAsFloatArray();
+            if (result.length != 1024 * 2048) {
+                throw new IllegalStateException("Wrong output size: " + result.length);
+            }
+            double sum = 0, squared = 0, maxAbs = 0, deltaSum = 0;
+            for (int i = 0; i < result.length; i++) {
+                float value = result[i];
+                if (!Float.isFinite(value)) {
+                    throw new IllegalStateException("Invalid output at " + i + ": " + value);
+                }
+                sum += value;
+                squared += (double)value * value;
+                maxAbs = Math.max(maxAbs, Math.abs(value));
+                deltaSum += Math.abs((double)value - x[i]);
+            }
+            report.append("forward_ms=").append(String.format(Locale.US, "%.3f", elapsedMs)).append("\n");
+            report.append("output_mean=").append(sum / result.length);
+            report.append("; output_rms=").append(Math.sqrt(squared / result.length));
+            report.append("; output_max_abs=").append(maxAbs);
+            report.append("; mean_delta_from_input=").append(deltaSum / result.length).append("\n");
+            report.append("status=PTE_BLOCK_FORWARD_SUCCEEDED\n");
+            report.append("note=Backend is registered; actual MDLA delegation must still be confirmed from native traces.\n");
+        } finally {
+            module.close();
+        }
+        report.append("wall_ms=").append(String.format(Locale.US, "%.1f", (System.nanoTime()-start)/1e6));
+        return report.toString();
+    }
+
     /** No explicit bundled adapter preload; see whether ExecuTorch can initialize it. */
     public static String run(File modelFile, boolean backendFirst) {
+        if (modelFile.length() > 5L * 1024L * 1024L) {
+            return runTransformerBlock(modelFile, backendFirst);
+        }
         long start=System.nanoTime();
         StringBuilder report=new StringBuilder("ANIMA_REAL_WEIGHT_A16W4_NPU\n");
         report.append("loadRoute=").append(backendFirst?"backend_first":"executorch_lazy").append("\n");

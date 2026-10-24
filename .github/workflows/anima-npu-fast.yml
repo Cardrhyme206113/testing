@@ -1,4 +1,4 @@
-name: Anima Pocket public Neuron MDLA FP16 APK
+name: Anima Pocket real A16W4 DiT block NPU APK
 on:
   push:
     branches: [anima-pocket]
@@ -102,7 +102,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimaPocket-v0.6.6-Real-MDLA-FP16-APK
+          name: AnimaPocket-v0.6.7-Real-MDLA-FP16-APK
           path: anima-pocket/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 7
@@ -113,17 +113,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG=anima-pocket-v0.6.6
+          TAG=anima-pocket-v0.6.7
           APK=anima-pocket/app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release tag $TAG already exists; refusing to replace a release" >&2
             exit 1
           fi
-          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.6.apk"
-          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.6.apk" \
+          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.7.apk"
+          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.7.apk" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "Anima Pocket v0.6.6 - public MediaTek Neuron FP16" \
-            --notes "Direct phone Neuron adapter, isolated MDLA-only FP16 test. Synthetic weights; full Anima image generation is not yet NPU accelerated." \
+            --title "Anima Pocket v0.6.7 - public MediaTek Neuron FP16" \
+            --notes "Isolated MediaTek MDLA FP16 probe plus six-input ExecuTorch A16W4 real Anima transformer-block test. Device execution unverified until a real 45.6 MiB block PTE passes. Full image generation is not yet integrated." \
             --prerelease
