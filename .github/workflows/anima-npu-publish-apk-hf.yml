@@ -1,4 +1,4 @@
-name: Publish Anima Pocket v0.6.2 loader-check APK directly to private Hugging Face
+name: Publish Anima Pocket v0.6.3 Neuropilot registration APK directly to private Hugging Face
 on:
   workflow_run:
     workflows: ['Anima NPU Runtime - real A16W4 .pte and Android APK']
@@ -10,13 +10,13 @@ permissions:
 
 jobs:
   upload-direct-apk:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'anima-pocket' && github.event.workflow_run.head_sha == 'a17a0300dcad8d4cf86dcb1889c28a84ec277336' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'anima-pocket' && github.event.workflow_run.head_sha == '5e4c48b65b39123437ec1313dc1c08ad866bb0de' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       HF_REPO_ID: cardrhyme/anima-turbo-v1.1-mt6989-a16w4-experimental
-      APK_NAME: AnimaPocket-v0.6.2-NPU-Loader-Checks.apk
+      APK_NAME: AnimaPocket-v0.6.3-Neuropilot-Registered.apk
     steps:
       - name: Verify private HF upload token
         run: |
@@ -53,7 +53,7 @@ jobs:
               path_in_repo='apks/' + name,
               repo_id=repo,
               repo_type='model',
-              commit_message='Add Anima Pocket v0.6.2 alternate NPU loader checks APK',
+              commit_message='Add Anima Pocket v0.6.3 Neuropilot JNI backend registration APK',
           )
           print('Direct APK: https://huggingface.co/' + repo + '/resolve/main/apks/' + name + '?download=true')
           PY
