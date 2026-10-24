@@ -123,8 +123,8 @@ jobs:
           bash scripts/build_android_library.sh
           test -s "$BUILD_AAR_DIR/executorch.aar"
           unzip -l "$BUILD_AAR_DIR/executorch.aar" | grep -E 'libexecutorch.so|libneuron_backend.so|libneuronusdk_adapter.mtk.so|libneuron_buffer_allocator.so'
-          unzip -p "$BUILD_AAR_DIR/executorch.aar" jni/arm64-v8a/libexecutorch_jni.so > "$RUNNER_TEMP/libexecutorch-npu-jni.so"
-          readelf -d "$RUNNER_TEMP/libexecutorch-npu-jni.so" | grep -F 'Shared library: [libneuron_backend.so]'
+          unzip -p "$BUILD_AAR_DIR/executorch.aar" jni/arm64-v8a/libexecutorch.so > "$RUNNER_TEMP/libexecutorch-npu.so"
+          readelf -d "$RUNNER_TEMP/libexecutorch-npu.so" | grep -F 'Shared library: [libneuron_backend.so]'
           df -h .
 
       - name: Check out stable-diffusion.cpp for legacy generation path
