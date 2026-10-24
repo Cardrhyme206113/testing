@@ -68,6 +68,12 @@ public class MainActivity extends Activity {
     Button benchmarkButton, matmulButton, npuButton, compiledNpuButton;
     TextView compiledNpuFile;
     volatile String lastNpuReport="";
+    volatile boolean npuTestActive=false, npuServiceBound=false, npuDeathPending=false;
+    long npuWorkerStartEpochMs=0;
+    android.content.ServiceConnection npuServiceConnection;
+    final android.os.Handler npuUiHandler=new android.os.Handler(android.os.Looper.getMainLooper());
+    Runnable npuTimeout;
+
     volatile boolean benchmarkRun=false;
     volatile double[] lastStepSeconds=new double[33];
     volatile String runBackend="?", runWeights="?", runResolution="?";
@@ -342,6 +348,7 @@ public class MainActivity extends Activity {
         add(root,npuButton,4);
         add(root,text("Strict NNAPI hardware-device selection: CPU/GPU fallback disabled. No models required; does not yet run Anima on the NPU. NNAPI may be unavailable even if LiteRT can access NeuroPilot.",12,hint),4);
         add(root,button("Copy NPU probe report",this::copyNpuProbe),5);
+        add(root,button("Share latest NPU native crash (.pb)",this::shareNpuTombstone),4);
         add(root,text("NEUROPILOT / REAL ANIMA A16W4 PROJECTION",15,accent),16);
         add(root,text("Experimental INT4-weight ExecuTorch .pte runner. The downloadable test model contains ONE real Anima attention projection, not full image generation. A test success proves device-side compiled NPU inference only.",12,hint),3);
         compiledNpuFile=text(preferences.getString("npu_pte_name","No compiled .pte selected"),12,hint);
@@ -380,7 +387,8 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_NPU v0.5.0 NPU hardware feasibility ready; "+previousProcessExit());
+        appendDiagnostic("ANIMA_NPU v0.6.1 isolated native loader diagnostics; "+previousProcessExit());
+        recoverInterruptedNpuTest();
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
         }
@@ -601,14 +609,169 @@ public class MainActivity extends Activity {
         }
         copyText("Anima NPU report",lastNpuReport);
     }
+    void shareNpuTombstone(){
+        File file=new File(new File(getFilesDir(),"diagnostics"),"npu-tombstone.pb");
+        if(!file.isFile()){
+            Toast.makeText(this,"No native worker tombstone available yet. Copy the NPU report instead.",Toast.LENGTH_LONG).show();
+            return;
+        }
+        Uri uri=Uri.parse("content://"+NpuCrashProvider.AUTHORITY+"/npu-tombstone.pb");
+        Intent send=new Intent(Intent.ACTION_SEND);
+        send.setType("application/octet-stream");
+        send.putExtra(Intent.EXTRA_STREAM,uri);
+        send.setClipData(android.content.ClipData.newUri(getContentResolver(),"Anima NPU native crash",uri));
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivity(Intent.createChooser(send,"Share NPU native crash report"));
+    }
+
+    String isolatedNpuExitReport(long sinceEpochMs){
+        if(Build.VERSION.SDK_INT<30)return "ApplicationExitInfo unavailable on this Android version";
+        try{
+            ActivityManager am=(ActivityManager)getSystemService(ACTIVITY_SERVICE);
+            if(am==null)return "ActivityManager unavailable";
+            java.util.List<ApplicationExitInfo> exits=am.getHistoricalProcessExitReasons(null,0,20);
+            for(ApplicationExitInfo exit:exits){
+                String process=exit.getProcessName();
+                if(process==null || !process.endsWith(":npu_probe"))continue;
+                if(sinceEpochMs>0 && exit.getTimestamp()<sinceEpochMs-5000)continue;
+                StringBuilder result=new StringBuilder("ISOLATED_NPU_EXIT process=")
+                    .append(process).append(" reason=").append(exit.getReason())
+                    .append(" nativeCrash=").append(ApplicationExitInfo.REASON_CRASH_NATIVE)
+                    .append(" signalOrStatus=").append(exit.getStatus())
+                    .append(" rssKiB=").append(exit.getRss())
+                    .append(" at=").append(new java.util.Date(exit.getTimestamp()))
+                    .append("\\nDescription: ").append(exit.getDescription());
+                try(InputStream trace=exit.getTraceInputStream()){
+                    if(trace!=null){
+                        File dir=new File(getFilesDir(),"diagnostics");
+                        if(!dir.isDirectory()&&!dir.mkdirs())throw new IOException("Cannot create diagnostics directory");
+                        File dump=new File(dir,"npu-tombstone.pb");
+                        long size=0;
+                        try(FileOutputStream output=new FileOutputStream(dump)){
+                            byte[] buf=new byte[16384];int n;
+                            while((n=trace.read(buf))!=-1){
+                                if(size+n>4L*1048576L)break;
+                                output.write(buf,0,n);size+=n;
+                            }
+                            output.getFD().sync();
+                        }
+                        result.append("\\nAndroid native tombstone captured: ").append(size)
+                            .append(" bytes protobuf. Tap Share latest NPU native crash (.pb).");
+                    }else result.append("\\nAndroid did not retain a native tombstone stream.");
+                }catch(Exception error){result.append("\\nTombstone extraction error: ").append(error);}
+                return result.toString();
+            }
+            return "No isolated NPU worker exit record yet. Android may still be processing the crash.";
+        }catch(Exception error){return "Process-exit inspection failed: "+error;}
+    }
+
+    void recoverInterruptedNpuTest(){
+        if(!preferences.getBoolean("npu_worker_pending",false))return;
+        long began=preferences.getLong("npu_worker_start",0);
+        executor.execute(()->{
+            String report="Previous isolated NPU test interrupted.\\n"+isolatedNpuExitReport(began);
+            preferences.edit().putBoolean("npu_worker_pending",false).apply();
+            appendDiagnostic(report);
+            lastNpuReport=report;
+            runOnUiThread(()->{
+                if(liveMetrics!=null)liveMetrics.setText(report);
+                if(status!=null)status.setText("Recovered last isolated NPU test. Copy NPU report for details.");
+                showDiagnostics();
+            });
+        });
+    }
+
+    void finishIsolatedNpu(String report,boolean success){
+        if(!npuTestActive)return;
+        npuTestActive=false;
+        npuDeathPending=false;
+        if(npuTimeout!=null)npuUiHandler.removeCallbacks(npuTimeout);
+        npuTimeout=null;
+        if(npuServiceBound && npuServiceConnection!=null){
+            try{unbindService(npuServiceConnection);}catch(Exception ignored){}
+            npuServiceBound=false;
+        }
+        npuServiceConnection=null;
+        preferences.edit().putBoolean("npu_worker_pending",false).apply();
+        lastNpuReport=report;
+        appendDiagnostic((success?"ANIMA_NPU_PTE_TEST_RESULT ":"ANIMA_NPU_PTE_TEST_ERROR ")+report);
+        appendDiagnostic("ANIMA_NPU_PTE_TEST_END");
+        if(status!=null)status.setText(success?"Isolated NPU test complete. Copy NPU report.":"NPU worker failed; app survived. Copy NPU report.");
+        if(liveMetrics!=null)liveMetrics.setText(report);
+        showDiagnostics();
+        busy(false);
+    }
+
+    void isolatedNpuWorkerDied(String why){
+        if(!npuTestActive || npuDeathPending)return;
+        npuDeathPending=true;
+        // Don't let BIND_AUTO_CREATE repeatedly restart a crashing native worker.
+        if(npuServiceBound && npuServiceConnection!=null){
+            try{unbindService(npuServiceConnection);}catch(Exception ignored){}
+            npuServiceBound=false;
+        }
+        npuUiHandler.postDelayed(()->executor.execute(()->{
+            String report="NPU WORKER CRASHED OR DISCONNECTED\\n"+why+
+                "\\nThe main Anima Pocket process survived.\\n"+
+                isolatedNpuExitReport(npuWorkerStartEpochMs);
+            runOnUiThread(()->finishIsolatedNpu(report,false));
+        }),1500);
+    }
+
+    void bindIsolatedNpuWorker(File model){
+        npuWorkerStartEpochMs=System.currentTimeMillis();
+        preferences.edit().putBoolean("npu_worker_pending",true)
+            .putLong("npu_worker_start",npuWorkerStartEpochMs).apply();
+        appendDiagnostic("ISOLATED_NPU_WORKER_START model="+model.getAbsolutePath()+
+            " fingerprint="+Build.FINGERPRINT+" abi="+java.util.Arrays.toString(Build.SUPPORTED_ABIS));
+        final android.os.Messenger receiver=new android.os.Messenger(
+            new android.os.Handler(android.os.Looper.getMainLooper()){
+                @Override public void handleMessage(android.os.Message message){
+                    if(message.what!=NpuPteService.MSG_RESULT || !npuTestActive)return;
+                    Bundle data=message.getData();
+                    String report=data==null?"Missing NPU service response":data.getString("report","Missing NPU service response");
+                    finishIsolatedNpu(report,!report.startsWith("ISOLATED_NPU_JAVA_ERROR"));
+                }
+            });
+        npuServiceConnection=new android.content.ServiceConnection(){
+            @Override public void onServiceConnected(android.content.ComponentName name,android.os.IBinder binder){
+                if(!npuTestActive)return;
+                try{
+                    android.os.Message message=android.os.Message.obtain(null,NpuPteService.MSG_RUN);
+                    Bundle data=new Bundle();data.putString("model_path",model.getAbsolutePath());
+                    message.setData(data);message.replyTo=receiver;
+                    new android.os.Messenger(binder).send(message);
+                    appendDiagnostic("ISOLATED_NPU_WORKER_BOUND; loading adapter in remote process");
+                }catch(Exception e){isolatedNpuWorkerDied("Could not message worker: "+e);}
+            }
+            @Override public void onServiceDisconnected(android.content.ComponentName name){
+                isolatedNpuWorkerDied("Service process disconnected during native initialization");
+            }
+            @Override public void onBindingDied(android.content.ComponentName name){
+                isolatedNpuWorkerDied("Android reported worker binding died");
+            }
+            @Override public void onNullBinding(android.content.ComponentName name){
+                isolatedNpuWorkerDied("NPU service returned a null binder");
+            }
+        };
+        try{
+            npuServiceBound=bindService(new Intent(this,NpuPteService.class),npuServiceConnection,BIND_AUTO_CREATE);
+            if(!npuServiceBound){isolatedNpuWorkerDied("Android refused to bind the NPU worker");return;}
+            npuTimeout=()->isolatedNpuWorkerDied("No NPU worker response after 120 seconds");
+            npuUiHandler.postDelayed(npuTimeout,120000);
+        }catch(Exception e){isolatedNpuWorkerDied("Could not start isolated process: "+e);}
+    }
+
     void runCompiledNpuTest(){
         if(running)return;
         String source=preferences.getString("npu_pte",null);
-        if(source==null){Toast.makeText(this,"Select the Anima A16W4 .pte model",Toast.LENGTH_LONG).show();return;}
-        // This is a single real transformer PROJECTION, not a diffusion or image generation path.
+        if(source==null){Toast.makeText(this,"Select the 1 MiB Anima A16W4 projection .pte",Toast.LENGTH_LONG).show();return;}
+        // Projection-only test. All potentially crashing vendor code runs in :npu_probe.
+        npuTestActive=true;
+        npuDeathPending=false;
         busy(true);
-        setStage("Loading compiled Anima projection");
-        appendDiagnostic("ANIMA_NPU_PTE_TEST_BEGIN model="+preferences.getString("npu_pte_name","?"));
+        setStage("Preparing isolated Anima NPU projection test");
+        appendDiagnostic("ANIMA_NPU_ISOLATED_PTE_TEST_BEGIN model="+preferences.getString("npu_pte_name","?"));
         executor.execute(()->{
             try{
                 File dir=new File(getFilesDir(),"npu");
@@ -619,7 +782,7 @@ public class MainActivity extends Activity {
                 try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){
                     if(c!=null&&c.moveToFirst()&&!c.isNull(0))size=c.getLong(0);
                 }
-                if(size>100L*1048576L)throw new IOException("This diagnostic expects the 1 MiB projection .pte, not a full model. File is "+(size/1048576L)+" MiB.");
+                if(size>100L*1048576L)throw new IOException("This diagnostic accepts only the ~1 MiB projection .pte, NOT the 28-block NPU ZIP. File is "+(size/1048576L)+" MiB.");
                 if(size>0 && dir.getUsableSpace()<size+32L*1048576L)throw new IOException("Insufficient free storage for .pte cache");
                 File temporary=new File(dir,"anima-projection.part");
                 long copied=0;
@@ -630,7 +793,7 @@ public class MainActivity extends Activity {
                     int n;
                     while((n=input.read(buffer))>=0){
                         copied+=n;
-                        if(copied>100L*1048576L)throw new IOException("Unexpectedly large diagnostic model");
+                        if(copied>100L*1048576L)throw new IOException("Unexpectedly large projection file");
                         output.write(buffer,0,n);
                     }
                     output.getFD().sync();
@@ -638,23 +801,11 @@ public class MainActivity extends Activity {
                 if(copied<10000 || (size>=0 && copied!=size))throw new IOException("Compiled .pte length mismatch: "+copied+" vs provider="+size);
                 if(target.exists()&&!target.delete())throw new IOException("Cannot replace cached .pte");
                 if(!temporary.renameTo(target))throw new IOException("Cannot finalize cached .pte");
-                appendDiagnostic("ANIMA_NPU_PTE_LOADED bytes="+copied+" path="+target.getAbsolutePath());
-                String report=NpuPteTest.run(target);
-                appendDiagnostic("ANIMA_NPU_PTE_TEST_RESULT\n"+report);
-                lastNpuReport=report;
-                runOnUiThread(()->{
-                    status.setText("Compiled Anima NPU projection finished. Copy log for details.");
-                    liveMetrics.setText(report);
-                    showDiagnostics();
-                });
-            }catch(Throwable err){
-                String detail=android.util.Log.getStackTraceString(err);
-                appendDiagnostic("ANIMA_NPU_PTE_TEST_ERROR "+detail);
-                lastNpuReport="Compiled test FAILED: "+err;
-                runOnUiThread(()->{status.setText("NPU projection failed: "+err);liveMetrics.setText(detail);showDiagnostics();});
-            }finally{
-                appendDiagnostic("ANIMA_NPU_PTE_TEST_END");
-                busy(false);
+                appendDiagnostic("ANIMA_NPU_PTE_STAGED bytes="+copied+" path="+target.getAbsolutePath());
+                runOnUiThread(()->bindIsolatedNpuWorker(target));
+            }catch(Throwable error){
+                String detail=android.util.Log.getStackTraceString(error);
+                runOnUiThread(()->finishIsolatedNpu("PREPARE_FAILED\\n"+detail,false));
             }
         });
     }
@@ -812,7 +963,13 @@ public class MainActivity extends Activity {
         ScheduledFuture<?> task=memoryTask;
         if(task!=null)task.cancel(false);
         memoryWatcher.shutdownNow();
-        if(running)cancelNative();
+        if(npuTimeout!=null)npuUiHandler.removeCallbacks(npuTimeout);
+        if(npuServiceBound && npuServiceConnection!=null){
+            try{unbindService(npuServiceConnection);}catch(Exception ignored){}
+            npuServiceBound=false;
+        }
+        if(npuTestActive)preferences.edit().putBoolean("npu_worker_pending",false).apply();
+        if(running && !npuTestActive)cancelNative();
         closeSessionLog();
         super.onDestroy();
     }

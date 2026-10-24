@@ -8,5 +8,7 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <service android:name=".NpuPteService" android:exported="false" android:process=":npu_probe" />
+        <provider android:name=".NpuCrashProvider" android:authorities="dev.card.anima.npucrash" android:exported="false" android:grantUriPermissions="true" />
     </application>
 </manifest>
