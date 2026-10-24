@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 jobs:
@@ -106,3 +106,24 @@ jobs:
           path: anima-pocket/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 7
+
+      - name: Publish direct APK download on GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=anima-pocket-v0.6.6
+          APK=anima-pocket/app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release tag $TAG already exists; refusing to replace a release" >&2
+            exit 1
+          fi
+          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.6.apk"
+          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.6.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Anima Pocket v0.6.6 - public MediaTek Neuron FP16" \
+            --notes "Direct phone Neuron adapter, isolated MDLA-only FP16 test. Synthetic weights; full Anima image generation is not yet NPU accelerated." \
+            --prerelease
