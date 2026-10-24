@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.vulkan.level" android:required="false"/>
     <application android:label="Anima Pocket" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="false">
+        <!-- Android 12+ hides vendor public native libraries unless requested. -->
+        <uses-native-library android:name="libneuron_runtime.so" android:required="false" />
         <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize|uiMode">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
