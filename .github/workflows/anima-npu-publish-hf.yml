@@ -87,8 +87,8 @@ jobs:
           ''', encoding='utf-8')
           Path('model/NOTICE.txt').write_text('''The CircleStone Model is licensed by CircleStone Labs LLC under the CircleStone Non-Commercial License. Copyright CircleStone Labs LLC. IN NO EVENT SHALL CIRCLESTONE LABS LLC BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.
 
-Derivative modification notice: the original Anima Turbo v1.1 model weights were converted into 28 experimental MT6989-specific A16W4 INT4-weight / FP16-activation ExecuTorch modules. This is a third-party experiment and is NOT an official, validated, or endorsed CircleStone Labs release. License rights are granted directly by CircleStone Labs under the attached LICENSE.md, not by the uploader.
-''', encoding='utf-8')
+          Derivative modification notice: the original Anima Turbo v1.1 model weights were converted into 28 experimental MT6989-specific A16W4 INT4-weight / FP16-activation ExecuTorch modules. This is a third-party experiment and is NOT an official, validated, or endorsed CircleStone Labs release. License rights are granted directly by CircleStone Labs under the attached LICENSE.md, not by the uploader.
+          ''', encoding='utf-8')
           PY
 
       - name: Upload extracted model files to private Hugging Face repository
