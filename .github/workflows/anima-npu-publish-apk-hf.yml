@@ -1,9 +1,8 @@
-name: Publish Anima Pocket v0.6.1 APK directly to private Hugging Face
+name: Publish Anima Pocket v0.6.2 loader-check APK directly to private Hugging Face
 on:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/anima-npu-publish-apk-hf.yml']
-  workflow_dispatch:
+  workflow_run:
+    workflows: ['Anima NPU Runtime - real A16W4 .pte and Android APK']
+    types: [completed]
 
 permissions:
   contents: read
@@ -11,12 +10,13 @@ permissions:
 
 jobs:
   upload-direct-apk:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'anima-pocket' && github.event.workflow_run.head_sha == 'a17a0300dcad8d4cf86dcb1889c28a84ec277336' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       HF_REPO_ID: cardrhyme/anima-turbo-v1.1-mt6989-a16w4-experimental
-      APK_NAME: AnimaPocket-v0.6.1-NPU-Isolated-Diagnostics.apk
+      APK_NAME: AnimaPocket-v0.6.2-NPU-Loader-Checks.apk
     steps:
       - name: Verify private HF upload token
         run: |
@@ -25,12 +25,12 @@ jobs:
       - name: Retrieve the successfully built NPU-enabled APK
         uses: actions/download-artifact@v4
         with:
-          run-id: 40068501189
+          run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
           name: AnimaPocket-v0.6.0-NPU-A16W4-Test-APK
           path: download
 
-      - name: Verify artifact and rename APK for its actual package version
+      - name: Verify successful NPU artifact before publishing
         run: |
           test -s download/app-release.apk
           unzip -tqq download/app-release.apk
@@ -53,7 +53,7 @@ jobs:
               path_in_repo='apks/' + name,
               repo_id=repo,
               repo_type='model',
-              commit_message='Add Anima Pocket v0.6.1 isolated NPU crash diagnostics APK',
+              commit_message='Add Anima Pocket v0.6.2 alternate NPU loader checks APK',
           )
           print('Direct APK: https://huggingface.co/' + repo + '/resolve/main/apks/' + name + '?download=true')
           PY
