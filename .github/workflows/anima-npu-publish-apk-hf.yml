@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   upload-direct-apk:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'anima-pocket' && github.event.workflow_run.head_sha == '5e4c48b65b39123437ec1313dc1c08ad866bb0de' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'anima-pocket' && github.event.workflow_run.head_sha == 'a21986907c303a277ecbd2ae5e45fdc4e827e05d' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
