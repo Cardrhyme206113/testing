@@ -38,6 +38,8 @@ public final class NpuPteTest {
                 report.append("stage=load_bundled_neuron_backend_without_adapter_preload\n");
                 System.loadLibrary("neuron_backend");
                 report.append("library=neuron_backend; loaded=true\n");
+                report.append("registeredBackendsAfterLoad=")
+                    .append(Arrays.toString(ExecuTorchRuntime.getRegisteredBackends())).append("\n");
                 break;
             case "adapter_direct":
                 report.append("stage=load_bundled_neuronusdk_adapter_known_crash\n");

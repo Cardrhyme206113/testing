@@ -396,7 +396,7 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_NPU v0.6.2 alternate isolated loader probes; "+previousProcessExit());
+        appendDiagnostic("ANIMA_NPU v0.6.3 linked Neuropilot backend diagnostics; "+previousProcessExit());
         recoverInterruptedNpuTest();
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");

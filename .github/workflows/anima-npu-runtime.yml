@@ -97,6 +97,18 @@ jobs:
             exit 2
           fi
           cp "$HEADER" backends/mediatek/runtime/include/api/NeuronAdapter.h
+          # Link MediaTek backend into Android JNI even with Llama JNI disabled.
+          python3 - <<'PY'
+          from pathlib import Path
+          cmake = Path("extension/android/CMakeLists.txt")
+          source = cmake.read_text()
+          anchor = "if(TARGET qnn_executorch_backend)\n  list(APPEND link_libraries qnn_executorch_backend)\nendif()\n"
+          patch = "\nif(TARGET neuron_backend)\n  list(APPEND link_libraries neuron_backend)\nendif()\n"
+          if source.count(anchor) != 1:
+              raise SystemExit("Unexpected ExecuTorch JNI CMake layout")
+          cmake.write_text(source.replace(anchor, anchor + patch))
+          print("Linked neuron_backend into core ExecuTorch JNI")
+          PY
           export ANDROID_NDK="$ANDROID_HOME/ndk/27.2.12479018"
           export ANDROID_SDK="$ANDROID_HOME"
           export ANDROID_ABIS=arm64-v8a
@@ -111,6 +123,8 @@ jobs:
           bash scripts/build_android_library.sh
           test -s "$BUILD_AAR_DIR/executorch.aar"
           unzip -l "$BUILD_AAR_DIR/executorch.aar" | grep -E 'libexecutorch.so|libneuron_backend.so|libneuronusdk_adapter.mtk.so|libneuron_buffer_allocator.so'
+          unzip -p "$BUILD_AAR_DIR/executorch.aar" jni/arm64-v8a/libexecutorch.so > "$RUNNER_TEMP/libexecutorch-npu.so"
+          readelf -d "$RUNNER_TEMP/libexecutorch-npu.so" | grep -F 'Shared library: [libneuron_backend.so]'
           df -h .
 
       - name: Check out stable-diffusion.cpp for legacy generation path
