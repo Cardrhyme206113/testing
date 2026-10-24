@@ -3,9 +3,12 @@ on:
   push:
     branches: [anima-pocket]
     paths:
-      - '.github/workflows/anima-npu-runtime.yml'
-      - 'anima-pocket/app/**'
+      # The full exporter/backend rebuild is intentionally separate from
+      # Java-only or probe-only APK iterations. Use workflow_dispatch otherwise.
       - 'anima-pocket/npu-export/**'
+      - 'anima-pocket/app/src/main/cpp/bridge.cpp'
+      - 'anima-pocket/app/src/main/cpp/npu_probe.cpp'
+      - 'anima-pocket/app/src/main/cpp/matmul_bench.cpp'
   workflow_dispatch:
 
 permissions:

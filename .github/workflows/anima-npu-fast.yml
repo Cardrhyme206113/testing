@@ -1,0 +1,94 @@
+name: Anima Pocket fast vendor ABI probe APK
+on:
+  push:
+    branches: [anima-pocket]
+    paths:
+      - '.github/workflows/anima-npu-fast.yml'
+      - 'anima-pocket/app/src/main/java/**'
+      - 'anima-pocket/app/src/main/cpp/npu_symbols.cpp'
+      - 'anima-pocket/app/src/main/cpp/CMakeLists.fast.txt'
+      - 'anima-pocket/app/build.gradle'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-fast-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - name: Install Android build requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake unzip zip
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+
+      - name: Reuse verified v0.6.4 runtime APK (no NPU recompilation)
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 40107609449
+          name: AnimaPocket-v0.6.0-NPU-A16W4-Test-APK
+          path: previous
+          github-token: ${{ github.token }}
+
+      - name: Repackage previous NPU binaries and matching ExecuTorch Java API
+        shell: bash
+        run: |
+          set -euo pipefail
+          OLD_APK=previous/app-release.apk
+          test -s "$OLD_APK"
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/original.aar" \
+            https://repo.maven.apache.org/maven2/org/pytorch/executorch-android/1.5.1/executorch-android-1.5.1.aar
+          mkdir -p "$RUNNER_TEMP/etaar"
+          unzip -q "$RUNNER_TEMP/original.aar" -d "$RUNNER_TEMP/etaar"
+          # The generic AAR's CPU JNI libraries must not shadow our v0.6.4 Neuropilot ones.
+          if [ -d "$RUNNER_TEMP/etaar/jni" ]; then
+            find "$RUNNER_TEMP/etaar/jni" -type f -name '*.so' -delete
+          fi
+          mkdir -p "$RUNNER_TEMP/etaar/jni/arm64-v8a"
+          mkdir -p anima-pocket/app/src/main/jniLibs/arm64-v8a
+          for lib in libexecutorch.so libexecutorch_jni.so libneuron_backend.so libneuronusdk_adapter.mtk.so libneuron_buffer_allocator.so; do
+            if unzip -Z1 "$OLD_APK" | grep -Fxq "lib/arm64-v8a/$lib"; then
+              unzip -p "$OLD_APK" "lib/arm64-v8a/$lib" > "$RUNNER_TEMP/etaar/jni/arm64-v8a/$lib"
+            fi
+          done
+          test -s "$RUNNER_TEMP/etaar/jni/arm64-v8a/libneuron_backend.so"
+          test -s "$RUNNER_TEMP/etaar/jni/arm64-v8a/libexecutorch.so"
+          unzip -p "$OLD_APK" lib/arm64-v8a/libanimabridge.so \
+            > anima-pocket/app/src/main/jniLibs/arm64-v8a/libanimabridge.so
+          test -s anima-pocket/app/src/main/jniLibs/arm64-v8a/libanimabridge.so
+          mkdir -p anima-pocket/app/libs
+          ( cd "$RUNNER_TEMP/etaar" && zip -qr "$GITHUB_WORKSPACE/anima-pocket/app/libs/executorch.aar" . )
+          test -s anima-pocket/app/libs/executorch.aar
+
+      - name: Compile only tiny ABI-probe JNI and package unchanged model runtimes
+        run: |
+          cp anima-pocket/app/src/main/cpp/CMakeLists.fast.txt anima-pocket/app/src/main/cpp/CMakeLists.txt
+          cd anima-pocket
+          gradle --no-daemon --max-workers=2 assembleRelease
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          unzip -l "$APK" | grep -F 'lib/arm64-v8a/libnpusymbols.so'
+          unzip -l "$APK" | grep -F 'lib/arm64-v8a/libanimabridge.so'
+          unzip -l "$APK" | grep -F 'lib/arm64-v8a/libneuron_backend.so'
+          unzip -l "$APK" | grep -F 'lib/arm64-v8a/libexecutorch.so'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AnimaPocket-v0.6.5-Vendor-ABI-Probe-APK
+          path: anima-pocket/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 7

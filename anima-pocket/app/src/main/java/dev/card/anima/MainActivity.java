@@ -357,6 +357,7 @@ public class MainActivity extends Activity {
         add(root,button("C · ExecuTorch lazy backend discovery (no model)",()->runIsolatedLoaderTest("et_lazy")),4);
         add(root,button("D · MediaTek backend direct load (no model)",()->runIsolatedLoaderTest("backend_direct")),4);
         add(root,button("E · Bundled adapter load (known crash)",()->runIsolatedLoaderTest("adapter_direct")),4);
+        add(root,button("F · Inspect phone Neuron ABI symbols (no model)",()->runIsolatedLoaderTest("vendor_symbols")),4);
         add(root,text("NEUROPILOT / REAL ANIMA A16W4 PROJECTION",15,accent),16);
         add(root,text("Experimental INT4-weight ExecuTorch .pte runner. The downloadable test model contains ONE real Anima attention projection, not full image generation. A test success proves device-side compiled NPU inference only.",12,hint),3);
         compiledNpuFile=text(preferences.getString("npu_pte_name","No compiled .pte selected"),12,hint);
@@ -396,7 +397,7 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_NPU v0.6.3 linked Neuropilot backend diagnostics; "+previousProcessExit());
+        appendDiagnostic("ANIMA_NPU v0.6.5 vendor-runtime ABI diagnostics; "+previousProcessExit());
         recoverInterruptedNpuTest();
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");

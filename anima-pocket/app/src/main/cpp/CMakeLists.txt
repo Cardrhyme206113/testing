@@ -28,3 +28,7 @@ endif()
 add_library(animabridge SHARED bridge.cpp matmul_bench.cpp npu_probe.cpp)
 target_include_directories(animabridge PRIVATE stable-diffusion.cpp/include)
 target_link_libraries(animabridge PRIVATE stable-diffusion ggml log android neuralnetworks)
+
+# Tiny isolated vendor symbol probe; no diffusion dependency.
+add_library(npusymbols SHARED npu_symbols.cpp)
+target_link_libraries(npusymbols PRIVATE dl log)

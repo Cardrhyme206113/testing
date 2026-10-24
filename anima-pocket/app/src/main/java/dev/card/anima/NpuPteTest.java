@@ -14,6 +14,9 @@ import org.pytorch.executorch.Tensor;
 public final class NpuPteTest {
     private NpuPteTest(){}
 
+    /** Reads exported symbol names only; never calls Neuron functions or loads a model. */
+    private static native String probeVendorSymbolsNative();
+
     /** Each loader check is executed in a fresh :npu_probe process. */
     public static String probeLoader(String mode) {
         long begin=System.nanoTime();
@@ -23,6 +26,11 @@ public final class NpuPteTest {
                 report.append("stage=load_system_public_neuron_runtime\n");
                 System.loadLibrary("neuron_runtime");
                 report.append("library=neuron_runtime; loaded=true\n");
+                break;
+            case "vendor_symbols":
+                report.append("stage=inspect_device_neuron_api_symbols_no_execution\n");
+                System.loadLibrary("npusymbols");
+                report.append(probeVendorSymbolsNative());
                 break;
             case "allocator_direct":
                 report.append("stage=load_bundled_neuron_buffer_allocator\n");

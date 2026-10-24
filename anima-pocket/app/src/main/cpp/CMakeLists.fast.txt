@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22)
+project(anima_npu_symbols LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+add_library(npusymbols SHARED npu_symbols.cpp)
+target_link_libraries(npusymbols PRIVATE dl log)
