@@ -1,0 +1,56 @@
+name: Publish Anima INT4 NPU projection probe to private Hugging Face
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/anima-npu-publish-probe-hf.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  upload-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_REPO_ID: cardrhyme/anima-turbo-v1.1-mt6989-a16w4-experimental
+    steps:
+      - name: Verify Hugging Face write token
+        run: |
+          test -n "$HF_TOKEN" || { echo "::error::Missing HF_TOKEN"; exit 1; }
+
+      - name: Download small real-weight NPU projection
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 40068501189
+          github-token: ${{ github.token }}
+          name: Anima-NPU-INT4-A16W4-real-projection
+          path: probe
+
+      - name: Validate probe size
+        run: |
+          PROBE=$(find probe -type f -name '*.pte' -print -quit)
+          test -n "$PROBE" && test -s "$PROBE"
+          test "$(stat -c %s "$PROBE")" -lt 104857600
+          mkdir -p publish
+          cp "$PROBE" publish/Anima-A16W4-real-projection-MT6989.pte
+
+      - name: Upload direct PTE download
+        run: |
+          python -m pip install --disable-pip-version-check "huggingface_hub>=0.34,<2"
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+          name = 'Anima-A16W4-real-projection-MT6989.pte'
+          repo = os.environ['HF_REPO_ID']
+          HfApi(token=os.environ['HF_TOKEN']).upload_file(
+              path_or_fileobj='publish/' + name,
+              path_in_repo='probes/' + name,
+              repo_id=repo,
+              repo_type='model',
+              commit_message='Add single projection PTE for isolated Android NPU crash diagnostics',
+          )
+          print('Direct probe: https://huggingface.co/' + repo + '/resolve/main/probes/' + name + '?download=true')
+          PY
