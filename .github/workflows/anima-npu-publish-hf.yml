@@ -83,12 +83,30 @@ jobs:
 
           Use is subject to the original CircleStone Labs non-commercial license and any applicable NVIDIA upstream terms. Review the upstream license before redistribution or use. Attribution: CircleStone Labs, Anima / Anima Turbo v1.1, with upstream NVIDIA Cosmos derivative obligations.
 
-          Files: 28 individual .pte modules and manifest.json.
+          Files: 28 individual .pte modules, manifest.json, and a one-click ZIP of all the blocks plus documentation.
           ''', encoding='utf-8')
           Path('model/NOTICE.txt').write_text('''The CircleStone Model is licensed by CircleStone Labs LLC under the CircleStone Non-Commercial License. Copyright CircleStone Labs LLC. IN NO EVENT SHALL CIRCLESTONE LABS LLC BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.
 
           Derivative modification notice: the original Anima Turbo v1.1 model weights were converted into 28 experimental MT6989-specific A16W4 INT4-weight / FP16-activation ExecuTorch modules. This is a third-party experiment and is NOT an official, validated, or endorsed CircleStone Labs release. License rights are granted directly by CircleStone Labs under the attached LICENSE.md, not by the uploader.
           ''', encoding='utf-8')
+          PY
+
+      - name: Create single downloadable ZIP containing all NPU blocks
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          source = Path('model')
+          archive = source / 'Anima-Turbo-v1.1-MT6989-INT4-28-blocks.zip'
+          files = sorted(p for p in source.rglob('*') if p.is_file() and p != archive)
+          assert sum(p.suffix == '.pte' for p in files) == 28
+          with ZipFile(archive, 'w', compression=ZIP_DEFLATED, compresslevel=6, allowZip64=True) as dest:
+              for file in files:
+                  dest.write(file, file.relative_to(source))
+          with ZipFile(archive) as dest:
+              assert dest.testzip() is None
+              assert len([n for n in dest.namelist() if n.endswith('.pte')]) == 28
+          print('One-click ZIP:', archive, archive.stat().st_size, 'bytes')
           PY
 
       - name: Upload extracted model files to private Hugging Face repository
