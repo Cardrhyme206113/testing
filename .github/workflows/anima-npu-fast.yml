@@ -67,8 +67,7 @@ jobs:
           done
           test -s "$RUNNER_TEMP/etaar/jni/arm64-v8a/libneuron_backend.so"
           test -s "$RUNNER_TEMP/etaar/jni/arm64-v8a/libexecutorch.so"
-          # Preserve all other prebuilt diffusion/GGML shared libraries too.
-          # Rebuilding only npusymbols must not break the normal generation path.
+          # Preserve other prebuilt diffusion/GGML shared libraries too.
           while IFS= read -r entry; do
             lib=${entry##*/}
             case "$lib" in
@@ -76,30 +75,7 @@ jobs:
                 continue ;;
             esac
             unzip -p "$OLD_APK" "$entry" > "anima-pocket/app/src/main/jniLibs/arm64-v8a/$lib"
-          done < <(unzip -Z1 "$OLD_APK" | grep '^lib/arm64-v8a/.*\.so
-          mkdir -p anima-pocket/app/libs
-          ( cd "$RUNNER_TEMP/etaar" && zip -qr "$GITHUB_WORKSPACE/anima-pocket/app/libs/executorch.aar" . )
-          test -s anima-pocket/app/libs/executorch.aar
-
-      - name: Compile only tiny ABI-probe JNI and package unchanged model runtimes
-        run: |
-          cp anima-pocket/app/src/main/cpp/CMakeLists.fast.txt anima-pocket/app/src/main/cpp/CMakeLists.txt
-          cd anima-pocket
-          gradle --no-daemon --max-workers=2 assembleRelease
-          APK=app/build/outputs/apk/release/app-release.apk
-          test -s "$APK"
-          unzip -l "$APK" | grep -F 'lib/arm64-v8a/libnpusymbols.so'
-          unzip -l "$APK" | grep -F 'lib/arm64-v8a/libanimabridge.so'
-          unzip -l "$APK" | grep -F 'lib/arm64-v8a/libneuron_backend.so'
-          unzip -l "$APK" | grep -F 'lib/arm64-v8a/libexecutorch.so'
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: AnimaPocket-v0.6.5-Vendor-ABI-Probe-APK
-          path: anima-pocket/app/build/outputs/apk/release/app-release.apk
-          if-no-files-found: error
-          retention-days: 7
-)
+          done < <(unzip -Z1 "$OLD_APK" | grep '^lib/arm64-v8a/.*\.so$')
           test -s anima-pocket/app/src/main/jniLibs/arm64-v8a/libanimabridge.so
           mkdir -p anima-pocket/app/libs
           ( cd "$RUNNER_TEMP/etaar" && zip -qr "$GITHUB_WORKSPACE/anima-pocket/app/libs/executorch.aar" . )
