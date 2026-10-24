@@ -1,5 +1,8 @@
 name: Publish existing Anima INT4 NPU blocks to Hugging Face
 on:
+  push:
+    branches: [anima-pocket]
+    paths: ['.github/workflows/anima-npu-publish-hf.yml']
   workflow_dispatch:
     inputs:
       source_run_id:
@@ -21,7 +24,7 @@ jobs:
     timeout-minutes: 120
     env:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HF_REPO_ID: ${{ inputs.hf_repo_id }}
+      HF_REPO_ID: ${{ inputs.hf_repo_id || 'cardrhyme/anima-turbo-v1.1-mt6989-a16w4-experimental' }}
     steps:
       - name: Verify Hugging Face write token is configured
         run: |
@@ -33,7 +36,7 @@ jobs:
       - name: Download compiled artifact from previous workflow
         uses: actions/download-artifact@v4
         with:
-          run-id: ${{ inputs.source_run_id }}
+          run-id: ${{ inputs.source_run_id || '40016876462' }}
           name: Anima-Turbo-v1.1-28-block-MT6989-A16W4-EXPERIMENTAL-NOT-END-TO-END
           path: model
           github-token: ${{ github.token }}
