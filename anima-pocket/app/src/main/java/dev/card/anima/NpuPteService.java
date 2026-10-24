@@ -11,10 +11,7 @@ import android.os.Messenger;
 import android.os.RemoteException;
 import java.io.File;
 
-/**
- * Runs the experimental MediaTek adapter in its OWN Android process.
- * A vendor SIGSEGV cannot kill the main UI process.
- */
+/** Each diagnostic runs in :npu_probe, never in the Anima Pocket UI process. */
 public final class NpuPteService extends Service {
     public static final int MSG_RUN = 1;
     public static final int MSG_RESULT = 2;
@@ -27,17 +24,23 @@ public final class NpuPteService extends Service {
         final Messenger recipient = msg.replyTo;
         final Bundle data = msg.getData();
         final String path = data == null ? null : data.getString("model_path");
+        final String mode = data == null ? null : data.getString("mode");
         new Thread(() -> {
             String report;
             try {
-                File allowed = new File(new File(getFilesDir(), "npu"), "anima-projection.pte");
-                File selected = path == null ? null : new File(path);
-                if (selected == null || !selected.getCanonicalFile().equals(allowed.getCanonicalFile())) {
-                    throw new SecurityException("Invalid NPU projection file path");
+                if ("pte_lazy".equals(mode) || "pte_backend".equals(mode)) {
+                    File allowed = new File(new File(getFilesDir(), "npu"), "anima-projection.pte");
+                    File selected = path == null ? null : new File(path);
+                    if (selected == null || !selected.getCanonicalFile().equals(allowed.getCanonicalFile())) {
+                        throw new SecurityException("Invalid NPU projection file path");
+                    }
+                    report = NpuPteTest.run(selected, "pte_backend".equals(mode));
+                } else {
+                    report = NpuPteTest.probeLoader(mode);
                 }
-                report = NpuPteTest.run(selected);
             } catch (Throwable t) {
-                report = "ISOLATED_NPU_JAVA_ERROR\n" + android.util.Log.getStackTraceString(t);
+                report = "ISOLATED_NPU_JAVA_ERROR mode=" + mode + "\n"
+                    + android.util.Log.getStackTraceString(t);
             }
             if (recipient != null) {
                 Message reply = Message.obtain(null, MSG_RESULT);
@@ -53,4 +56,10 @@ public final class NpuPteService extends Service {
     }));
 
     @Override public IBinder onBind(Intent intent) { return incoming.getBinder(); }
+
+    /** Fresh child process per attempt; no native loader state leaks between probes. */
+    @Override public boolean onUnbind(Intent intent) {
+        android.os.Process.killProcess(android.os.Process.myPid());
+        return false;
+    }
 }

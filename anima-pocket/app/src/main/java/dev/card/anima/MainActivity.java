@@ -69,6 +69,7 @@ public class MainActivity extends Activity {
     TextView compiledNpuFile;
     volatile String lastNpuReport="";
     volatile boolean npuTestActive=false, npuServiceBound=false, npuDeathPending=false;
+    String npuCurrentMode="none";
     long npuWorkerStartEpochMs=0;
     android.content.ServiceConnection npuServiceConnection;
     final android.os.Handler npuUiHandler=new android.os.Handler(android.os.Looper.getMainLooper());
@@ -347,15 +348,23 @@ public class MainActivity extends Activity {
         npuButton=button("Detect NPU and run hardware-only FP16 matrix benchmark",this::runNpuProbe);
         add(root,npuButton,4);
         add(root,text("Strict NNAPI hardware-device selection: CPU/GPU fallback disabled. No models required; does not yet run Anima on the NPU. NNAPI may be unavailable even if LiteRT can access NeuroPilot.",12,hint),4);
-        add(root,button("Copy NPU probe report",this::copyNpuProbe),5);
+        add(root,button("Copy latest NPU test report",this::copyNpuProbe),5);
         add(root,button("Share latest NPU native crash (.pb)",this::shareNpuTombstone),4);
+        add(root,text("NEUROPILOT LOADER CHECKS · ISOLATED",15,accent),16);
+        add(root,text("Each button runs in a fresh child process. Loader success is not proof of NPU inference. The known-crashing adapter check is optional.",12,hint),4);
+        add(root,button("A · Phone vendor Neuron runtime (no model)",()->runIsolatedLoaderTest("vendor_runtime")),4);
+        add(root,button("B · Bundled Neuron allocator (no model)",()->runIsolatedLoaderTest("allocator_direct")),4);
+        add(root,button("C · ExecuTorch lazy backend discovery (no model)",()->runIsolatedLoaderTest("et_lazy")),4);
+        add(root,button("D · MediaTek backend direct load (no model)",()->runIsolatedLoaderTest("backend_direct")),4);
+        add(root,button("E · Bundled adapter load (known crash)",()->runIsolatedLoaderTest("adapter_direct")),4);
         add(root,text("NEUROPILOT / REAL ANIMA A16W4 PROJECTION",15,accent),16);
         add(root,text("Experimental INT4-weight ExecuTorch .pte runner. The downloadable test model contains ONE real Anima attention projection, not full image generation. A test success proves device-side compiled NPU inference only.",12,hint),3);
         compiledNpuFile=text(preferences.getString("npu_pte_name","No compiled .pte selected"),12,hint);
         add(root,compiledNpuFile,4);
         add(root,button("Select compiled .pte model",()->pick(3)),5);
-        compiledNpuButton=button("Run real-weight INT4 NPU test (no CPU fallback)",this::runCompiledNpuTest);
+        compiledNpuButton=button("Run INT4 projection · lazy route (no CPU fallback)",this::runCompiledNpuTest);
         add(root,compiledNpuButton,5);
+        add(root,button("Run INT4 projection · backend-first route",()->runCompiledNpuTest("pte_backend")),5);
         add(root,button("Copy performance history (CSV)",this::copyBenchmarkHistory),6);
         stop=button("Cancel",()->{cancelNative();notifyStatus("Cancel requested…");});stop.setEnabled(false);add(root,stop,7);
         status=text("Ready. Select three files.",13,hint);add(root,status,12);
@@ -387,7 +396,7 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_NPU v0.6.1 isolated native loader diagnostics; "+previousProcessExit());
+        appendDiagnostic("ANIMA_NPU v0.6.2 alternate isolated loader probes; "+previousProcessExit());
         recoverInterruptedNpuTest();
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
@@ -694,8 +703,8 @@ public class MainActivity extends Activity {
         npuServiceConnection=null;
         preferences.edit().putBoolean("npu_worker_pending",false).apply();
         lastNpuReport=report;
-        appendDiagnostic((success?"ANIMA_NPU_PTE_TEST_RESULT ":"ANIMA_NPU_PTE_TEST_ERROR ")+report);
-        appendDiagnostic("ANIMA_NPU_PTE_TEST_END");
+        appendDiagnostic((success?"ANIMA_NPU_TEST_RESULT ":"ANIMA_NPU_TEST_ERROR ")+npuCurrentMode+"\n"+report);
+        appendDiagnostic("ANIMA_NPU_TEST_END mode="+npuCurrentMode);
         if(status!=null)status.setText(success?"Isolated NPU test complete. Copy NPU report.":"NPU worker failed; app survived. Copy NPU report.");
         if(liveMetrics!=null)liveMetrics.setText(report);
         showDiagnostics();
@@ -718,11 +727,12 @@ public class MainActivity extends Activity {
         }),1500);
     }
 
-    void bindIsolatedNpuWorker(File model){
+    void bindIsolatedNpuWorker(File model,String mode){
         npuWorkerStartEpochMs=System.currentTimeMillis();
         preferences.edit().putBoolean("npu_worker_pending",true)
             .putLong("npu_worker_start",npuWorkerStartEpochMs).apply();
-        appendDiagnostic("ISOLATED_NPU_WORKER_START model="+model.getAbsolutePath()+
+        appendDiagnostic("ISOLATED_NPU_WORKER_START mode="+mode+" model="+
+            (model==null?"none":model.getAbsolutePath())+
             " fingerprint="+Build.FINGERPRINT+" abi="+java.util.Arrays.toString(Build.SUPPORTED_ABIS));
         final android.os.Messenger receiver=new android.os.Messenger(
             new android.os.Handler(android.os.Looper.getMainLooper()){
@@ -738,10 +748,11 @@ public class MainActivity extends Activity {
                 if(!npuTestActive)return;
                 try{
                     android.os.Message message=android.os.Message.obtain(null,NpuPteService.MSG_RUN);
-                    Bundle data=new Bundle();data.putString("model_path",model.getAbsolutePath());
+                    Bundle data=new Bundle();data.putString("mode",mode);
+                    if(model!=null)data.putString("model_path",model.getAbsolutePath());
                     message.setData(data);message.replyTo=receiver;
                     new android.os.Messenger(binder).send(message);
-                    appendDiagnostic("ISOLATED_NPU_WORKER_BOUND; loading adapter in remote process");
+                    appendDiagnostic("ISOLATED_NPU_WORKER_BOUND; mode="+mode);
                 }catch(Exception e){isolatedNpuWorkerDied("Could not message worker: "+e);}
             }
             @Override public void onServiceDisconnected(android.content.ComponentName name){
@@ -762,16 +773,30 @@ public class MainActivity extends Activity {
         }catch(Exception e){isolatedNpuWorkerDied("Could not start isolated process: "+e);}
     }
 
-    void runCompiledNpuTest(){
-        if(running)return;
+    void runIsolatedLoaderTest(String mode){
+        if(running || npuTestActive)return;
+        npuTestActive=true;
+        npuDeathPending=false;
+        npuCurrentMode=mode;
+        busy(true);
+        setStage("Testing NPU loader: "+mode);
+        appendDiagnostic("ANIMA_NPU_LOADER_TEST_BEGIN mode="+mode);
+        bindIsolatedNpuWorker(null,mode);
+    }
+
+    void runCompiledNpuTest(){ runCompiledNpuTest("pte_lazy"); }
+
+    void runCompiledNpuTest(String mode){
+        if(running || npuTestActive)return;
         String source=preferences.getString("npu_pte",null);
         if(source==null){Toast.makeText(this,"Select the 1 MiB Anima A16W4 projection .pte",Toast.LENGTH_LONG).show();return;}
         // Projection-only test. All potentially crashing vendor code runs in :npu_probe.
         npuTestActive=true;
         npuDeathPending=false;
+        npuCurrentMode=mode;
         busy(true);
-        setStage("Preparing isolated Anima NPU projection test");
-        appendDiagnostic("ANIMA_NPU_ISOLATED_PTE_TEST_BEGIN model="+preferences.getString("npu_pte_name","?"));
+        setStage("Preparing isolated Anima NPU projection test: "+mode);
+        appendDiagnostic("ANIMA_NPU_ISOLATED_PTE_TEST_BEGIN mode="+mode+" model="+preferences.getString("npu_pte_name","?"));
         executor.execute(()->{
             try{
                 File dir=new File(getFilesDir(),"npu");
@@ -802,7 +827,7 @@ public class MainActivity extends Activity {
                 if(target.exists()&&!target.delete())throw new IOException("Cannot replace cached .pte");
                 if(!temporary.renameTo(target))throw new IOException("Cannot finalize cached .pte");
                 appendDiagnostic("ANIMA_NPU_PTE_STAGED bytes="+copied+" path="+target.getAbsolutePath());
-                runOnUiThread(()->bindIsolatedNpuWorker(target));
+                runOnUiThread(()->bindIsolatedNpuWorker(target,mode));
             }catch(Throwable error){
                 String detail=android.util.Log.getStackTraceString(error);
                 runOnUiThread(()->finishIsolatedNpu("PREPARE_FAILED\\n"+detail,false));

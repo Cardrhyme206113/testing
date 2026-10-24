@@ -14,13 +14,52 @@ import org.pytorch.executorch.Tensor;
 public final class NpuPteTest {
     private NpuPteTest(){}
 
-    public static String run(File modelFile) {
+    /** Each loader check is executed in a fresh :npu_probe process. */
+    public static String probeLoader(String mode) {
+        long begin=System.nanoTime();
+        StringBuilder report=new StringBuilder("ANIMA_NPU_LOADER_MODE=").append(mode).append("\n");
+        switch(mode) {
+            case "vendor_runtime":
+                report.append("stage=load_system_public_neuron_runtime\n");
+                System.loadLibrary("neuron_runtime");
+                report.append("library=neuron_runtime; loaded=true\n");
+                break;
+            case "allocator_direct":
+                report.append("stage=load_bundled_neuron_buffer_allocator\n");
+                System.loadLibrary("neuron_buffer_allocator");
+                report.append("library=neuron_buffer_allocator; loaded=true\n");
+                break;
+            case "et_lazy":
+                report.append("stage=executorch_backend_discovery_without_neuron_preload\n");
+                report.append("registeredBackends=")
+                    .append(Arrays.toString(ExecuTorchRuntime.getRegisteredBackends())).append("\n");
+                break;
+            case "backend_direct":
+                report.append("stage=load_bundled_neuron_backend_without_adapter_preload\n");
+                System.loadLibrary("neuron_backend");
+                report.append("library=neuron_backend; loaded=true\n");
+                break;
+            case "adapter_direct":
+                report.append("stage=load_bundled_neuronusdk_adapter_known_crash\n");
+                System.loadLibrary("neuronusdk_adapter.mtk");
+                report.append("library=neuronusdk_adapter.mtk; loaded=true\n");
+                break;
+            default:
+                throw new IllegalArgumentException("Unknown loader mode: "+mode);
+        }
+        report.append("status=LOADER_CHECK_SUCCEEDED_NOT_MODEL_INFERENCE\n");
+        report.append("wallMs=").append(String.format(Locale.US,"%.1f",(System.nanoTime()-begin)/1e6));
+        return report.toString();
+    }
+
+    /** No explicit bundled adapter preload; see whether ExecuTorch can initialize it. */
+    public static String run(File modelFile, boolean backendFirst) {
         long start=System.nanoTime();
         StringBuilder report=new StringBuilder("ANIMA_REAL_WEIGHT_A16W4_NPU\n");
-        // Attempt to load local NeuroPilot runtime; failing here is actionable, not
-        // an excuse to switch silently to CPU.
-        System.loadLibrary("neuron_buffer_allocator");
-        System.loadLibrary("neuronusdk_adapter.mtk");
+        report.append("loadRoute=").append(backendFirst?"backend_first":"executorch_lazy").append("\n");
+        // Old build explicitly loaded the adapter here; its ELF constructor
+        // jumped to NULL on Xiaomi Android 16. Skip that direct preload.
+        if(backendFirst)System.loadLibrary("neuron_backend");
         String[] registered=ExecuTorchRuntime.getRegisteredBackends();
         report.append("registeredBackends=").append(Arrays.toString(registered)).append("\n");
         if(!Arrays.asList(registered).contains("NeuropilotBackend")){
