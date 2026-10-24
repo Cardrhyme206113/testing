@@ -1,4 +1,4 @@
-name: Anima Pocket real A16W4 DiT block NPU APK
+name: Anima Pocket instrumented Neuron execution A16W4 APK
 on:
   push:
     branches: [anima-pocket]
@@ -18,7 +18,7 @@ permissions:
 jobs:
   build-fast-probe:
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -36,6 +36,54 @@ jobs:
           test -n "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+
+      - name: Build traced upstream MediaTek Neuron backend (v1.5.1)
+        shell: bash
+        run: |
+          set -euo pipefail
+          NEUROPILOT_URL="https://s3.ap-southeast-1.amazonaws.com/mediatek.neuropilot.com/b1c485de-fca8-4b20-836a-8b33152a3609.gz"
+          curl --fail --location --retry 3 --retry-all-errors -o "$RUNNER_TEMP/neuropilot.tar.gz" "$NEUROPILOT_URL"
+          echo "42155c3b25e9f9af1bef55534d0700835f32564a289e8cb1e44f0b2433ddab48  $RUNNER_TEMP/neuropilot.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/mtk"
+          tar -xzf "$RUNNER_TEMP/neuropilot.tar.gz" -C "$RUNNER_TEMP/mtk"
+          git clone --depth 1 --branch v1.5.1 https://github.com/pytorch/executorch.git "$RUNNER_TEMP/executorch"
+          git -C "$RUNNER_TEMP/executorch" config submodule.kernels/optimized/third-party/eigen.url https://eigen.googlesource.com/mirror
+          git -C "$RUNNER_TEMP/executorch" submodule update --init --recursive --depth 1 --jobs 4
+          NEURON_HEADER=$(find "$RUNNER_TEMP/mtk" -name NeuronAdapter.h -type f -print -quit)
+          NEURON_ALLOC=$(find "$RUNNER_TEMP/mtk" -name libneuron_buffer_allocator.so -type f -print -quit)
+          NEURON_ADAPTER=$(find "$RUNNER_TEMP/mtk" -name libneuronusdk_adapter.mtk.so -type f -print -quit)
+          test -s "$NEURON_HEADER"
+          test -s "$NEURON_ALLOC"
+          test -s "$NEURON_ADAPTER"
+          cp "$NEURON_HEADER" "$RUNNER_TEMP/executorch/backends/mediatek/runtime/include/api/NeuronAdapter.h"
+          python3 anima-pocket/tools/instrument_neuron_backend.py "$RUNNER_TEMP/executorch"
+          cd "$RUNNER_TEMP/executorch"
+          python3 - <<'PY'
+          from pathlib import Path
+          a = Path("backends/mediatek/CMakeLists.txt")
+          x = a.read_text()
+          old = "neuron_backend PRIVATE executorch_core portable_ops_lib portable_kernels\n                         android log"
+          assert x.count(old) == 1
+          a.write_text(x.replace(old, "neuron_backend PRIVATE executorch_core android log"))
+          b = Path("extension/android/CMakeLists.txt")
+          x = b.read_text()
+          old = "if(TARGET qnn_executorch_backend)\n  list(APPEND link_libraries qnn_executorch_backend)\nendif()\n"
+          assert x.count(old) == 1
+          b.write_text(x.replace(old, old + "\nif(TARGET neuron_backend)\n  list(APPEND link_libraries neuron_backend)\nendif()\n"))
+          PY
+          export ANDROID_NDK="$ANDROID_HOME/ndk/27.2.12479018"
+          export ANDROID_SDK="$ANDROID_HOME"
+          export ANDROID_ABIS=arm64-v8a
+          export EXECUTORCH_BUILD_EXTENSION_LLM=OFF
+          export EXECUTORCH_CMAKE_BUILD_TYPE=Release
+          export NEURON_BUFFER_ALLOCATOR_LIB="$NEURON_ALLOC"
+          export NEURON_USDK_ADAPTER_LIB="$NEURON_ADAPTER"
+          export BUILD_AAR_DIR="$RUNNER_TEMP/traced-et"
+          mkdir -p "$BUILD_AAR_DIR"
+          bash scripts/build_android_library.sh
+          unzip -p "$BUILD_AAR_DIR/executorch.aar" jni/arm64-v8a/libneuron_backend.so > "$RUNNER_TEMP/traced-libneuron_backend.so"
+          test -s "$RUNNER_TEMP/traced-libneuron_backend.so"
+          readelf -Ws "$RUNNER_TEMP/traced-libneuron_backend.so" | grep -F Java_dev_card_anima_NpuPteTest_nativeNeuronTrace
 
       - name: Reuse verified v0.6.4 runtime APK (no NPU recompilation)
         uses: actions/download-artifact@v4
@@ -68,6 +116,7 @@ jobs:
               unzip -p "$OLD_APK" "lib/arm64-v8a/$lib" > "$RUNNER_TEMP/etaar/jni/arm64-v8a/$lib"
             fi
           done
+          cp "$RUNNER_TEMP/traced-libneuron_backend.so" "$RUNNER_TEMP/etaar/jni/arm64-v8a/libneuron_backend.so"
           test -s "$RUNNER_TEMP/etaar/jni/arm64-v8a/libneuron_backend.so"
           test -s "$RUNNER_TEMP/etaar/jni/arm64-v8a/libexecutorch.so"
           # Preserve other prebuilt diffusion/GGML shared libraries too.
@@ -102,7 +151,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimaPocket-v0.6.7-Real-MDLA-FP16-APK
+          name: AnimaPocket-v0.6.8-Real-MDLA-FP16-APK
           path: anima-pocket/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 7
@@ -113,17 +162,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG=anima-pocket-v0.6.7
+          TAG=anima-pocket-v0.6.8
           APK=anima-pocket/app/build/outputs/apk/release/app-release.apk
           test -s "$APK"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release tag $TAG already exists; refusing to replace a release" >&2
             exit 1
           fi
-          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.7.apk"
-          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.7.apk" \
+          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.8.apk"
+          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.8.apk" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "Anima Pocket v0.6.7 - public MediaTek Neuron FP16" \
-            --notes "Isolated MediaTek MDLA FP16 probe plus six-input ExecuTorch A16W4 real Anima transformer-block test. Device execution unverified until a real 45.6 MiB block PTE passes. Full image generation is not yet integrated." \
+            --title "Anima Pocket v0.6.8 - public MediaTek Neuron FP16" \
+            --notes "Instrumented MediaTek NeuronExecution_compute call counters and 3-run A16W4 transformer profiling. Confirms vendor Neuron delegate execution when positive; full image generation remains unintegrated." \
             --prerelease

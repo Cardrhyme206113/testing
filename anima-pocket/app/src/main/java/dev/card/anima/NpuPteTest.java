@@ -17,6 +17,9 @@ public final class NpuPteTest {
     /** Reads exported symbol names only; never calls Neuron functions or loads a model. */
     private static native String probeVendorSymbolsNative();
 
+    /** Backend-owned counters, exported by our instrumented v1.5.1 libneuron_backend.so. */
+    private static native long[] nativeNeuronTrace();
+
     /** Executes a real FP16 fully-connected layer on MDLA, with no CPU fallback. */
     private static native String runVendorFp16Native();
 
@@ -84,6 +87,9 @@ public final class NpuPteTest {
         report.append("load_route=").append(backendFirst ? "backend_first" : "executorch_lazy").append("\n");
         if (backendFirst) System.loadLibrary("neuron_backend");
         String[] registered = ExecuTorchRuntime.getRegisteredBackends();
+        // Make the JNI trace entry point visible in either loader route.
+        System.loadLibrary("neuron_backend");
+        long[] traceBeforeLoad = nativeNeuronTrace();
         report.append("registered_backends=").append(Arrays.toString(registered)).append("\n");
         if (!Arrays.asList(registered).contains("NeuropilotBackend")) {
             throw new IllegalStateException("NeuropilotBackend absent from ExecuTorch runtime");
@@ -117,36 +123,68 @@ public final class NpuPteTest {
             EValue.from(Tensor.fromBlob(sin, new long[]{1024, 128}))
         };
         Module module = Module.load(modelFile.getAbsolutePath(), Module.LOAD_MODE_MMAP, 1);
+        long[] traceAfterLoad = nativeNeuronTrace();
         try {
-            long tick = System.nanoTime();
-            EValue[] output = module.forward(input);
-            double elapsedMs = (System.nanoTime() - tick) / 1e6;
-            if (output == null || output.length != 1 || !output[0].isTensor()) {
-                throw new IllegalStateException("Expected one tensor output; got " +
-                    (output == null ? "null" : output.length));
-            }
-            float[] result = output[0].toTensor().getDataAsFloatArray();
-            if (result.length != 1024 * 2048) {
-                throw new IllegalStateException("Wrong output size: " + result.length);
-            }
-            double sum = 0, squared = 0, maxAbs = 0, deltaSum = 0;
-            for (int i = 0; i < result.length; i++) {
-                float value = result[i];
-                if (!Float.isFinite(value)) {
-                    throw new IllegalStateException("Invalid output at " + i + ": " + value);
+            double[] forwardMs = new double[3];
+            double firstChecksum = Double.NaN;
+            for (int iteration = 0; iteration < forwardMs.length; iteration++) {
+                long tick = System.nanoTime();
+                EValue[] output = module.forward(input);
+                forwardMs[iteration] = (System.nanoTime() - tick) / 1e6;
+                if (output == null || output.length != 1 || !output[0].isTensor()) {
+                    throw new IllegalStateException("Expected one output tensor, received " +
+                        (output == null ? "null" : output.length));
                 }
-                sum += value;
-                squared += (double)value * value;
-                maxAbs = Math.max(maxAbs, Math.abs(value));
-                deltaSum += Math.abs((double)value - x[i]);
+                float[] result = output[0].toTensor().getDataAsFloatArray();
+                if (result.length != 1024 * 2048) {
+                    throw new IllegalStateException("Wrong output length " + result.length);
+                }
+                double sum = 0, squared = 0, maxAbs = 0, deltaSum = 0;
+                for (int i = 0; i < result.length; i++) {
+                    float value = result[i];
+                    if (!Float.isFinite(value)) {
+                        throw new IllegalStateException("Invalid output at " + i + ": " + value);
+                    }
+                    sum += value;
+                    squared += (double)value * value;
+                    maxAbs = Math.max(maxAbs, Math.abs(value));
+                    deltaSum += Math.abs((double)value - x[i]);
+                }
+                double checksum = sum / result.length + squared / result.length;
+                if (iteration == 0) firstChecksum = checksum;
+                else if (Math.abs(checksum - firstChecksum) > 1e-7) {
+                    throw new IllegalStateException("Forward outputs changed across identical inputs");
+                }
+                if (iteration == 0) {
+                    report.append("output_mean=").append(sum / result.length);
+                    report.append("; output_rms=").append(Math.sqrt(squared / result.length));
+                    report.append("; output_max_abs=").append(maxAbs);
+                    report.append("; mean_delta_from_input=").append(deltaSum / result.length).append("\n");
+                }
             }
-            report.append("forward_ms=").append(String.format(Locale.US, "%.3f", elapsedMs)).append("\n");
-            report.append("output_mean=").append(sum / result.length);
-            report.append("; output_rms=").append(Math.sqrt(squared / result.length));
-            report.append("; output_max_abs=").append(maxAbs);
-            report.append("; mean_delta_from_input=").append(deltaSum / result.length).append("\n");
-            report.append("status=PTE_BLOCK_FORWARD_SUCCEEDED\n");
-            report.append("note=Backend is registered; actual MDLA delegation must still be confirmed from native traces.\n");
+            long[] traceAfterRuns = nativeNeuronTrace();
+            if (traceAfterRuns == null || traceBeforeLoad == null ||
+                traceAfterLoad == null || traceAfterRuns.length < 4 ||
+                traceBeforeLoad.length < 4 || traceAfterLoad.length < 4) {
+                throw new IllegalStateException("Instrumented Neuron backend returned no counters");
+            }
+            long directCalls = traceAfterRuns[1] - traceAfterLoad[1];
+            long newDelegates = traceAfterLoad[0] - traceBeforeLoad[0];
+            long errors = traceAfterRuns[2] - traceAfterLoad[2];
+            long computeNs = traceAfterRuns[3] - traceAfterLoad[3];
+            report.append("forward_1_ms=").append(String.format(Locale.US, "%.3f", forwardMs[0]));
+            report.append("; forward_2_ms=").append(String.format(Locale.US, "%.3f", forwardMs[1]));
+            report.append("; forward_3_ms=").append(String.format(Locale.US, "%.3f", forwardMs[2])).append("\n");
+            report.append("compiled_delegate_initializations=").append(newDelegates);
+            report.append("; vendor_neuron_compute_calls=").append(directCalls);
+            report.append("; vendor_compute_errors=").append(errors);
+            report.append("; vendor_compute_ms=").append(String.format(Locale.US, "%.3f", computeNs / 1e6)).append("\n");
+            if (directCalls < 3 || errors != 0) {
+                throw new IllegalStateException("Not all forwards reached NeuronExecution_compute: " + directCalls);
+            }
+            report.append("status=NEURON_EXECUTION_COMPUTE_VERIFIED\n");
+            report.append("note=Native backend called vendor NeuronExecution_compute on the compiled model; ");
+            report.append("the SDK may still choose internal NPU/DSP partitions.\n");
         } finally {
             module.close();
         }

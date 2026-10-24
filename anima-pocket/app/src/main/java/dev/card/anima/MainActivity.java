@@ -360,13 +360,13 @@ public class MainActivity extends Activity {
         add(root,button("F · Run real MediaTek MDLA FP16 matrix (no CPU fallback)",()->runIsolatedLoaderTest("vendor_fp16")),4);
         add(root,text("F checks native FP16 inference with generated weights; it does not yet accelerate full Anima image generation. Experimental ExecuTorch INT4 .pte below may still crash on this firmware.",12,hint),4);
         add(root,text("NEUROPILOT / ANIMA A16W4 PTE BLOCK TEST",15,accent),16);
-        add(root,text("EXPERIMENTAL: Run the 45.6 MiB anima_block_00_1024_mt6989_a16w4.pte file from your phone. Tests one genuine six-input transformer block in an isolated process. It may still crash if the firmware rejects the compiled network.",12,hint),3);
+        add(root,text("INSTRUMENTED REAL-TIME TRACE: Select the 45.6 MiB anima_block_00_1024_mt6989_a16w4.pte. Performs three passes and counts actual vendor NeuronExecution_compute calls inside the MediaTek delegate. Isolated worker; no synthetic inference.",12,hint),3);
         compiledNpuFile=text(preferences.getString("npu_pte_name","No compiled .pte selected"),12,hint);
         add(root,compiledNpuFile,4);
         add(root,button("Select compiled .pte model",()->pick(3)),5);
-        compiledNpuButton=button("Run selected INT4 .pte · lazy route",this::runCompiledNpuTest);
+        compiledNpuButton=button("Trace INT4 .pte · 3 runs · lazy route",this::runCompiledNpuTest);
         add(root,compiledNpuButton,5);
-        add(root,button("Run selected INT4 .pte · backend-first route",()->runCompiledNpuTest("pte_backend")),5);
+        add(root,button("Trace INT4 .pte · 3 runs · backend-first",()->runCompiledNpuTest("pte_backend")),5);
         add(root,button("Copy performance history (CSV)",this::copyBenchmarkHistory),6);
         stop=button("Cancel",()->{cancelNative();notifyStatus("Cancel requested…");});stop.setEnabled(false);add(root,stop,7);
         status=text("Ready. Select three files.",13,hint);add(root,status,12);
@@ -398,7 +398,7 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_NPU v0.6.7 real transformer PTE diagnostics; "+previousProcessExit());
+        appendDiagnostic("ANIMA_NPU v0.6.8 instrumented Neuron backend; "+previousProcessExit());
         recoverInterruptedNpuTest();
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
