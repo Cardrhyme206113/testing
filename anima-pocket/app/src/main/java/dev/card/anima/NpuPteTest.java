@@ -17,6 +17,9 @@ public final class NpuPteTest {
     /** Reads exported symbol names only; never calls Neuron functions or loads a model. */
     private static native String probeVendorSymbolsNative();
 
+    /** Executes a real FP16 fully-connected layer on MDLA, with no CPU fallback. */
+    private static native String runVendorFp16Native();
+
     /** Each loader check is executed in a fresh :npu_probe process. */
     public static String probeLoader(String mode) {
         long begin=System.nanoTime();
@@ -31,6 +34,11 @@ public final class NpuPteTest {
                 report.append("stage=inspect_device_neuron_api_symbols_no_execution\n");
                 System.loadLibrary("npusymbols");
                 report.append(probeVendorSymbolsNative());
+                break;
+            case "vendor_fp16":
+                report.append("stage=execute_direct_phone_neuron_fp16_on_mdla\n");
+                System.loadLibrary("npusymbols");
+                report.append(runVendorFp16Native());
                 break;
             case "allocator_direct":
                 report.append("stage=load_bundled_neuron_buffer_allocator\n");
@@ -50,14 +58,15 @@ public final class NpuPteTest {
                     .append(Arrays.toString(ExecuTorchRuntime.getRegisteredBackends())).append("\n");
                 break;
             case "adapter_direct":
-                report.append("stage=load_bundled_neuronusdk_adapter_known_crash\n");
+                report.append("stage=load_phone_public_neuron_adapter_unsafe\n");
                 System.loadLibrary("neuronusdk_adapter.mtk");
                 report.append("library=neuronusdk_adapter.mtk; loaded=true\n");
                 break;
             default:
                 throw new IllegalArgumentException("Unknown loader mode: "+mode);
         }
-        report.append("status=LOADER_CHECK_SUCCEEDED_NOT_MODEL_INFERENCE\n");
+        if (!"vendor_fp16".equals(mode))
+            report.append("status=LOADER_CHECK_SUCCEEDED_NOT_MODEL_INFERENCE\n");
         report.append("wallMs=").append(String.format(Locale.US,"%.1f",(System.nanoTime()-begin)/1e6));
         return report.toString();
     }

@@ -1,10 +1,11 @@
-name: Anima Pocket fast vendor ABI probe APK
+name: Anima Pocket public Neuron MDLA FP16 APK
 on:
   push:
     branches: [anima-pocket]
     paths:
       - '.github/workflows/anima-npu-fast.yml'
       - 'anima-pocket/app/src/main/java/**'
+      - 'anima-pocket/app/src/main/AndroidManifest.xml'
       - 'anima-pocket/app/src/main/cpp/npu_symbols.cpp'
       - 'anima-pocket/app/src/main/cpp/CMakeLists.fast.txt'
       - 'anima-pocket/app/build.gradle'
@@ -60,7 +61,9 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/etaar/jni/arm64-v8a"
           mkdir -p anima-pocket/app/src/main/jniLibs/arm64-v8a
-          for lib in libexecutorch.so libexecutorch_jni.so libneuron_backend.so libneuronusdk_adapter.mtk.so libneuron_buffer_allocator.so; do
+          # Never ship MediaTek's SDK adapter: its constructor crashes on HyperOS 3.
+          # Use the phone's public shared library, resolved in its own namespace.
+          for lib in libexecutorch.so libexecutorch_jni.so libneuron_backend.so libneuron_buffer_allocator.so; do
             if unzip -Z1 "$OLD_APK" | grep -Fxq "lib/arm64-v8a/$lib"; then
               unzip -p "$OLD_APK" "lib/arm64-v8a/$lib" > "$RUNNER_TEMP/etaar/jni/arm64-v8a/$lib"
             fi
@@ -81,7 +84,7 @@ jobs:
           ( cd "$RUNNER_TEMP/etaar" && zip -qr "$GITHUB_WORKSPACE/anima-pocket/app/libs/executorch.aar" . )
           test -s anima-pocket/app/libs/executorch.aar
 
-      - name: Compile only tiny ABI-probe JNI and package unchanged model runtimes
+      - name: Compile public Neuron MDLA execution JNI and package unchanged model runtimes
         run: |
           cp anima-pocket/app/src/main/cpp/CMakeLists.fast.txt anima-pocket/app/src/main/cpp/CMakeLists.txt
           cd anima-pocket
@@ -92,10 +95,14 @@ jobs:
           unzip -l "$APK" | grep -F 'lib/arm64-v8a/libanimabridge.so'
           unzip -l "$APK" | grep -F 'lib/arm64-v8a/libneuron_backend.so'
           unzip -l "$APK" | grep -F 'lib/arm64-v8a/libexecutorch.so'
+          if unzip -Z1 "$APK" | grep -Fxq 'lib/arm64-v8a/libneuronusdk_adapter.mtk.so'; then
+            echo "ERROR: SDK adapter bundled; this crashes on target phone" >&2
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimaPocket-v0.6.5-Vendor-ABI-Probe-APK
+          name: AnimaPocket-v0.6.6-Real-MDLA-FP16-APK
           path: anima-pocket/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 7
