@@ -109,3 +109,5 @@ Derivative modification notice: the original Anima Turbo v1.1 model weights were
           echo "### Uploaded experimental transformer blocks" >> "$GITHUB_STEP_SUMMARY"
           echo "Private model repository: https://huggingface.co/$HF_REPO_ID" >> "$GITHUB_STEP_SUMMARY"
           echo "These 28 blocks do not yet enable full image generation in Anima Pocket." >> "$GITHUB_STEP_SUMMARY"
+
+# Trigger existing-model upload after secure HF_TOKEN setup.
