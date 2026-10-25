@@ -55,9 +55,14 @@ jobs:
           unzip -q "$RUNNER_TEMP/executorch-android.aar" -d "$RUNNER_TEMP/etaar"
           find "$RUNNER_TEMP/etaar/jni" -name '*.so' -type f -delete || true
           mkdir -p "$RUNNER_TEMP/etaar/jni/arm64-v8a"
-          for lib in libexecutorch.so libexecutorch_jni.so libneuron_backend.so libneuron_buffer_allocator.so; do
+          for lib in libexecutorch.so libneuron_backend.so; do
             unzip -p "$APK" "lib/arm64-v8a/$lib" > "$RUNNER_TEMP/etaar/jni/arm64-v8a/$lib"
             test -s "$RUNNER_TEMP/etaar/jni/arm64-v8a/$lib"
+          done
+          for lib in libexecutorch_jni.so libneuron_buffer_allocator.so; do
+            if unzip -Z1 "$APK" | grep -Fxq "lib/arm64-v8a/$lib"; then
+              unzip -p "$APK" "lib/arm64-v8a/$lib" > "$RUNNER_TEMP/etaar/jni/arm64-v8a/$lib"
+            fi
           done
           readelf -Ws "$RUNNER_TEMP/etaar/jni/arm64-v8a/libneuron_backend.so" | grep -F Java_dev_card_anima_NpuPteTest_nativeNeuronTrace
           mkdir -p anima-pocket/app/libs
