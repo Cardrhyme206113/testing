@@ -65,7 +65,7 @@ public class MainActivity extends Activity {
     long lastNativeCpuTicks=-1, lastPswpIn=-1, lastPswpOut=-1, lastMajFault=-1;
     EditText prompt, seed;
     Spinner decoderType, resolution, steps, backend, weightsMode, cacheMode, cpuThreads;
-    CheckBox flash, lowRamEncoder, profileLayers, q4Fp16, useNpuDiT;
+    CheckBox flash, lowRamEncoder, profileLayers, q4Fp16, useNpuDiT, refreshNpuPtes;
     TextView npuDiTFolderLabel;
     volatile NpuDiTBackend npuDiTBackend;
     Button benchmarkButton, matmulButton, npuButton, compiledNpuButton;
@@ -317,6 +317,11 @@ public class MainActivity extends Activity {
             "No 28-block model directory selected"),12,hint);
         add(root,npuDiTFolderLabel,2);
         add(root,button("Choose unzipped out-512 folder (all 28 .pte)",this::chooseNpuDiTFolder),4);
+        refreshNpuPtes=new CheckBox(this);
+        refreshNpuPtes.setText("Refresh ALL 28 cached NPU PTEs after replacing models");
+        refreshNpuPtes.setTextColor(hint);
+        refreshNpuPtes.setChecked(false);
+        add(root,refreshNpuPtes,4);
         add(root,text("NPU mode keeps existing Qwen/T5 prompt conditioning, Euler sampling and TAE decoding. The 28 diffusion blocks run on the phone's Neuron delegate; other operations stay CPU. Requires ~1.3 GiB extra local storage for cached PTEs. Experimental; may terminate the app under memory pressure.",12,0xffffc278),4);
         add(root,text("Anima weight residency",13,hint),10);
         weightsMode=spinner(new String[]{"Disk-backed (original, more memory-flexible)",
@@ -412,7 +417,7 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_NPU v0.6.11 real 28-block hybrid NPU path; "+previousProcessExit());
+        appendDiagnostic("ANIMA_NPU v0.6.12 real 28-block hybrid NPU path; "+previousProcessExit());
         recoverInterruptedNpuTest();
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
@@ -538,6 +543,7 @@ public class MainActivity extends Activity {
         int w=Integer.parseInt(wh[0].replaceAll("[^0-9]","")),h=Integer.parseInt(wh[1].replaceAll("[^0-9]",""));
         int s=benchmark?2:Integer.parseInt(steps.getSelectedItem().toString());
         final boolean enableNpu=useNpuDiT!=null && useNpuDiT.isChecked();
+        final boolean refreshNpuCache=enableNpu && refreshNpuPtes!=null && refreshNpuPtes.isChecked();
         final String npuFolder=preferences.getString("npu_dit_folder",null);
         if(enableNpu && (w!=512 || h!=512)){
             Toast.makeText(this,"These PTEs require 512×512. Set resolution to 512 × 512.",Toast.LENGTH_LONG).show();return;
@@ -594,7 +600,7 @@ public class MainActivity extends Activity {
         lastNativeCpuTicks=lastPswpIn=lastPswpOut=lastMajFault=-1;
         setStage("Preparing model files");
         beginSessionLog();
-        appendDiagnostic("Anima Pocket v0.6.11 real-calibration capture; benchmark="+benchmark);
+        appendDiagnostic("Anima Pocket v0.6.12 real-calibration capture; benchmark="+benchmark);
         appendDiagnostic("ANIMA_HYBRID_NPU_ENABLED "+enableNpu+"; native_backend="+target);
         appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder+"; residentWeights "+residentWeights+"; q4Fp16Compute "+q4Fast+"; cacheProfile "+cacheProfile+
             "; cpuThreads "+threads+"; profileLayers "+profilingLayers);
@@ -607,11 +613,12 @@ public class MainActivity extends Activity {
             try{
                 if(enableNpu){
                     preparedNpu=new NpuDiTBackend();
-                    preparedNpu.prepare(this,Uri.parse(npuFolder),message->{
+                    preparedNpu.prepare(this,Uri.parse(npuFolder),refreshNpuCache,message->{
                         setStage(message);
                         appendDiagnostic("ANIMA_NPU_DIT_PREPARE "+message);
                     });
                     npuDiTBackend=preparedNpu;
+                    if(refreshNpuCache)runOnUiThread(()->refreshNpuPtes.setChecked(false));
                 }
                 String[] paths=new String[3];
                 for(int n=0;n<3;n++)paths[n]=copyModel(Uri.parse(selected[n]),n);

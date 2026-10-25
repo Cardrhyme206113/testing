@@ -207,6 +207,28 @@ def export_block(model, index, tokens, platform, output, calibration=None):
             for seed in (13, 42, 101):
                 prepared(*sample_inputs(tokens, seed))
         quantized = convert_pt2e(prepared, fold_quantize=False)
+        if calibration is not None:
+            # Prove that INT16/INT4 quantization is numerically sane BEFORE
+            # spending time compiling a device-specific PTE.
+            print(f"Block {index}: validating real-input PyTorch PT2E parity", flush=True)
+            reference = model(*calibration).float()
+            actual = quantized(*calibration).float()
+            delta = (actual - reference).float()
+            base_rms = reference.square().mean().sqrt().item()
+            output_rms = actual.square().mean().sqrt().item()
+            relative = delta.square().mean().sqrt().item() / max(base_rms, 1e-12)
+            cosine = torch.nn.functional.cosine_similarity(
+                reference.reshape(1, -1), actual.reshape(1, -1)).item()
+            print(f"Block {index}: PT2E_REAL_PARITY reference_rms={base_rms:.7f} "
+                  f"a16w4_rms={output_rms:.7f} relative_rms={relative:.6f} "
+                  f"cosine={cosine:.7f}", flush=True)
+            if not (torch.isfinite(actual).all() and relative < 0.25 and cosine > 0.90):
+                raise RuntimeError(
+                    f"A16W4 quantization still mismatches full-precision block {index}; "
+                    f"relative_rms={relative:.3f}, cosine={cosine:.3f}. "
+                    "Do NOT send this PTE to the phone; inspect the exporter/model mapping."
+                )
+            del reference, actual, delta
         exported = torch.export.export(quantized, inputs, strict=True)
         partitioner = NeuropilotPartitioner(
             [CompileSpec("platform-config", platform.encode())]

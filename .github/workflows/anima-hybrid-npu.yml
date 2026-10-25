@@ -1,4 +1,4 @@
-name: Anima Pocket v0.6.11 capture real block0 calibration inputs
+name: Anima Pocket v0.6.12 refreshed PTE cache and real calibration
 on:
   push:
     branches: [anima-pocket]
@@ -107,26 +107,26 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimaPocket-v0.6.11-HybridNpu-APK
+          name: AnimaPocket-v0.6.12-HybridNpu-APK
           path: anima-pocket/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish v0.6.11 real-calibration capture APK
+      - name: Publish v0.6.12 cache-refresh APK
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          TAG=anima-pocket-v0.6.11
+          TAG=anima-pocket-v0.6.12
           APK=anima-pocket/app/build/outputs/apk/release/app-release.apk
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release already exists; refusing accidental overwrite" >&2
             exit 1
           fi
-          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.11.apk"
-          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.11.apk" \
+          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.12.apk"
+          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.12.apk" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Anima Pocket v0.6.11 - real activation calibration capture" \
-            --notes "Diagnostic build: captures actual conditioned block0 inputs from native Anima into Downloads/AnimaPocket/anima-real-block00-TIME.zip before Neuron execution. Logs ANIMA_NPU_INPUT_STATS, ANIMA_NPU_PARITY_RESULT, ANIMA_NPU_PARITY_RESIDUAL, and fails early on major parity mismatch instead of wasting time decoding corrupted images. The new exporter option --calibration-zip can recalibrate a replacement A16W4 PTE block0 without touching other 27 models. No claim of image-quality fix yet." \
+            --title "Anima Pocket v0.6.12 - refreshed NPU model cache" \
+            --notes "v0.6.12 improves NPU model caching: always restages the first PTE, even if its size is unchanged, and offers a Refresh ALL 28 cached PTEs checkbox for later model replacements. Retains real activation calibration capture, CPU-vs-NPU parity logs, and early rejection of corrupted output. The converter now computes PT2E A16W4 parity on real calibration tensors and refuses to export low-fidelity blocks. Experimental. The APK does not bundle or create new calibrated models." \
             --prerelease

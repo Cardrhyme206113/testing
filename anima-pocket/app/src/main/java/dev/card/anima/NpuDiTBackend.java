@@ -157,7 +157,7 @@ final class NpuDiTBackend implements AutoCloseable {
         return String.format(Locale.US, "anima_block_%02d_1024_mt6989_a16w4.pte", i);
     }
 
-    void prepare(Context context, Uri folder, java.util.function.Consumer<String> onStatus)
+    void prepare(Context context, Uri folder, boolean refreshAll, java.util.function.Consumer<String> onStatus)
             throws IOException {
         if (ready) throw new IllegalStateException("NPU model directory already prepared");
         appContext = context.getApplicationContext();
@@ -193,7 +193,7 @@ final class NpuDiTBackend implements AutoCloseable {
                 throw new IOException("Invalid PTE size for " + name + ": " + length);
             }
             File target = new File(cache, name);
-            if (!target.isFile() || (length != null && length >= 0 && target.length() != length)) {
+            if (refreshAll || i == 0 || !target.isFile() || (length != null && length >= 0 && target.length() != length)) {
                 neededBytes += length != null && length >= 0 ? length : MAX_PTE_BYTES;
             }
         }
@@ -205,7 +205,7 @@ final class NpuDiTBackend implements AutoCloseable {
             String name = filename(i);
             long length = sourceSizes.get(name);
             File target = new File(cache, name);
-            if (!target.isFile() || (length >= 0 && target.length() != length)) {
+            if (refreshAll || i == 0 || !target.isFile() || (length >= 0 && target.length() != length)) {
                 onStatus.accept("Staging NPU model " + (i+1) + "/28 · " + name);
                 File partial = new File(cache, name + ".part");
                 long copied = 0;
