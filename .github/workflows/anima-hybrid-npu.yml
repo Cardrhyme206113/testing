@@ -1,4 +1,4 @@
-name: Anima Pocket v0.6.10 28-block native parity diagnostics
+name: Anima Pocket v0.6.11 capture real block0 calibration inputs
 on:
   push:
     branches: [anima-pocket]
@@ -107,26 +107,26 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimaPocket-v0.6.10-HybridNpu-APK
+          name: AnimaPocket-v0.6.11-HybridNpu-APK
           path: anima-pocket/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish v0.6.10 experimental hybrid APK
+      - name: Publish v0.6.11 real-calibration capture APK
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          TAG=anima-pocket-v0.6.10
+          TAG=anima-pocket-v0.6.11
           APK=anima-pocket/app/build/outputs/apk/release/app-release.apk
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release already exists; refusing accidental overwrite" >&2
             exit 1
           fi
-          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.10.apk"
-          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.10.apk" \
+          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.11.apk"
+          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.11.apk" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Anima Pocket v0.6.10 - NPU vs native block parity diagnostics" \
-            --notes "Diagnostic build: on the first 512x512 diffusion step, runs Anima transformer block 0 on both the compiled A16W4 NPU PTE and the original GGML CPU Q4_0 implementation, then reports ANIMA_NPU_PARITY_RESULT (RMS error, cosine, max delta). Remaining 27 blocks and the final image stay on NPU. Existing v0.6.9 produced noisy images, so image quality is NOT validated. A one-time native comparison increases first-step latency; do not treat this as a quality fix." \
+            --title "Anima Pocket v0.6.11 - real activation calibration capture" \
+            --notes "Diagnostic build: captures actual conditioned block0 inputs from native Anima into Downloads/AnimaPocket/anima-real-block00-TIME.zip before Neuron execution. Logs ANIMA_NPU_INPUT_STATS, ANIMA_NPU_PARITY_RESULT, ANIMA_NPU_PARITY_RESIDUAL, and fails early on major parity mismatch instead of wasting time decoding corrupted images. The new exporter option --calibration-zip can recalibrate a replacement A16W4 PTE block0 without touching other 27 models. No claim of image-quality fix yet." \
             --prerelease

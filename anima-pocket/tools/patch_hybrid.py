@@ -89,6 +89,7 @@ exactly_once(runner,
 
 anchor = '        ggml_context* segment_context = nullptr;'
 insert = """        std::vector<float> npu_parity_pending;
+        std::vector<float> npu_parity_input;
         // Real Anima A16W4 NPU execution. The previous graph-cut input buffers
         // contain genuine input embedding/text conditioning from native GGML.
         // Crucially: bypass the block's GGUF weights and its entire GGML graph.
@@ -152,6 +153,22 @@ insert = """        std::vector<float> npu_parity_pending;
             static std::atomic<bool> compared_once{false};
             const bool parity_check = block_id == 0 && !compared_once.exchange(true);
             if (parity_check) {
+                auto stat = [](const std::vector<float>& values) -> std::pair<double,double> {
+                    double squared=0.0, abs_max=0.0;
+                    for (float value : values) {
+                        squared += static_cast<double>(value)*value;
+                        abs_max = std::max(abs_max, std::abs(static_cast<double>(value)));
+                    }
+                    return {std::sqrt(squared/std::max<size_t>(values.size(),1)),abs_max};
+                };
+                const auto xs=stat(x), cs=stat(context), ss=stat(step), ts=stat(temb);
+                LOG_INFO("ANIMA_NPU_INPUT_STATS x_rms=%.6f x_max=%.6f "
+                         "context_rms=%.6f context_max=%.6f "
+                         "step_rms=%.6f step_max=%.6f "
+                         "temb_rms=%.6f temb_max=%.6f",
+                         xs.first,xs.second,cs.first,cs.second,
+                         ss.first,ss.second,ts.first,ts.second);
+                npu_parity_input = std::move(x);
                 npu_parity_pending = std::move(output);
                 LOG_INFO("ANIMA_NPU_PARITY_CPU_REFERENCE_BEGIN block=0");
             } else {
@@ -200,9 +217,13 @@ exactly_once(runner,
             std::vector<float> native(npu_parity_pending.size());
             ggml_backend_tensor_get(reference, native.data(), 0, native.size() * sizeof(float));
             double ref_sq=0, npu_sq=0, error_sq=0, product=0, max_delta=0;
+            double x_sq=0, native_update_sq=0, npu_update_sq=0, npu_x_product=0;
             for (size_t i = 0; i < native.size(); ++i) {
                 const double a = native[i], b = npu_parity_pending[i], e = a-b;
                 ref_sq += a*a; npu_sq += b*b; error_sq += e*e; product += a*b;
+                const double x = npu_parity_input[i];
+                x_sq += x*x; native_update_sq += (a-x)*(a-x);
+                npu_update_sq += (b-x)*(b-x); npu_x_product += b*x;
                 max_delta = std::max(max_delta, std::abs(e));
             }
             const double count = static_cast<double>(native.size());
@@ -212,6 +233,17 @@ exactly_once(runner,
                      "delta_rms=%.8f relative_rms=%.6f cosine=%.8f max_delta=%.6f",
                      std::sqrt(ref_sq/count), std::sqrt(npu_sq/count),
                      std::sqrt(error_sq/count), rel_rms, cosine, max_delta);
+            LOG_INFO("ANIMA_NPU_PARITY_RESIDUAL input_rms=%.8f "
+                     "native_minus_input_rms=%.8f npu_minus_input_rms=%.8f npu_input_cosine=%.8f",
+                     std::sqrt(x_sq/count),std::sqrt(native_update_sq/count),
+                     std::sqrt(npu_update_sq/count),
+                     npu_x_product/std::sqrt(std::max(x_sq*npu_sq,1e-30)));
+            if (rel_rms > 0.20 || cosine < 0.95) {
+                LOG_ERROR("ANIMA_NPU_PARITY_FAILED: NPU output differs substantially from "
+                          "the reference CPU block. Captured calibration to Downloads; "
+                          "stopping before producing another corrupted image.");
+                return fail_segment("NPU parity mismatch: existing PTE requires recalibration");
+            }
             ggml_tensor* marked = nullptr;
             for (int cut_index : segment.output_node_indices) {
                 ggml_tensor* candidate = ggml_graph_node(graph, cut_index);

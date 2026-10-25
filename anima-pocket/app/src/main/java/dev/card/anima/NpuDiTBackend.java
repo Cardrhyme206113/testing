@@ -11,6 +11,16 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.BufferedOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+import android.content.ContentValues;
+import android.provider.MediaStore;
+import android.os.Environment;
 import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.Map;
@@ -38,11 +48,81 @@ final class NpuDiTBackend implements AutoCloseable {
     private final ArrayDeque<Integer> lru = new ArrayDeque<>();
     private final float[] ropeCos = new float[TOKENS * 128];
     private final float[] ropeSin = new float[TOKENS * 128];
+    private Context appContext;
+    private String calibrationCapture = "not captured";
     private boolean ready;
     private int forwarded;
 
     NpuDiTBackend() {
         makeSpatialRope();
+    }
+
+    String getCalibrationCapture() { return calibrationCapture; }
+
+    private static void appendF32(ZipOutputStream zip, String filename, float[] values)
+            throws IOException {
+        zip.putNextEntry(new ZipEntry(filename));
+        ByteBuffer buffer = ByteBuffer.allocate(65536).order(ByteOrder.LITTLE_ENDIAN);
+        for (float value : values) {
+            if (buffer.remaining() < Float.BYTES) {
+                zip.write(buffer.array(), 0, buffer.position());
+                buffer.clear();
+            }
+            buffer.putFloat(value);
+        }
+        if (buffer.position() > 0) zip.write(buffer.array(), 0, buffer.position());
+        zip.closeEntry();
+    }
+
+    /** Real block-zero inputs, captured before the first Neuron call.
+     *  Calibrate a replacement PTE with these, retaining all existing PTE files.
+     */
+    private String saveCalibration(float[] x, float[] context, float[] step, float[] temb)
+            throws IOException {
+        if (appContext == null) throw new IOException("Android context not initialized");
+        ContentResolver resolver = appContext.getContentResolver();
+        String name = "anima-real-block00-" + System.currentTimeMillis() + ".zip";
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Downloads.DISPLAY_NAME, name);
+        values.put(MediaStore.Downloads.MIME_TYPE, "application/zip");
+        values.put(MediaStore.Downloads.RELATIVE_PATH,
+            Environment.DIRECTORY_DOWNLOADS + "/AnimaPocket");
+        values.put(MediaStore.Downloads.IS_PENDING, 1);
+        Uri saved = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+        if (saved == null) throw new IOException("Cannot create a Downloads file");
+        boolean complete = false;
+        try {
+            try (OutputStream raw = resolver.openOutputStream(saved)) {
+                if (raw == null) throw new IOException("Cannot open calibration archive");
+                try (ZipOutputStream zip = new ZipOutputStream(
+                        new BufferedOutputStream(raw, 65536))) {
+                    zip.setLevel(1);
+                    zip.putNextEntry(new ZipEntry("metadata.txt"));
+                    byte[] meta = ("Anima Turbo v1.1: first real conditioned block-0 inputs\n"
+                        + "Little-endian float32; file shapes as listed below\n"
+                        + "x.f32 [1,1024,2048]\ncontext.f32 [1,512,1024]\n"
+                        + "step.f32 [1,2048]\ntemb.f32 [1,6144]\n"
+                        + "cos.f32 [1024,128]\nsin.f32 [1024,128]\n"
+                        + "Model PTE filenames are unchanged; only replace block00 after validation.\n"
+                        ).getBytes(StandardCharsets.UTF_8);
+                    zip.write(meta);
+                    zip.closeEntry();
+                    appendF32(zip, "x.f32", x);
+                    appendF32(zip, "context.f32", context);
+                    appendF32(zip, "step.f32", step);
+                    appendF32(zip, "temb.f32", temb);
+                    appendF32(zip, "cos.f32", ropeCos);
+                    appendF32(zip, "sin.f32", ropeSin);
+                }
+            }
+            ContentValues done = new ContentValues();
+            done.put(MediaStore.Downloads.IS_PENDING, 0);
+            resolver.update(saved, done, null, null);
+            complete = true;
+            return Environment.DIRECTORY_DOWNLOADS + "/AnimaPocket/" + name;
+        } finally {
+            if (!complete) resolver.delete(saved, null, null);
+        }
     }
 
     private void makeSpatialRope() {
@@ -80,6 +160,7 @@ final class NpuDiTBackend implements AutoCloseable {
     void prepare(Context context, Uri folder, java.util.function.Consumer<String> onStatus)
             throws IOException {
         if (ready) throw new IllegalStateException("NPU model directory already prepared");
+        appContext = context.getApplicationContext();
         if (folder == null) throw new IOException("Select the directory containing all 28 A16W4 PTE files.");
         ContentResolver resolver = context.getContentResolver();
         String treeId = DocumentsContract.getTreeDocumentId(folder);
@@ -165,6 +246,14 @@ final class NpuDiTBackend implements AutoCloseable {
                 + " context=" + context.length + " step=" + step.length + " temb=" + temb.length);
         }
         long start = SystemClock.elapsedRealtime();
+        if (index == 0 && forwarded == 0) {
+            try {
+                calibrationCapture = "SAVED " + saveCalibration(x, context, step, temb);
+            } catch (Exception error) {
+                calibrationCapture = "FAILED " + error.getMessage();
+                Log.e("AnimaHybridNpu", "Calibration capture failed", error);
+            }
+        }
         Module module = opened[index];
         if (module == null) {
             if (lru.size() == MAX_OPEN_MODULES) {
