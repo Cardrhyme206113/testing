@@ -59,6 +59,8 @@ exactly_once(runner,
     """#include <map>
 #include <cstdlib>
 #include <vector>
+#include <atomic>
+#include <cmath>
 
 // Implemented by the Android JNI bridge in libanimabridge; linked with the
 // stable-diffusion native runner. No ExecuTorch Java symbols are required here.
@@ -86,7 +88,8 @@ exactly_once(runner,
     '                            std::getenv("ANIMA_NPU_DIT") != nullptr);')
 
 anchor = '        ggml_context* segment_context = nullptr;'
-insert = """        // Real Anima A16W4 NPU execution. The previous graph-cut input buffers
+insert = """        std::vector<float> npu_parity_pending;
+        // Real Anima A16W4 NPU execution. The previous graph-cut input buffers
         // contain genuine input embedding/text conditioning from native GGML.
         // Crucially: bypass the block's GGUF weights and its entire GGML graph.
         if (get_desc() == "anima" && std::getenv("ANIMA_NPU_DIT") != nullptr &&
@@ -143,23 +146,86 @@ insert = """        // Real Anima A16W4 NPU execution. The previous graph-cut in
                 LOG_ERROR("ANIMA_NPU_DIT_FAILURE block=%d", block_id);
                 return fail_segment("vendor Neuron PTE forward");
             }
-            bool saved = false;
+            // Once per process, also execute native GGML block zero and
+            // compare its actual values with the phone's compiled INT4 PTE.
+            // Use the NPU output downstream even for the comparison pass.
+            static std::atomic<bool> compared_once{false};
+            const bool parity_check = block_id == 0 && !compared_once.exchange(true);
+            if (parity_check) {
+                npu_parity_pending = std::move(output);
+                LOG_INFO("ANIMA_NPU_PARITY_CPU_REFERENCE_BEGIN block=0");
+            } else {
+                bool saved = false;
+                for (int cut_index : segment.output_node_indices) {
+                    ggml_tensor* marked = ggml_graph_node(graph, cut_index);
+                    if (marked != nullptr && ggml_graph_cut::is_graph_cut_tensor(marked) &&
+                        segment.future_cut_names.count(marked->name)) {
+                        ggml_tensor* reference = ggml_graph_cut::cache_source_tensor(marked);
+                        saved = cut_cache_.store_f32(marked->name, reference,
+                                                      output.data(), output.size());
+                        if (!saved) break;
+                    }
+                }
+                if (!saved) return fail_segment("npu output cache write");
+                cut_cache_.prune(segment.future_cut_names);
+                LOG_INFO("ANIMA_NPU_DIT_END block=%d elapsed_ms=%lld",
+                         block_id, static_cast<long long>(ggml_time_ms() - started));
+                continue;
+            }
+        }
+"""
+exactly_once(runner, anchor, insert + anchor)
+# Immediately after native block execution/capture, report quantitative
+# accuracy of the compiled PTE versus the real GGML Q4_0 block on the *same*
+# conditioned latent. Do not confuse successful dispatch with accuracy.
+exactly_once(runner,
+    '        sync_runtime_residency();\n        if (last) {',
+    """        if (!npu_parity_pending.empty()) {
+            ggml_tensor* reference = nullptr;
+            const char* cut_name = nullptr;
             for (int cut_index : segment.output_node_indices) {
                 ggml_tensor* marked = ggml_graph_node(graph, cut_index);
                 if (marked != nullptr && ggml_graph_cut::is_graph_cut_tensor(marked) &&
                     segment.future_cut_names.count(marked->name)) {
-                    ggml_tensor* reference = ggml_graph_cut::cache_source_tensor(marked);
-                    saved = cut_cache_.store_f32(marked->name, reference,
-                                                  output.data(), output.size());
-                    if (!saved) break;
+                    reference = cut_cache_.get(marked->name);
+                    cut_name = marked->name;
+                    break;
                 }
             }
-            if (!saved) return fail_segment("npu output cache write");
-            cut_cache_.prune(segment.future_cut_names);
-            LOG_INFO("ANIMA_NPU_DIT_END block=%d elapsed_ms=%lld",
-                     block_id, static_cast<long long>(ggml_time_ms() - started));
-            continue;
+            if (!reference || reference->type != GGML_TYPE_F32 ||
+                ggml_nelements(reference) != static_cast<int64_t>(npu_parity_pending.size()) ||
+                !ggml_is_contiguous(reference) || cut_name == nullptr) {
+                return fail_segment("NPU parity reference missing");
+            }
+            std::vector<float> native(npu_parity_pending.size());
+            ggml_backend_tensor_get(reference, native.data(), 0, native.size() * sizeof(float));
+            double ref_sq=0, npu_sq=0, error_sq=0, product=0, max_delta=0;
+            for (size_t i = 0; i < native.size(); ++i) {
+                const double a = native[i], b = npu_parity_pending[i], e = a-b;
+                ref_sq += a*a; npu_sq += b*b; error_sq += e*e; product += a*b;
+                max_delta = std::max(max_delta, std::abs(e));
+            }
+            const double count = static_cast<double>(native.size());
+            const double rel_rms = std::sqrt(error_sq/std::max(ref_sq,1e-30));
+            const double cosine = product/std::sqrt(std::max(ref_sq*npu_sq,1e-30));
+            LOG_INFO("ANIMA_NPU_PARITY_RESULT block=0 native_rms=%.8f npu_rms=%.8f "
+                     "delta_rms=%.8f relative_rms=%.6f cosine=%.8f max_delta=%.6f",
+                     std::sqrt(ref_sq/count), std::sqrt(npu_sq/count),
+                     std::sqrt(error_sq/count), rel_rms, cosine, max_delta);
+            ggml_tensor* marked = nullptr;
+            for (int cut_index : segment.output_node_indices) {
+                ggml_tensor* candidate = ggml_graph_node(graph, cut_index);
+                if (candidate && cut_name == std::string(candidate->name)) {
+                    marked = candidate; break;
+                }
+            }
+            if (!marked || !cut_cache_.store_f32(cut_name,
+                  ggml_graph_cut::cache_source_tensor(marked),
+                  npu_parity_pending.data(), npu_parity_pending.size())) {
+                return fail_segment("NPU parity output override");
+            }
         }
-"""
-exactly_once(runner, anchor, insert + anchor)
+        sync_runtime_residency();
+        if (last) {""")
+
 print("Patched Anima graph-cut NPU dispatch and F32 output cache injection")

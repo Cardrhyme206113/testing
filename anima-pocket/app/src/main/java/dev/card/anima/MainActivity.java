@@ -412,7 +412,7 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_NPU v0.6.9 real 28-block hybrid NPU path; "+previousProcessExit());
+        appendDiagnostic("ANIMA_NPU v0.6.10 real 28-block hybrid NPU path; "+previousProcessExit());
         recoverInterruptedNpuTest();
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
@@ -592,7 +592,7 @@ public class MainActivity extends Activity {
         lastNativeCpuTicks=lastPswpIn=lastPswpOut=lastMajFault=-1;
         setStage("Preparing model files");
         beginSessionLog();
-        appendDiagnostic("Anima Pocket v0.4.2 fast sampling, optimized native build; benchmark="+benchmark);
+        appendDiagnostic("Anima Pocket v0.6.10 first-block NPU parity diagnostics; benchmark="+benchmark);
         appendDiagnostic("ANIMA_HYBRID_NPU_ENABLED "+enableNpu+"; native_backend="+target);
         appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder+"; residentWeights "+residentWeights+"; q4Fp16Compute "+q4Fast+"; cacheProfile "+cacheProfile+
             "; cpuThreads "+threads+"; profileLayers "+profilingLayers);

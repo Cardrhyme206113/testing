@@ -1,4 +1,4 @@
-name: Anima Pocket 28-block NeuroPilot hybrid 512 APK
+name: Anima Pocket v0.6.10 28-block native parity diagnostics
 on:
   push:
     branches: [anima-pocket]
@@ -107,26 +107,26 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimaPocket-v0.6.9-HybridNpu-APK
+          name: AnimaPocket-v0.6.10-HybridNpu-APK
           path: anima-pocket/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish v0.6.9 experimental hybrid APK
+      - name: Publish v0.6.10 experimental hybrid APK
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          TAG=anima-pocket-v0.6.9
+          TAG=anima-pocket-v0.6.10
           APK=anima-pocket/app/build/outputs/apk/release/app-release.apk
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release already exists; refusing accidental overwrite" >&2
             exit 1
           fi
-          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.9.apk"
-          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.9.apk" \
+          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.10.apk"
+          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.10.apk" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Anima Pocket v0.6.9 - full-image A16W4 NPU hybrid experimental" \
-            --notes "First full-image hybrid integration attempt: compiled 28 genuine 512x512 DiT A16W4 PTEs routed through native Anima graph cuts; original Qwen/T5 conditioning, sampler and VAE kept in stable-diffusion.cpp. Requires selecting the unzipped PTE directory and 3 GGUF/decoder files. Build verification only: device image generation and quality not yet verified. WARNING: native NPU driver crash can terminate app." \
+            --title "Anima Pocket v0.6.10 - NPU vs native block parity diagnostics" \
+            --notes "Diagnostic build: on the first 512x512 diffusion step, runs Anima transformer block 0 on both the compiled A16W4 NPU PTE and the original GGML CPU Q4_0 implementation, then reports ANIMA_NPU_PARITY_RESULT (RMS error, cosine, max delta). Remaining 27 blocks and the final image stay on NPU. Existing v0.6.9 produced noisy images, so image quality is NOT validated. A one-time native comparison increases first-step latency; do not treat this as a quality fix." \
             --prerelease
