@@ -1,0 +1,127 @@
+name: Anima Pocket 28-block NeuroPilot hybrid 512 APK
+on:
+  push:
+    branches: [anima-pocket]
+    paths:
+      - '.github/workflows/anima-hybrid-npu.yml'
+      - 'anima-pocket/tools/patch_hybrid.py'
+      - 'anima-pocket/app/src/main/java/dev/card/anima/**'
+      - 'anima-pocket/app/src/main/cpp/bridge.cpp'
+      - 'anima-pocket/app/src/main/cpp/instrument_upstream.py'
+      - 'anima-pocket/app/build.gradle'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-hybrid:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - name: Install NDK / Vulkan host shader build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslc libvulkan-dev spirv-headers ninja-build
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+
+      - name: Reuse device-verified instrumented Neuron runtime from v0.6.8
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/previous"
+          gh release download anima-pocket-v0.6.8 \
+            --repo "$GITHUB_REPOSITORY" --pattern 'AnimaPocket-v0.6.8.apk' \
+            --dir "$RUNNER_TEMP/previous"
+          APK="$RUNNER_TEMP/previous/AnimaPocket-v0.6.8.apk"
+          echo "e607a661ec10a77fd0e21d426e18accfeb1e8069984a54c80d4b6945eaa78c6b  $APK" | sha256sum -c -
+          curl --fail --location --retry 3 \
+            -o "$RUNNER_TEMP/executorch-android.aar" \
+            https://repo.maven.apache.org/maven2/org/pytorch/executorch-android/1.5.1/executorch-android-1.5.1.aar
+          mkdir -p "$RUNNER_TEMP/etaar"
+          unzip -q "$RUNNER_TEMP/executorch-android.aar" -d "$RUNNER_TEMP/etaar"
+          find "$RUNNER_TEMP/etaar/jni" -name '*.so' -type f -delete || true
+          mkdir -p "$RUNNER_TEMP/etaar/jni/arm64-v8a"
+          for lib in libexecutorch.so libexecutorch_jni.so libneuron_backend.so libneuron_buffer_allocator.so; do
+            unzip -p "$APK" "lib/arm64-v8a/$lib" > "$RUNNER_TEMP/etaar/jni/arm64-v8a/$lib"
+            test -s "$RUNNER_TEMP/etaar/jni/arm64-v8a/$lib"
+          done
+          readelf -Ws "$RUNNER_TEMP/etaar/jni/arm64-v8a/libneuron_backend.so" | grep -F Java_dev_card_anima_NpuPteTest_nativeNeuronTrace
+          mkdir -p anima-pocket/app/libs
+          (cd "$RUNNER_TEMP/etaar" && zip -qr "$GITHUB_WORKSPACE/anima-pocket/app/libs/executorch.aar" .)
+
+      - name: Check out pinned stable-diffusion.cpp native engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --recurse-submodules https://github.com/leejet/stable-diffusion.cpp.git anima-pocket/app/src/main/cpp/stable-diffusion.cpp
+          cd anima-pocket/app/src/main/cpp/stable-diffusion.cpp
+          git fetch --depth 1 origin a77d3623180b2bc1886f3dd04c0aa04156a987ef
+          git checkout --detach a77d3623180b2bc1886f3dd04c0aa04156a987ef
+          git submodule update --init --recursive --depth 1
+
+      - name: Apply GGML graph timers and NPU hybrid native graph-cut injection
+        run: |
+          python3 anima-pocket/app/src/main/cpp/instrument_upstream.py
+          python3 anima-pocket/tools/patch_hybrid.py
+
+      - name: Stage Vulkan SDK headers (native engine uses Vulkan support)
+        run: |
+          mkdir -p anima-pocket/app/src/main/cpp/vulkan-headers
+          cp -a /usr/include/vulkan anima-pocket/app/src/main/cpp/vulkan-headers/
+          if [ -d /usr/include/vk_video ]; then cp -a /usr/include/vk_video anima-pocket/app/src/main/cpp/vulkan-headers/; fi
+          cp -a /usr/include/spirv anima-pocket/app/src/main/cpp/vulkan-headers/
+
+      - name: Compile native engine + Android app with traced Neuron delegate
+        run: |
+          cd anima-pocket
+          gradle --no-daemon --max-workers=2 assembleRelease
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -s "$APK"
+          unzip -l "$APK" | grep -F lib/arm64-v8a/libanimabridge.so
+          unzip -l "$APK" | grep -F lib/arm64-v8a/libneuron_backend.so
+          unzip -l "$APK" | grep -F lib/arm64-v8a/libexecutorch.so
+          unzip -l "$APK" | grep -F lib/arm64-v8a/libnpusymbols.so
+          if unzip -Z1 "$APK" | grep -Fxq lib/arm64-v8a/libneuronusdk_adapter.mtk.so; then
+            echo "Unsafe bundled vendor Neuron SDK adapter, refusing APK" >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AnimaPocket-v0.6.9-HybridNpu-APK
+          path: anima-pocket/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish v0.6.9 experimental hybrid APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=anima-pocket-v0.6.9
+          APK=anima-pocket/app/build/outputs/apk/release/app-release.apk
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists; refusing accidental overwrite" >&2
+            exit 1
+          fi
+          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.9.apk"
+          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.9.apk" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Anima Pocket v0.6.9 - full-image A16W4 NPU hybrid experimental" \
+            --notes "First full-image hybrid integration attempt: compiled 28 genuine 512x512 DiT A16W4 PTEs routed through native Anima graph cuts; original Qwen/T5 conditioning, sampler and VAE kept in stable-diffusion.cpp. Requires selecting the unzipped PTE directory and 3 GGUF/decoder files. Build verification only: device image generation and quality not yet verified. WARNING: native NPU driver crash can terminate app." \
+            --prerelease

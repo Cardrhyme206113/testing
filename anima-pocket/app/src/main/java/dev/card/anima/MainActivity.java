@@ -38,7 +38,8 @@ public class MainActivity extends Activity {
     public native int[] generateNative(String model, String encoder, String decoder, boolean tae,
         String prompt, int width, int height, int steps, long seed, float cfg,
         String backend, boolean flash, boolean diskEncoder, boolean profileLayers,
-        boolean residentWeights, boolean q4Fp16Compute, int cacheProfile, int cpuThreads);
+        boolean residentWeights, boolean q4Fp16Compute, int cacheProfile, int cpuThreads,
+        boolean useNpuDiT);
     public native String benchmarkMatmulNative();
     public native String probeNpuNative();
 
@@ -64,7 +65,9 @@ public class MainActivity extends Activity {
     long lastNativeCpuTicks=-1, lastPswpIn=-1, lastPswpOut=-1, lastMajFault=-1;
     EditText prompt, seed;
     Spinner decoderType, resolution, steps, backend, weightsMode, cacheMode, cpuThreads;
-    CheckBox flash, lowRamEncoder, profileLayers, q4Fp16;
+    CheckBox flash, lowRamEncoder, profileLayers, q4Fp16, useNpuDiT;
+    TextView npuDiTFolderLabel;
+    volatile NpuDiTBackend npuDiTBackend;
     Button benchmarkButton, matmulButton, npuButton, compiledNpuButton;
     TextView compiledNpuFile;
     volatile String lastNpuReport="";
@@ -304,6 +307,17 @@ public class MainActivity extends Activity {
             "Vulkan 2.5 GiB managed budget (experiment)"},
             Math.min(3,Math.max(0,preferences.getInt("backend_choice",0))));
         add(root,text("Vulkan uses shared RAM. Auto removes the app's Vulkan budget, but can still freeze or restart this phone. No 5 GiB free-RAM requirement.",12,0xffffc278),6);add(root,backend,2);
+        add(root,text("NPU HYBRID · 28 REAL INT4 DIT BLOCKS",15,accent),14);
+        useNpuDiT=new CheckBox(this);
+        useNpuDiT.setText("Enable real A16W4 MediaTek NPU diffusion (512×512 only)");
+        useNpuDiT.setTextColor(0xff94e1a8);
+        useNpuDiT.setChecked(preferences.getBoolean("use_npu_dit",false));
+        add(root,useNpuDiT,4);
+        npuDiTFolderLabel=text(preferences.getString("npu_dit_folder_name",
+            "No 28-block model directory selected"),12,hint);
+        add(root,npuDiTFolderLabel,2);
+        add(root,button("Choose unzipped out-512 folder (all 28 .pte)",this::chooseNpuDiTFolder),4);
+        add(root,text("NPU mode keeps existing Qwen/T5 prompt conditioning, Euler sampling and TAE decoding. The 28 diffusion blocks run on the phone's Neuron delegate; other operations stay CPU. Requires ~1.3 GiB extra local storage for cached PTEs. Experimental; may terminate the app under memory pressure.",12,0xffffc278),4);
         add(root,text("Anima weight residency",13,hint),10);
         weightsMode=spinner(new String[]{"Disk-backed (original, more memory-flexible)",
             "GPU-resident weights (experimental; more memory)"},0);
@@ -398,16 +412,33 @@ public class MainActivity extends Activity {
         })),5);
         outputs=text("Result saved to Pictures/AnimaPocket",12,hint);add(root,outputs,12);
         image=new ImageView(this);image.setAdjustViewBounds(true);add(root,image,8);
-        appendDiagnostic("ANIMA_NPU v0.6.8 instrumented Neuron backend; "+previousProcessExit());
+        appendDiagnostic("ANIMA_NPU v0.6.9 real 28-block hybrid NPU path; "+previousProcessExit());
         recoverInterruptedNpuTest();
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
         }
     }
+    void chooseNpuDiTFolder(){
+        Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent,904);
+    }
     void pick(int n){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.addCategory(Intent.CATEGORY_OPENABLE);i.setType("*/*");i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);startActivityForResult(i,900+n);}
     @Override protected void onActivityResult(int request,int result,Intent data){
-        super.onActivityResult(request,result,data);if(result!=RESULT_OK||data==null||request<900||request>903)return;
-        int n=request-900;Uri uri=data.getData();if(uri==null)return;
+        super.onActivityResult(request,result,data);if(result!=RESULT_OK||data==null||request<900||request>904)return;
+        Uri uri=data.getData();if(uri==null)return;
+        if(request==904){
+            try { getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+            catch(SecurityException e){Toast.makeText(this,"Could not persist folder permission",Toast.LENGTH_LONG).show();return;}
+            String title=uri.getLastPathSegment();
+            if(title==null)title="Selected model directory";
+            preferences.edit().putString("npu_dit_folder",uri.toString())
+                .putString("npu_dit_folder_name",title).apply();
+            npuDiTFolderLabel.setText(title+" · NPU directory selected");
+            appendDiagnostic("ANIMA_NPU_DIT_FOLDER_SELECTED "+title);
+            return;
+        }
+        int n=request-900;
         if(n==3){
             try{getContentResolver().takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION);}
             catch(SecurityException ignored){}
@@ -467,10 +498,27 @@ public class MainActivity extends Activity {
             else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         });
     }
+    @SuppressWarnings("unused") public float[] onNpuTransformerBlock(
+        int index,float[] x,float[] context,float[] step,float[] temb){
+        NpuDiTBackend active=npuDiTBackend;
+        if(active==null)throw new IllegalStateException("NPU hybrid bridge was not prepared");
+        long tick=SystemClock.elapsedRealtime();
+        float[] result=active.forward(index,x,context,step,temb);
+        appendDiagnostic("ANIMA_NPU_DIT_BLOCK_OK index="+index+" ms="+
+            (SystemClock.elapsedRealtime()-tick)+" count="+active.getForwardedCount());
+        return result;
+    }
     void start(){startWithMode(false);}
     void startWithMode(boolean benchmark){
         if(running)return;
-        if(backend.getSelectedItemPosition()!=2){
+        if(useNpuDiT!=null && useNpuDiT.isChecked()){
+            new android.app.AlertDialog.Builder(this)
+                .setTitle("Experimental 28-block NeuroPilot generation")
+                .setMessage("The unzipped A16W4 models will be staged into app storage (~1.3 GiB), and native NPU modules will execute in the generating process. A vendor driver failure can close the app. Test while the phone is cool and well charged.")
+                .setNegativeButton("Cancel",null)
+                .setPositiveButton("Proceed",(dialog,which)->startUnchecked(benchmark))
+                .show();
+        }else if(backend.getSelectedItemPosition()!=2){
             new android.app.AlertDialog.Builder(this)
                 .setTitle(benchmark?"Benchmark GPU memory warning":"Vulkan memory and driver warning")
                 .setMessage("GPU allocations use shared RAM. GPU-resident weights and auto memory mode are experimental; either can freeze or restart this phone. Never run a performance benchmark unattended. Keep layer profiling OFF for valid timing.")
@@ -487,9 +535,17 @@ public class MainActivity extends Activity {
         String[] wh=resolution.getSelectedItem().toString().replace(" ","").split("×");
         int w=Integer.parseInt(wh[0].replaceAll("[^0-9]","")),h=Integer.parseInt(wh[1].replaceAll("[^0-9]",""));
         int s=benchmark?2:Integer.parseInt(steps.getSelectedItem().toString());
+        final boolean enableNpu=useNpuDiT!=null && useNpuDiT.isChecked();
+        final String npuFolder=preferences.getString("npu_dit_folder",null);
+        if(enableNpu && (w!=512 || h!=512)){
+            Toast.makeText(this,"These PTEs require 512×512. Set resolution to 512 × 512.",Toast.LENGTH_LONG).show();return;
+        }
+        if(enableNpu && npuFolder==null){
+            Toast.makeText(this,"Choose the out-512 folder containing all 28 .pte files.",Toast.LENGTH_LONG).show();return;
+        }
         String[] backends={"vulkan-auto","vulkan-1.5","cpu","vulkan-2.5"};
-        String target=backends[backend.getSelectedItemPosition()];
-        boolean residentWeights=weightsMode.getSelectedItemPosition()==1 && backend.getSelectedItemPosition()!=2;
+        String target=enableNpu?"cpu":backends[backend.getSelectedItemPosition()];
+        boolean residentWeights=!enableNpu && weightsMode.getSelectedItemPosition()==1 && backend.getSelectedItemPosition()!=2;
         if(benchmark && profileLayers.isChecked()){
             Toast.makeText(this,"Turn OFF transformer layer profiling for a valid speed benchmark",Toast.LENGTH_LONG).show();
             return;
@@ -508,7 +564,7 @@ public class MainActivity extends Activity {
         }
         boolean tae=decoderType.getSelectedItemPosition()==0, fa=flash.isChecked();
         boolean diskEncoder=lowRamEncoder.isChecked();
-        boolean q4Fast=q4Fp16.isChecked() && backend.getSelectedItemPosition()!=2;
+        boolean q4Fast=!enableNpu && q4Fp16.isChecked() && backend.getSelectedItemPosition()!=2;
         int cacheProfile=cacheMode.getSelectedItemPosition();
         int threads=new int[]{2,4,6}[cpuThreads.getSelectedItemPosition()];
         preferences.edit().putInt("cache_choice",cacheProfile)
@@ -517,7 +573,8 @@ public class MainActivity extends Activity {
             .putBoolean("encoder_disk",diskEncoder)
             .putBoolean("flash_enabled",fa)
             .putInt("weights_mode",weightsMode.getSelectedItemPosition())
-            .putInt("backend_choice",backend.getSelectedItemPosition()).apply();
+            .putInt("backend_choice",backend.getSelectedItemPosition())
+            .putBoolean("use_npu_dit",enableNpu).apply();
         long rand;try{rand=Long.parseLong(seed.getText().toString());}catch(NumberFormatException e){rand=-1;}
         if(rand<0)rand=new SecureRandom().nextLong()&Long.MAX_VALUE;
         final long id=rand;preferences.edit().putString("prompt",p).apply();
@@ -531,11 +588,12 @@ public class MainActivity extends Activity {
         runBackend=target; runWeights=residentWeights?"resident":"disk";
         runResolution=w+"x"+h; runFlash=fa; runDiskEncoder=diskEncoder; runQ4Fp16=q4Fast;
         runCache=cacheProfile; runThreads=threads; runSteps=s;
-        profilingLayers=profileLayers.isChecked();
+        profilingLayers=!enableNpu && profileLayers.isChecked();
         lastNativeCpuTicks=lastPswpIn=lastPswpOut=lastMajFault=-1;
         setStage("Preparing model files");
         beginSessionLog();
         appendDiagnostic("Anima Pocket v0.4.2 fast sampling, optimized native build; benchmark="+benchmark);
+        appendDiagnostic("ANIMA_HYBRID_NPU_ENABLED "+enableNpu+"; native_backend="+target);
         appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder+"; residentWeights "+residentWeights+"; q4Fp16Compute "+q4Fast+"; cacheProfile "+cacheProfile+
             "; cpuThreads "+threads+"; profileLayers "+profilingLayers);
         if(am!=null)appendDiagnostic("Free system RAM "+(mi.availMem/1048576)+" MiB; lowMemory="+mi.lowMemory);
@@ -543,13 +601,24 @@ public class MainActivity extends Activity {
         busy(true);
         startMemoryWatcher();
         executor.execute(()->{
+            NpuDiTBackend preparedNpu=null;
             try{
+                if(enableNpu){
+                    preparedNpu=new NpuDiTBackend();
+                    preparedNpu.prepare(this,Uri.parse(npuFolder),message->{
+                        setStage(message);
+                        appendDiagnostic("ANIMA_NPU_DIT_PREPARE "+message);
+                    });
+                    npuDiTBackend=preparedNpu;
+                }
                 String[] paths=new String[3];
                 for(int n=0;n<3;n++)paths[n]=copyModel(Uri.parse(selected[n]),n);
                 long began=System.nanoTime();
                 workerTid=android.os.Process.myTid();
                 appendDiagnostic("ANIMA_DIAG_NATIVE_THREAD tid="+workerTid);
-                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder,profilingLayers,residentWeights,q4Fast,cacheProfile,threads);
+                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder,profilingLayers,residentWeights,q4Fast,cacheProfile,threads,enableNpu);
+                if(enableNpu && (npuDiTBackend==null || npuDiTBackend.getForwardedCount()<28))
+                    throw new IOException("Hybrid NPU blocks were not actually dispatched; refusing CPU-only result");
                 if(pixels==null||pixels.length!=w*h)throw new IOException("Invalid native output");
                 Bitmap bmp=Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888);
                 setStage("Saving finished image");
@@ -569,6 +638,8 @@ public class MainActivity extends Activity {
                 });
             }
             finally{
+                npuDiTBackend=null;
+                if(preparedNpu!=null)preparedNpu.close();
                 ScheduledFuture<?> task=memoryTask;
                 if(task!=null)task.cancel(false);
                 memoryTask=null;

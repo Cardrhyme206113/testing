@@ -9,6 +9,7 @@
 #include <chrono>
 #include <sstream>
 #include <iomanip>
+#include <cstdint>
 #include "stable-diffusion.h"
 
 namespace {
@@ -83,6 +84,63 @@ void failure(JNIEnv* env,const char* msg){
 }
 }
 
+// Called only from Anima's segmented GGML runner, on the native generation
+// thread. Real intermediate tensors are copied into ExecuTorch's Java API.
+// Never synthesize prompt/context values and never pretend CPU fallback is NPU.
+extern "C" bool anima_android_npu_run_block(int index,
+    const float* x, int64_t xLength,
+    const float* context, int64_t contextLength,
+    const float* step, int64_t stepLength,
+    const float* temb, int64_t tembLength,
+    float* output) {
+    if (cancelled || vm == nullptr || activity == nullptr || output == nullptr) return false;
+    if (index < 0 || index >= 28 || xLength != 1024LL * 2048 ||
+        contextLength != 512LL * 1024 || stepLength != 2048 || tembLength != 6144)
+        return false;
+    JNIEnv* env=nullptr;
+    bool attached=false, ok=false;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        if (vm->AttachCurrentThread(&env,nullptr) != JNI_OK) return false;
+        attached=true;
+    }
+    auto array = [&](const float* values, int64_t count)->jfloatArray {
+        jfloatArray out=env->NewFloatArray(static_cast<jsize>(count));
+        if(out)env->SetFloatArrayRegion(out,0,static_cast<jsize>(count),values);
+        return out;
+    };
+    jclass cls=env->GetObjectClass(activity);
+    jmethodID callback=cls?env->GetMethodID(cls,"onNpuTransformerBlock","(I[F[F[F[F)[F"):nullptr;
+    jfloatArray input=callback?array(x,xLength):nullptr;
+    jfloatArray textContext=callback?array(context,contextLength):nullptr;
+    jfloatArray timeStep=callback?array(step,stepLength):nullptr;
+    jfloatArray timeLora=callback?array(temb,tembLength):nullptr;
+    jfloatArray outArray=nullptr;
+    if(callback && input && textContext && timeStep && timeLora && !env->ExceptionCheck()){
+        outArray=static_cast<jfloatArray>(env->CallObjectMethod(activity,callback,
+            static_cast<jint>(index),input,textContext,timeStep,timeLora));
+        if(!env->ExceptionCheck() && outArray && env->GetArrayLength(outArray)==xLength){
+            env->GetFloatArrayRegion(outArray,0,static_cast<jsize>(xLength),output);
+            ok=!env->ExceptionCheck();
+        }
+    }
+    if(env->ExceptionCheck()){
+        __android_log_print(ANDROID_LOG_ERROR,"AnimaHybridNpu",
+            "Native->Java A16W4 block %d raised an exception",index);
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    if(outArray)env->DeleteLocalRef(outArray);
+    if(timeLora)env->DeleteLocalRef(timeLora);
+    if(timeStep)env->DeleteLocalRef(timeStep);
+    if(textContext)env->DeleteLocalRef(textContext);
+    if(input)env->DeleteLocalRef(input);
+    if(cls)env->DeleteLocalRef(cls);
+    if(attached)vm->DetachCurrentThread();
+    if(!ok)__android_log_print(ANDROID_LOG_ERROR,"AnimaHybridNpu",
+        "NPU block %d failed; refusing fake/fallback inference",index);
+    return ok;
+}
+
 extern "C" JNIEXPORT jstring JNICALL Java_dev_card_anima_MainActivity_devices(JNIEnv* env,jobject){
     size_t len=sd_list_devices(nullptr,0);std::vector<char> data(len+1,0);
     sd_list_devices(data.data(),data.size());return env->NewStringUTF(data.data());
@@ -97,7 +155,7 @@ extern "C" JNIEXPORT void JNICALL Java_dev_card_anima_MainActivity_cancelNative(
 extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generateNative(
     JNIEnv* env,jobject caller,jstring modelPath,jstring encoderPath,jstring decoderPath,
     jboolean useTae,jstring promptString,jint width,jint height,jint steps,jlong seed,jfloat cfg,
-    jstring backendString,jboolean flash,jboolean diskEncoder,jboolean profileLayers,jboolean residentWeights,jboolean q4Fp16Compute,jint cacheProfile,jint cpuThreads){
+    jstring backendString,jboolean flash,jboolean diskEncoder,jboolean profileLayers,jboolean residentWeights,jboolean q4Fp16Compute,jint cacheProfile,jint cpuThreads,jboolean useNpuDiT){
     std::string model=str(env,modelPath),llm=str(env,encoderPath),decoder=str(env,decoderPath);
     std::string prompt=str(env,promptString),backend=str(env,backendString);
     if(model.empty()||llm.empty()||decoder.empty()||prompt.empty()||width<128||height<128||
@@ -111,6 +169,14 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     if(profileLayers && backend=="cpu"){
         logs(SD_LOG_WARN,"Layer checkpoints require Vulkan; CPU will use standard graph",nullptr);
     }
+    if(useNpuDiT){
+        if(width!=512||height!=512){
+            env->DeleteGlobalRef(activity);activity=nullptr;
+            failure(env,"Hybrid A16W4 compilation is fixed to 512x512");return nullptr;
+        }
+        setenv("ANIMA_NPU_DIT","1",1);
+        logs(SD_LOG_INFO,"ANIMA_NPU_DIT_HYBRID_ENABLED: real 28-block Neuron dispatch",nullptr);
+    }else unsetenv("ANIMA_NPU_DIT");
     // The default path is untouched. Forced per-layer segmentation is opt-in
     // because it alters memory pressure and adds synchronization overhead.
     if(profileLayers && backend!="cpu")setenv("ANIMA_DIAG_LAYER_CUTS","1",1);
@@ -125,7 +191,7 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
         env->DeleteGlobalRef(activity);activity=nullptr;
         failure(env,"Unknown backend safety profile");return nullptr;
     }
-    std::string runtime=gpu?"diffusion=vulkan0,te=cpu,vae=cpu":"cpu";
+    std::string runtime=(gpu && !useNpuDiT)?"diffusion=vulkan0,te=cpu,vae=cpu":"cpu";
     // `disk` is an upstream, file-backed parameter placement, not a GPU
     // allocation limit. CPU execution still needs temporary activation buffers.
     // In the default low-RAM mode, all weights are lazily paged from storage.
@@ -172,6 +238,7 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
         std::chrono::steady_clock::now()-contextAt).count();
     logs(SD_LOG_INFO,("ANIMA_DIAG_CONTEXT_READY elapsed_ms="+std::to_string(contextMs)).c_str(),nullptr);
     if(!context){
+        unsetenv("ANIMA_NPU_DIT");
         env->DeleteGlobalRef(activity);activity=nullptr;
         failure(env,"Could not initialize model. See engine diagnostics below.");return nullptr;
     }
@@ -240,6 +307,7 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
         active=nullptr;
     }
     free_sd_ctx(context);
+    unsetenv("ANIMA_NPU_DIT");
     env->DeleteGlobalRef(activity);activity=nullptr;
     if(!output&&!env->ExceptionCheck())failure(env,cancelled?"Generation cancelled":"Generation failed. See engine diagnostics below.");
     return output;
