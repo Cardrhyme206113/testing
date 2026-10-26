@@ -1,0 +1,219 @@
+{
+  "balanced": {
+    "profile": "balanced",
+    "zoom": 12,
+    "center": [
+      28.9784,
+      41.0332
+    ],
+    "layers": {
+      "landuse": {
+        "features": 1843,
+        "vertices": 55875
+      },
+      "water": {
+        "features": 54,
+        "vertices": 1640
+      },
+      "boundary": {
+        "features": 72,
+        "vertices": 3780
+      },
+      "waterway": {
+        "features": 36,
+        "vertices": 757
+      },
+      "rail": {
+        "features": 81,
+        "vertices": 2400
+      },
+      "road": {
+        "features": 20227,
+        "vertices": 163523
+      },
+      "poi": {
+        "features": 31456,
+        "vertices": 44705
+      },
+      "place": {
+        "features": 530,
+        "vertices": 578
+      },
+      "address": {
+        "features": 15451,
+        "vertices": 17821
+      },
+      "coastline": {
+        "features": 7,
+        "vertices": 1135
+      }
+    },
+    "tiles_present": 8,
+    "mbtiles_bytes": 306380800,
+    "pmtiles_bytes": 276066082,
+    "pmtiles_mib": 263.28,
+    "mbtiles_mib": 292.19
+  },
+  "reference": {
+    "profile": "reference",
+    "zoom": 12,
+    "center": [
+      28.9784,
+      41.0332
+    ],
+    "layers": {
+      "landuse": {
+        "features": 10618,
+        "vertices": 98987
+      },
+      "water": {
+        "features": 372,
+        "vertices": 3316
+      },
+      "boundary": {
+        "features": 967,
+        "vertices": 6038
+      },
+      "waterway": {
+        "features": 288,
+        "vertices": 1325
+      },
+      "rail": {
+        "features": 982,
+        "vertices": 3957
+      },
+      "road": {
+        "features": 76185,
+        "vertices": 233466
+      },
+      "poi": {
+        "features": 31456,
+        "vertices": 44975
+      },
+      "place": {
+        "features": 530,
+        "vertices": 590
+      },
+      "address": {
+        "features": 15451,
+        "vertices": 17920
+      },
+      "coastline": {
+        "features": 125,
+        "vertices": 1953
+      }
+    },
+    "tiles_present": 8,
+    "mbtiles_bytes": 45350912
+  },
+  "compact": {
+    "profile": "compact",
+    "zoom": 12,
+    "center": [
+      28.9784,
+      41.0332
+    ],
+    "layers": {
+      "landuse": {
+        "features": 4412,
+        "vertices": 26366
+      },
+      "water": {
+        "features": 336,
+        "vertices": 1597
+      },
+      "boundary": {
+        "features": 967,
+        "vertices": 3956
+      },
+      "waterway": {
+        "features": 288,
+        "vertices": 898
+      },
+      "rail": {
+        "features": 982,
+        "vertices": 2910
+      },
+      "road": {
+        "features": 56664,
+        "vertices": 133131
+      },
+      "poi": {
+        "features": 58637,
+        "vertices": 84418
+      },
+      "place": {
+        "features": 530,
+        "vertices": 578
+      },
+      "address": {
+        "features": 15451,
+        "vertices": 17821
+      },
+      "coastline": {
+        "features": 124,
+        "vertices": 1029
+      }
+    },
+    "tiles_present": 8,
+    "mbtiles_bytes": 132055040,
+    "pmtiles_bytes": 117778265,
+    "pmtiles_mib": 112.32,
+    "mbtiles_mib": 125.94
+  },
+  "lean": {
+    "profile": "lean",
+    "zoom": 12,
+    "center": [
+      28.9784,
+      41.0332
+    ],
+    "layers": {
+      "landuse": {
+        "features": 9999,
+        "vertices": 62766
+      },
+      "water": {
+        "features": 336,
+        "vertices": 1845
+      },
+      "boundary": {
+        "features": 967,
+        "vertices": 4730
+      },
+      "waterway": {
+        "features": 288,
+        "vertices": 1042
+      },
+      "rail": {
+        "features": 982,
+        "vertices": 3277
+      },
+      "road": {
+        "features": 75993,
+        "vertices": 195718
+      },
+      "poi": {
+        "features": 31456,
+        "vertices": 44705
+      },
+      "place": {
+        "features": 530,
+        "vertices": 578
+      },
+      "address": {
+        "features": 15451,
+        "vertices": 17821
+      },
+      "coastline": {
+        "features": 124,
+        "vertices": 1372
+      }
+    },
+    "tiles_present": 8,
+    "mbtiles_bytes": 184025088,
+    "pmtiles_bytes": 161695815,
+    "pmtiles_mib": 154.21,
+    "mbtiles_mib": 175.5
+  }
+}

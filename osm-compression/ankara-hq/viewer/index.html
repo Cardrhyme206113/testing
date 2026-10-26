@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Ankara HQ OSM</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.13.0/dist/maplibre-gl.css" crossorigin="anonymous">
+<style>
+:root{color-scheme:dark;--bg:#090c11;--panel:#10151c;--panel2:#151c25;--line:#2b3542;--text:#edf3f8;--muted:#97a5b5;--accent:#6ea8fe;--good:#69db9c;--warn:#ffd166;--bad:#ff7676}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.42 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}body{overflow:hidden}.app{height:100%;display:grid;grid-template-columns:minmax(290px,360px) 1fr}.side{background:rgba(10,14,19,.98);border-right:1px solid var(--line);overflow:auto;padding:16px}.mapwrap{position:relative;min-width:0}.map{position:absolute;inset:0}.brand{display:flex;gap:10px;justify-content:space-between;align-items:start}.brand h1{font-size:19px;margin:0}.brand p,.note{margin:4px 0 0;color:var(--muted);font-size:12px}.badge{border:1px solid var(--line);border-radius:999px;padding:3px 7px;font-size:11px;color:var(--good)}.section{border-top:1px solid var(--line);padding-top:13px;margin-top:13px}.section h2{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:0 0 9px}.metrics{display:grid;grid-template-columns:1fr 1fr;gap:7px}.metric{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:9px}.metric b{display:block;font-size:17px}.metric span{font-size:11px;color:var(--muted)}.buttons{display:flex;flex-wrap:wrap;gap:6px}.buttons button{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:8px;padding:7px 9px}.layers{display:grid;grid-template-columns:1fr 1fr;gap:5px}.toggle{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:8px;padding:7px 8px;text-align:left;font-size:12px}.toggle.off{opacity:.4}.preview{width:100%;border:1px solid var(--line);border-radius:8px;background:#080b0f}.network{position:absolute;left:12px;bottom:12px;background:rgba(9,12,17,.92);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:12px;max-width:calc(100vw - 24px);pointer-events:none}.status{color:var(--warn)}.status.good{color:var(--good)}.status.bad{color:var(--bad)}.inspect{position:absolute;right:12px;top:12px;display:none;max-width:min(390px,55vw);max-height:48vh;overflow:auto;background:rgba(9,12,17,.95);border:1px solid var(--line);border-radius:9px;padding:10px}.inspect b{display:block;margin-bottom:5px}.inspect pre{margin:0;white-space:pre-wrap;word-break:break-word;color:#cbd5e1;font-size:11px}.mobilebar{display:none;position:absolute;top:10px;left:10px;z-index:5}.mobilebar button{background:#111820;color:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 10px}.footer{font-size:11px;color:var(--muted);padding-bottom:10px}.footer a{color:var(--accent)}
+@media(max-width:720px){.app{display:block}.side{position:absolute;z-index:4;left:0;top:0;bottom:0;width:min(88vw,360px);transform:translateX(-103%);transition:transform .2s ease;box-shadow:8px 0 24px #0009}.side.open{transform:none}.mapwrap{height:100%}.mobilebar{display:block}.inspect{top:52px;max-width:calc(100vw - 24px)}.network{left:10px;bottom:10px}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="side" id="side">
+  <div class="brand"><div><h1>Ankara HQ OSM</h1><p>Full Ankara Province · high-detail vector map</p></div><span class="badge">PMTiles</span></div>
+  <div class="section"><h2>Build</h2><div class="metrics">
+    <div class="metric"><b id="pmSize">—</b><span>streaming PMTiles</span></div>
+    <div class="metric"><b id="pbfSize">26.32 MiB</b><span>exact OSM PBF source</span></div>
+    <div class="metric"><b id="buildings">—</b><span>building objects</span></div>
+    <div class="metric"><b id="names">—</b><span>named OSM objects</span></div>
+  </div></div>
+  <div class="section"><h2>Jump to</h2><div class="buttons"><button data-c="32.8543,39.9208,15">Kızılay</button><button data-c="32.8597,39.9334,12">Central Ankara</button><button data-c="32.70,39.96,11">West Ankara</button><button data-c="32.95,39.98,11">East Ankara</button><button data-c="32.86,39.93,8">Province</button></div></div>
+  <div class="section"><h2>Layers</h2><div class="layers" id="layers"></div></div>
+  <div class="section"><h2>Names</h2><p class="note">Primary, Turkish/English, official, alternate, short, local and old names are preserved where OSM has them, plus brand/operator/ref. Named buildings are labelled at close zoom and every feature can be tapped to inspect all stored properties.</p></div>
+  <div class="section"><h2>Detail</h2><p class="note">z16 is generated without configured geometry simplification. Lower zoom copies are simplified for rendering; the companion Ankara PBF keeps the original OSM objects and geometry.</p></div>
+  <div class="section"><h2>Dense-city preview</h2><img class="preview" src="data/ankara-z16.png" alt="Central Ankara z16 preview"><p class="note">Central Ankara/Kızılay z16 output from the same build.</p></div>
+  <div class="section"><h2>Streaming</h2><p class="note">The browser does not download the whole archive. PMTiles requests byte ranges for its index and only the map tiles needed by the current viewport.</p></div>
+  <div class="section footer">Data © OpenStreetMap contributors, ODbL 1.0. <a href="https://github.com/Cardrhyme206113/testing/tree/osm-compression-lab/osm-compression/ankara-hq">Build source</a>.</div>
+</aside>
+<main class="mapwrap">
+  <div id="map" class="map"></div>
+  <div class="mobilebar"><button id="menu">☰ Info</button></div>
+  <div class="network"><span id="status" class="status">Loading libraries…</span><br><span id="bytes">PMTiles transferred: —</span></div>
+  <div class="inspect" id="inspect"><b id="inspectTitle"></b><pre id="inspectBody"></pre></div>
+</main>
+</div>
+<script>
+function setStatus(t,k=''){const e=document.getElementById('status');e.textContent=t;e.className='status'+(k?' '+k:'')}
+window.addEventListener('error',e=>{if(e.target&&e.target.tagName==='SCRIPT')setStatus('Library failed: '+e.target.src,'bad')},true)
+</script>
+<script src="https://unpkg.com/maplibre-gl@5.13.0/dist/maplibre-gl.js" crossorigin="anonymous" onerror="setStatus('MapLibre failed','bad')"></script>
+<script src="https://unpkg.com/pmtiles@4.4.1/dist/pmtiles.js" onerror="setStatus('PMTiles library failed','bad')"></script>
+<script>
+let transferred=0;const nativeFetch=window.fetch.bind(window);window.fetch=async(...a)=>{const r=await nativeFetch(...a);try{const u=String(a[0]?.url||a[0]||'');if(u.includes('ankara-hq.pmtiles')){const cr=r.headers.get('content-range');if(cr){const m=/bytes\s+(\d+)-(\d+)\//i.exec(cr);if(m)transferred+=Number(m[2])-Number(m[1])+1}else{const n=Number(r.headers.get('content-length'));if(n)transferred+=n}document.getElementById('bytes').textContent='PMTiles transferred: '+fmt(transferred)}}catch{}return r};
+function fmt(n){if(!Number.isFinite(n))return'—';if(n<1024)return n+' B';if(n<1048576)return(n/1024).toFixed(1)+' KiB';return(n/1048576).toFixed(2)+' MiB'}
+const source='pmtiles://'+new URL('data/ankara-hq.pmtiles',location.href).href;
+const text=['coalesce',['get','name:tr'],['get','name'],['get','name:en'],['get','official_name'],['get','brand'],['get','ref'],''];
+const style={version:8,glyphs:'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf',sources:{osm:{type:'vector',url:source,attribution:'© OpenStreetMap contributors'}},layers:[
+{id:'bg',type:'background',paint:{'background-color':'#091019'}},
+{id:'landuse',type:'fill',source:'osm','source-layer':'landuse',paint:{'fill-color':['match',['get','class'],'forest','#15251c','grass','#17251b','residential','#171b22','industrial','#211e1d','commercial','#241c22','park','#15251b','#171b21'],'fill-opacity':.9}},
+{id:'water',type:'fill',source:'osm','source-layer':'water',paint:{'fill-color':'#102d40'}},
+{id:'waterway',type:'line',source:'osm','source-layer':'waterway',paint:{'line-color':'#2a5f7a','line-width':['interpolate',['linear'],['zoom'],8,.6,16,2.2]}},
+{id:'boundary',type:'line',source:'osm','source-layer':'boundary',paint:{'line-color':'#465365','line-width':['interpolate',['linear'],['zoom'],4,.5,14,1.5],'line-dasharray':[3,2]}},
+{id:'rail',type:'line',source:'osm','source-layer':'rail',paint:{'line-color':'#707b88','line-width':['interpolate',['linear'],['zoom'],8,.6,16,1.8],'line-dasharray':[2,2]}},
+{id:'road-major-casing',type:'line',source:'osm','source-layer':'road',filter:['in',['get','class'],['literal',['motorway','trunk','primary','secondary']]],layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#2a3038','line-width':['interpolate',['linear'],['zoom'],6,1.5,12,4,16,8]}},
+{id:'road-major',type:'line',source:'osm','source-layer':'road',filter:['in',['get','class'],['literal',['motorway','trunk','primary','secondary']]],layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':['match',['get','class'],'motorway','#d9904f','trunk','#c69866','primary','#b19979','#8e99a6'],'line-width':['interpolate',['linear'],['zoom'],6,.8,12,2.4,16,5.5]}},
+{id:'road-minor',type:'line',source:'osm','source-layer':'road',filter:['!',['in',['get','class'],['literal',['motorway','trunk','primary','secondary']]]],layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':['match',['get','class'],'path','#515d69','service','#616b76','#6d7782'],'line-opacity':.9,'line-width':['interpolate',['linear'],['zoom'],10,.45,13,1.2,16,2.5]}},
+{id:'building',type:'fill',source:'osm','source-layer':'building',minzoom:13,paint:{'fill-color':'#353d47','fill-outline-color':'#4d5966'}},
+{id:'address',type:'circle',source:'osm','source-layer':'address',minzoom:14,paint:{'circle-radius':['interpolate',['linear'],['zoom'],14,.8,16,1.6],'circle-color':'#d2ad69','circle-opacity':.65}},
+{id:'poi',type:'circle',source:'osm','source-layer':'poi',minzoom:12,paint:{'circle-radius':['interpolate',['linear'],['zoom'],12,1.2,16,2.6],'circle-color':'#6ea8fe','circle-opacity':.85}},
+{id:'place-label',type:'symbol',source:'osm','source-layer':'place',layout:{'text-field':text,'text-font':['Noto Sans Regular'],'text-size':['interpolate',['linear'],['zoom'],5,11,13,16],'text-allow-overlap':false},paint:{'text-color':'#f1f5f9','text-halo-color':'#091019','text-halo-width':1.4}},
+{id:'road-label',type:'symbol',source:'osm','source-layer':'road',minzoom:12,layout:{'symbol-placement':'line','text-field':text,'text-font':['Noto Sans Regular'],'text-size':['interpolate',['linear'],['zoom'],12,9,16,12],'text-max-angle':30},paint:{'text-color':'#bac4cf','text-halo-color':'#091019','text-halo-width':1}},
+{id:'building-label',type:'symbol',source:'osm','source-layer':'building',minzoom:15,filter:['has','name'],layout:{'text-field':text,'text-font':['Noto Sans Regular'],'text-size':['interpolate',['linear'],['zoom'],15,9,17,11],'text-max-width':9,'text-allow-overlap':false},paint:{'text-color':'#dfe6ee','text-halo-color':'#10151c','text-halo-width':1.1}},
+{id:'named-label',type:'symbol',source:'osm','source-layer':'named',minzoom:14,layout:{'text-field':text,'text-font':['Noto Sans Regular'],'text-size':10,'text-allow-overlap':false},paint:{'text-color':'#d3dce6','text-halo-color':'#091019','text-halo-width':1}},
+{id:'poi-label',type:'symbol',source:'osm','source-layer':'poi',minzoom:14,layout:{'text-field':text,'text-font':['Noto Sans Regular'],'text-size':10,'text-offset':[0,1],'text-anchor':'top','text-allow-overlap':false},paint:{'text-color':'#c7d7e9','text-halo-color':'#091019','text-halo-width':1}}
+]};
+const groups={Land:['landuse'],Water:['water','waterway'],Roads:['road-major-casing','road-major','road-minor','road-label'],Rail:['rail'],Boundaries:['boundary'],Buildings:['building','building-label'],POIs:['poi','poi-label'],Addresses:['address'],Names:['place-label','named-label']};
+let protocol,map,disabled=new Set();
+async function boot(){try{if(!window.maplibregl||!window.pmtiles)throw new Error('required map libraries unavailable');protocol=new pmtiles.Protocol();maplibregl.addProtocol('pmtiles',protocol.tile);setStatus('Opening Ankara HQ archive…');map=new maplibregl.Map({container:'map',style,center:[32.8597,39.9334],zoom:11.5,maxZoom:18,hash:true});map.addControl(new maplibregl.NavigationControl({showCompass:false}),'bottom-right');map.on('load',()=>setStatus('Range-streaming Ankara HQ','good'));map.on('error',e=>setStatus('Map error: '+(e?.error?.message||'tile error'),'bad'));map.on('click',e=>{const fs=map.queryRenderedFeatures(e.point).filter(f=>f.source==='osm');const box=document.getElementById('inspect');if(!fs.length){box.style.display='none';return}const f=fs[0],name=f.properties['name:tr']||f.properties.name||f.properties['name:en']||f.properties.class||'feature';document.getElementById('inspectTitle').textContent=(f.sourceLayer||f.layer.id)+' · '+name;document.getElementById('inspectBody').textContent=JSON.stringify(f.properties,null,2);box.style.display='block'});buildToggles();try{const s=await fetch('data/summary.json',{cache:'no-store'}).then(r=>r.json());document.getElementById('pmSize').textContent=(s.hq_pmtiles_mib??0).toFixed(2)+' MiB';document.getElementById('pbfSize').textContent=(s.source_pbf_mib??26.32).toFixed(2)+' MiB';document.getElementById('buildings').textContent=Number(s.building_osm_objects||0).toLocaleString();document.getElementById('names').textContent=Number(s.named_osm_objects||0).toLocaleString()}catch(e){console.warn(e)}}catch(e){setStatus('Startup error: '+e.message,'bad');console.error(e)}}
+function buildToggles(){const el=document.getElementById('layers');for(const [g,ids] of Object.entries(groups)){const b=document.createElement('button');b.className='toggle';b.textContent=g;b.onclick=()=>{const off=disabled.has(g);if(off)disabled.delete(g);else disabled.add(g);b.classList.toggle('off',!off);for(const id of ids)if(map.getLayer(id))map.setLayoutProperty(id,'visibility',off?'visible':'none')};el.appendChild(b)}}
+document.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{const [lon,lat,z]=b.dataset.c.split(',').map(Number);map.flyTo({center:[lon,lat],zoom:z});document.getElementById('side').classList.remove('open')});document.getElementById('menu').onclick=()=>document.getElementById('side').classList.toggle('open');boot();
+</script>
+</body>
+</html>

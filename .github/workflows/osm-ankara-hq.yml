@@ -1,0 +1,48 @@
+name: Ankara HQ OSM build
+
+on:
+  push:
+    branches: [osm-compression-lab]
+    paths:
+      - 'osm-compression/ankara-hq/**'
+      - '.github/workflows/osm-ankara-hq.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build-ankara-hq:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build exact Ankara extract and HQ PMTiles
+        run: |
+          chmod +x osm-compression/ankara-hq/run.sh
+          osm-compression/ankara-hq/run.sh
+
+      - name: Upload Ankara exact OSM PBF
+        uses: actions/upload-artifact@v4
+        with:
+          name: ankara-full-osm-pbf
+          path: osm-compression/ankara-hq/output/ankara-full.osm.pbf
+          compression-level: 0
+          retention-days: 7
+
+      - name: Upload Ankara HQ PMTiles
+        uses: actions/upload-artifact@v4
+        with:
+          name: ankara-hq-pmtiles
+          path: osm-compression/ankara-hq/output/ankara-hq.pmtiles
+          compression-level: 0
+          retention-days: 7
+
+      - name: Upload Ankara HQ measurements and previews
+        uses: actions/upload-artifact@v4
+        with:
+          name: ankara-hq-results
+          path: osm-compression/ankara-hq/results/
+          retention-days: 7

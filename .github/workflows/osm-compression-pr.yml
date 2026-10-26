@@ -1,0 +1,49 @@
+name: Turkey OSM compression PR lab
+
+on:
+  workflow_dispatch:
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run compression and Istanbul stress-test matrix
+        run: bash osm-compression/run-sequential-lab.sh
+
+      - name: Upload reports and previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: osm-compression-results
+          path: osm-compression/run-results
+          retention-days: 7
+
+      - name: Upload compact map
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: turkey-compact-pmtiles
+          path: osm-compression/run-output/compact.pmtiles
+          compression-level: 0
+          retention-days: 7
+
+      - name: Upload lean map
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: turkey-lean-pmtiles
+          path: osm-compression/run-output/lean.pmtiles
+          compression-level: 0
+          retention-days: 7
+
+      - name: Upload balanced map
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: turkey-balanced-pmtiles
+          path: osm-compression/run-output/balanced.pmtiles
+          compression-level: 0
+          retention-days: 7
