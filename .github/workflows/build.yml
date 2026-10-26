@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -17,17 +18,60 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Install packaging tools
-        run: sudo apt-get update && sudo apt-get install -y patchelf
-      - name: Fetch ARM64 PRoot launcher
-        run: bash scripts/fetch-proot.sh
-      - name: Apply Android compatibility patch
-        run: python3 scripts/patch-android-compat.py
+      - name: Install Android native build tools
+        shell: bash
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" "cmake;3.22.1"
+      - name: Apply Android API and server-download compatibility
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('app/src/main/java/com/example/blockhost')
+          p = root / 'ServerRepository.java'
+          s = p.read_text()
+          pairs = {
+            'Files.readString(stateFile.toPath(), StandardCharsets.UTF_8)': 'FileIo.readUtf8(stateFile)',
+            'Files.readString(file.toPath(), StandardCharsets.UTF_8)': 'FileIo.readUtf8(file)',
+            'Files.writeString(file.toPath(), content, StandardCharsets.UTF_8)': 'FileIo.writeUtf8(file, content)',
+            'Files.writeString(tmp.toPath(), state.toString(2), StandardCharsets.UTF_8)': 'FileIo.writeUtf8(tmp, state.toString(2))',
+            'Files.writeString(stateFile.toPath(), state.toString(2), StandardCharsets.UTF_8)': 'FileIo.writeUtf8(stateFile, state.toString(2))',
+            'Files.writeString(file.toPath(), text, StandardCharsets.UTF_8)': 'FileIo.writeUtf8(file, text)',
+            'file.isFile() ? Files.readString(file.toPath(), StandardCharsets.UTF_8) : ""': 'file.isFile() ? FileIo.readUtf8(file) : ""',
+          }
+          for old, new in pairs.items():
+            s = s.replace(old, new)
+          p.write_text(s)
+
+          p = root / 'BlockHostBackend.java'
+          s = p.read_text()
+          s = s.replace(
+              '.put("buildToolsUrl", SpigotVersionProvider.BUILDTOOLS_URL)',
+              '.put("serverSource", SpigotVersionProvider.PUFFERFISH_JOB)'
+          )
+          s = s.replace(
+              '.put("serverSource", SpigotVersionProvider.PAPER_API)',
+              '.put("serverSource", SpigotVersionProvider.PUFFERFISH_JOB)'
+          )
+          p.write_text(s)
+          PY
+          python3 scripts/patch-pufferfish-v21.py
       - name: Build debug APK
         shell: bash
         run: |
           set -o pipefail
           gradle --no-daemon :app:assembleDebug 2>&1 | tee build.log
+      - name: Verify native Pufferfish/Paper build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          unzip -l "$apk" | grep -q 'lib/arm64-v8a/libblockhost_jvm.so'
+          ! unzip -l "$apk" | grep -q 'libproot'
+          ! unzip -l "$apk" | grep -q 'runtime-aarch64'
+          test "$(stat -c%s "$apk")" -lt 50000000
+          ls -lh "$apk"
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4

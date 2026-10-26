@@ -7,8 +7,12 @@ android {
         applicationId = "com.example.blockhost"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 4
+        versionName = "0.4.0"
+        ndk { abiFilters += listOf("arm64-v8a") }
+        externalNativeBuild {
+            cmake { arguments += listOf("-DANDROID_STL=c++_shared") }
+        }
     }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions {
@@ -16,12 +20,17 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true
     }
-    packaging {
-        jniLibs.useLegacyPackaging = true
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
+    packaging { jniLibs.useLegacyPackaging = true }
 }
 
 dependencies {
     implementation("org.apache.commons:commons-compress:1.27.1")
+    implementation("org.tukaani:xz:1.10")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
