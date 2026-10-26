@@ -39,7 +39,7 @@ public class MainActivity extends Activity {
         String prompt, int width, int height, int steps, long seed, float cfg,
         String backend, boolean flash, boolean diskEncoder, boolean profileLayers,
         boolean residentWeights, boolean q4Fp16Compute, int cacheProfile, int cpuThreads,
-        boolean useNpuDiT);
+        boolean useNpuDiT, boolean qwenVulkan, boolean fastRgbPreview);
     public native String benchmarkMatmulNative();
     public native String probeNpuNative();
 
@@ -65,7 +65,7 @@ public class MainActivity extends Activity {
     long lastNativeCpuTicks=-1, lastPswpIn=-1, lastPswpOut=-1, lastMajFault=-1;
     EditText prompt, seed;
     Spinner decoderType, resolution, steps, backend, weightsMode, cacheMode, cpuThreads;
-    CheckBox flash, lowRamEncoder, profileLayers, q4Fp16, useNpuDiT;
+    CheckBox flash, lowRamEncoder, profileLayers, q4Fp16, useNpuDiT, qwenVulkan;
     TextView npuDiTFolderLabel;
     volatile NpuDiTBackend npuDiTBackend;
     Button benchmarkButton, matmulButton, npuButton, compiledNpuButton;
@@ -279,7 +279,7 @@ public class MainActivity extends Activity {
         add(root,text("ARM64 · Qwen3-0.6B-Base GGUF · streamed low-RAM profiles",12,hint),0);
         add(root,text("MODEL FILES",17,accent),22);
         add(root,text("Download in your browser, then select local files. Browser Downloads survive app resets. The app caches working copies.",12,hint),2);
-        String[] labels={"01   Anima GGUF","02   Qwen3-0.6B-Base GGUF / safetensors","03   TAEW2.1 or full VAE"};
+        String[] labels={"01   Anima GGUF","02   Qwen3-0.6B-Base GGUF / safetensors","03   TAEW2.1 or full VAE (also selected for RGB preview)"};
         for(int i=0;i<3;i++){
             final int n=i;add(root,text(labels[i],14,Color.WHITE),12);
             files[i]=text(preferences.getString(KEYS[i]+"_name","No file selected"),12,hint);add(root,files[i],0);
@@ -289,7 +289,9 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams dp1=new LinearLayout.LayoutParams(0,dp(46),1);dp1.leftMargin=dp(8);r.addView(download,dp1);add(root,r,4);
         }
         add(root,text("Decoder mode",13,hint),10);
-        decoderType=spinner(new String[]{"TAEW2.1 (recommended)","Full Qwen VAE"},0);add(root,decoderType,2);
+        decoderType=spinner(new String[]{"TAEW2.1 (quality; slow)","Full Qwen VAE (very slow)","Fast latent → RGB (rough preview; no VAE compute)"},
+            Math.min(2,Math.max(0,preferences.getInt("decoder_choice",preferences.getBoolean("use_npu_dit",false)?2:0))));add(root,decoderType,2);
+        add(root,text("Fast RGB skips the ~45s TAE decoder. It is a rough latent visualization, not a fully decoded image. Keep the 21 MiB TAE file selected for engine initialization.",12,0xffffc278),3);
         add(root,button("Inspect model headers (no ADB)",this::inspectModelFiles),12);
         add(root,text("GENERATION",17,accent),22);
         prompt=new EditText(this);prompt.setTextColor(Color.WHITE);prompt.setTextSize(15);prompt.setMinLines(3);
@@ -313,6 +315,12 @@ public class MainActivity extends Activity {
         useNpuDiT.setTextColor(0xff94e1a8);
         useNpuDiT.setChecked(preferences.getBoolean("use_npu_dit",false));
         add(root,useNpuDiT,4);
+        qwenVulkan=new CheckBox(this);
+        qwenVulkan.setText("Experimental: run Qwen3-0.6B prompt encoder on Vulkan (NPU mode)");
+        qwenVulkan.setTextColor(0xffffca85);
+        qwenVulkan.setChecked(preferences.getBoolean("qwen_vulkan",false));
+        add(root,qwenVulkan,4);
+        add(root,text("Mali GPU and MediaTek NPU share system RAM. Stream encoder weights from disk to limit residency; GPU allocations are reclaimed when the engine context closes, not guaranteed immediately after conditioning. CPU Qwen remains the stable option.",12,0xffffc278),2);
         npuDiTFolderLabel=text(preferences.getString("npu_dit_folder_name",
             "No 28-block model directory selected"),12,hint);
         add(root,npuDiTFolderLabel,2);
@@ -562,7 +570,9 @@ public class MainActivity extends Activity {
                 return;
             }
         }
-        boolean tae=decoderType.getSelectedItemPosition()==0, fa=flash.isChecked();
+        boolean fastPreview=decoderType.getSelectedItemPosition()==2;
+        boolean tae=decoderType.getSelectedItemPosition()!=1, fa=flash.isChecked();
+        boolean qwenGpu=enableNpu && qwenVulkan.isChecked();
         boolean diskEncoder=lowRamEncoder.isChecked();
         boolean q4Fast=!enableNpu && q4Fp16.isChecked() && backend.getSelectedItemPosition()!=2;
         int cacheProfile=cacheMode.getSelectedItemPosition();
@@ -574,7 +584,9 @@ public class MainActivity extends Activity {
             .putBoolean("flash_enabled",fa)
             .putInt("weights_mode",weightsMode.getSelectedItemPosition())
             .putInt("backend_choice",backend.getSelectedItemPosition())
-            .putBoolean("use_npu_dit",enableNpu).apply();
+            .putBoolean("use_npu_dit",enableNpu)
+            .putBoolean("qwen_vulkan",qwenVulkan.isChecked())
+            .putInt("decoder_choice",decoderType.getSelectedItemPosition()).apply();
         long rand;try{rand=Long.parseLong(seed.getText().toString());}catch(NumberFormatException e){rand=-1;}
         if(rand<0)rand=new SecureRandom().nextLong()&Long.MAX_VALUE;
         final long id=rand;preferences.edit().putString("prompt",p).apply();
@@ -592,10 +604,10 @@ public class MainActivity extends Activity {
         lastNativeCpuTicks=lastPswpIn=lastPswpOut=lastMajFault=-1;
         setStage("Preparing model files");
         beginSessionLog();
-        appendDiagnostic("Anima Pocket v0.4.2 fast sampling, optimized native build; benchmark="+benchmark);
+        appendDiagnostic("Anima Pocket v0.6.13 · v0.6.9 NPU graph path · Vulkan Qwen / fast RGB preview; benchmark="+benchmark);
         appendDiagnostic("ANIMA_HYBRID_NPU_ENABLED "+enableNpu+"; native_backend="+target);
         appendDiagnostic("Backend "+target+"; resolution "+w+"x"+h+"; steps "+s+"; tae "+tae+"; flash "+fa+"; encoderDisk "+diskEncoder+"; residentWeights "+residentWeights+"; q4Fp16Compute "+q4Fast+"; cacheProfile "+cacheProfile+
-            "; cpuThreads "+threads+"; profileLayers "+profilingLayers);
+            "; cpuThreads "+threads+"; profileLayers "+profilingLayers+"; qwenVulkan "+qwenGpu+"; fastRgbPreview "+fastPreview);
         if(am!=null)appendDiagnostic("Free system RAM "+(mi.availMem/1048576)+" MiB; lowMemory="+mi.lowMemory);
         for(int n=0;n<3;n++)appendDiagnostic("Selected file "+n+": "+preferences.getString(KEYS[n]+"_name","?"));
         busy(true);
@@ -616,7 +628,7 @@ public class MainActivity extends Activity {
                 long began=System.nanoTime();
                 workerTid=android.os.Process.myTid();
                 appendDiagnostic("ANIMA_DIAG_NATIVE_THREAD tid="+workerTid);
-                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder,profilingLayers,residentWeights,q4Fast,cacheProfile,threads,enableNpu);
+                int[] pixels=generateNative(paths[0],paths[1],paths[2],tae,p,w,h,s,id,1f,target,fa,diskEncoder,profilingLayers,residentWeights,q4Fast,cacheProfile,threads,enableNpu,qwenGpu,fastPreview);
                 if(enableNpu && (npuDiTBackend==null || npuDiTBackend.getForwardedCount()<28))
                     throw new IOException("Hybrid NPU blocks were not actually dispatched; refusing CPU-only result");
                 if(pixels==null||pixels.length!=w*h)throw new IOException("Invalid native output");

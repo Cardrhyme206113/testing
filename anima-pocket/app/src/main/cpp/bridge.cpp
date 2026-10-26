@@ -155,7 +155,7 @@ extern "C" JNIEXPORT void JNICALL Java_dev_card_anima_MainActivity_cancelNative(
 extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generateNative(
     JNIEnv* env,jobject caller,jstring modelPath,jstring encoderPath,jstring decoderPath,
     jboolean useTae,jstring promptString,jint width,jint height,jint steps,jlong seed,jfloat cfg,
-    jstring backendString,jboolean flash,jboolean diskEncoder,jboolean profileLayers,jboolean residentWeights,jboolean q4Fp16Compute,jint cacheProfile,jint cpuThreads,jboolean useNpuDiT){
+    jstring backendString,jboolean flash,jboolean diskEncoder,jboolean profileLayers,jboolean residentWeights,jboolean q4Fp16Compute,jint cacheProfile,jint cpuThreads,jboolean useNpuDiT,jboolean qwenVulkan,jboolean fastRgbPreview){
     std::string model=str(env,modelPath),llm=str(env,encoderPath),decoder=str(env,decoderPath);
     std::string prompt=str(env,promptString),backend=str(env,backendString);
     if(model.empty()||llm.empty()||decoder.empty()||prompt.empty()||width<128||height<128||
@@ -191,12 +191,20 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
         env->DeleteGlobalRef(activity);activity=nullptr;
         failure(env,"Unknown backend safety profile");return nullptr;
     }
-    std::string runtime=(gpu && !useNpuDiT)?"diffusion=vulkan0,te=cpu,vae=cpu":"cpu";
+    // NPU graph cuts use the CPU host backend for the DiT prelude/final layers.
+    // Only the text encoder is dispatched to Mali Vulkan when explicitly asked.
+    // The DiT blocks continue through the exact v0.6.9 Neuron path.
+    const bool vkEncoder=useNpuDiT && qwenVulkan;
+    std::string runtime=vkEncoder?"diffusion=cpu,te=vulkan0,vae=cpu":
+        (gpu && !useNpuDiT)?"diffusion=vulkan0,te=cpu,vae=cpu":"cpu";
     // `disk` is an upstream, file-backed parameter placement, not a GPU
     // allocation limit. CPU execution still needs temporary activation buffers.
     // In the default low-RAM mode, all weights are lazily paged from storage.
     const std::string diffusion_params=(gpu && residentWeights)?"vulkan0":"disk";
-    const std::string te_params=diskEncoder?"disk":"cpu";
+    // Disk-backed Vulkan encoder avoids pinning ~346 MiB of model weights in
+    // shared GPU RAM throughout subsequent NPU sampling. It still may retain
+    // Vulkan graph allocations until the whole native context is released.
+    const std::string te_params=vkEncoder?"disk":(diskEncoder?"disk":"cpu");
     std::string residency="diffusion="+diffusion_params+",te="+te_params+",vae=disk";
     // No explicit Vulkan max_vram for auto mode: engine manages available
     // shared memory. This is NOT a hard physical RAM cap or OOM guarantee.
@@ -208,6 +216,8 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     logs(SD_LOG_INFO,(std::string("Profile=")+backend+" runtime="+runtime+
         " weights="+residency+" maxVRAM="+(gpu?(vram.empty()?"auto":vram):"none")+
         " encoderDisk="+(diskEncoder?"true":"false")+
+        " qwenVulkan="+(vkEncoder?"true":"false")+
+        " fastRgbPreview="+(fastRgbPreview?"true":"false")+
         " residentWeights="+(residentWeights?"true":"false")+
         " q4ToFp16="+(q4Fp16Compute?"true":"false")+
         " cacheProfile="+std::to_string(cacheProfile)+
@@ -282,7 +292,13 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
         std::to_string(width)+"x"+std::to_string(height)+" steps="+std::to_string(steps)+
         " layer_profile="+(profileLayers?"on":"off")).c_str(),nullptr);
     auto inferAt=std::chrono::steady_clock::now();
+    // Fast preview is picked up by the pinned engine image decoding path.
+    // It skips VAE execution; the selected small TAE file is still used for
+    // non-preview runs and during context initialization.
+    if(fastRgbPreview)setenv("ANIMA_FAST_LATENT_RGB","1",1);
+    else unsetenv("ANIMA_FAST_LATENT_RGB");
     bool ok=!cancelled&&generate_image(context,&gen,&results,&count);
+    unsetenv("ANIMA_FAST_LATENT_RGB");
     auto inferMs=std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now()-inferAt).count();
     logs(SD_LOG_INFO,("ANIMA_DIAG_INFERENCE_END elapsed_ms="+std::to_string(inferMs)+
