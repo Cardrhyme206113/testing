@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.card.parallaxcapture.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "client": [
+    "MinecraftClientMixin",
+    "WindowAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
