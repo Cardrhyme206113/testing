@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.ParallaxWallpaper" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#6D5CE7</item>
+        <item name="android:navigationBarColor">#0E0F12</item>
+        <item name="android:statusBarColor">#0E0F12</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
