@@ -1,0 +1,411 @@
+    }
+
+    private void bindTexture(int program, String uniform, int unit, int texture) {
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + unit);
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texture);
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(program, uniform), unit);
+    }
+
+    private void drawFullscreen() {
+        GLES30.glBindVertexArray(vao);
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3);
+    }
+
+    private int linkGraphics(String vertex, String fragment) {
+        int vertexShader = compileShader(GLES30.GL_VERTEX_SHADER, vertex);
+        int fragmentShader = compileShader(GLES30.GL_FRAGMENT_SHADER, fragment);
+        int program = GLES30.glCreateProgram();
+        GLES30.glAttachShader(program, vertexShader);
+        GLES30.glAttachShader(program, fragmentShader);
+        GLES30.glLinkProgram(program);
+        checkLink(program);
+        GLES30.glDeleteShader(vertexShader);
+        GLES30.glDeleteShader(fragmentShader);
+        return program;
+    }
+
+    private int linkCompute(String compute) {
+        int shader = compileShader(GLES31.GL_COMPUTE_SHADER, compute);
+        int program = GLES30.glCreateProgram();
+        GLES30.glAttachShader(program, shader);
+        GLES30.glLinkProgram(program);
+        checkLink(program);
+        GLES30.glDeleteShader(shader);
+        return program;
+    }
+
+    private int compileShader(int type, String source) {
+        int shader = GLES30.glCreateShader(type);
+        GLES30.glShaderSource(shader, source);
+        GLES30.glCompileShader(shader);
+        int[] status = new int[1];
+        GLES30.glGetShaderiv(shader, GLES30.GL_COMPILE_STATUS, status, 0);
+        if (status[0] == 0) {
+            String log = GLES30.glGetShaderInfoLog(shader);
+            GLES30.glDeleteShader(shader);
+            throw new IllegalStateException("Shader compile failed: " + log);
+        }
+        return shader;
+    }
+
+    private void checkLink(int program) {
+        int[] status = new int[1];
+        GLES30.glGetProgramiv(program, GLES30.GL_LINK_STATUS, status, 0);
+        if (status[0] == 0) {
+            String log = GLES30.glGetProgramInfoLog(program);
+            GLES30.glDeleteProgram(program);
+            throw new IllegalStateException("Program link failed: " + log);
+        }
+    }
+
+    private void checkEgl(String operation) {
+        int error = EGL14.eglGetError();
+        if (error != EGL14.EGL_SUCCESS) {
+            throw new IllegalStateException(operation + " failed: 0x" + Integer.toHexString(error));
+        }
+    }
+
+    private void checkGl(String operation) {
+        int error = GLES30.glGetError();
+        if (error != GLES30.GL_NO_ERROR) {
+            throw new IllegalStateException(operation + " GL error: 0x"
+                    + Integer.toHexString(error));
+        }
+    }
+
+    private String shortError(Throwable error) {
+        String message = error.getMessage();
+        if (message == null || message.isEmpty()) message = error.getClass().getSimpleName();
+        return message.length() > 96 ? message.substring(0, 96) : message;
+    }
+
+    private void releaseGl() {
+        try {
+            if (captureTexture != null) {
+                captureTexture.setOnFrameAvailableListener(null);
+                captureTexture.release();
+                captureTexture = null;
+            }
+            if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
+                EGL14.eglMakeCurrent(
+                        eglDisplay,
+                        EGL14.EGL_NO_SURFACE,
+                        EGL14.EGL_NO_SURFACE,
+                        EGL14.EGL_NO_CONTEXT
+                );
+                if (eglSurface != EGL14.EGL_NO_SURFACE) {
+                    EGL14.eglDestroySurface(eglDisplay, eglSurface);
+                }
+                if (eglContext != EGL14.EGL_NO_CONTEXT) {
+                    EGL14.eglDestroyContext(eglDisplay, eglContext);
+                }
+                EGL14.eglTerminate(eglDisplay);
+            }
+        } catch (RuntimeException ignored) {
+        }
+        eglSurface = EGL14.EGL_NO_SURFACE;
+        eglContext = EGL14.EGL_NO_CONTEXT;
+        eglDisplay = EGL14.EGL_NO_DISPLAY;
+    }
+
+    private static final String VERTEX_SHADER =
+            "#version 300 es\n"
+                    + "precision highp float;\n"
+                    + "out vec2 vUv;\n"
+                    + "void main() {\n"
+                    + "  vec2 p;\n"
+                    + "  if (gl_VertexID == 0) p = vec2(-1.0, -1.0);\n"
+                    + "  else if (gl_VertexID == 1) p = vec2(3.0, -1.0);\n"
+                    + "  else p = vec2(-1.0, 3.0);\n"
+                    + "  vUv = p * 0.5 + 0.5;\n"
+                    + "  gl_Position = vec4(p, 0.0, 1.0);\n"
+                    + "}\n";
+
+    private static final String COPY_EXTERNAL_SHADER =
+            "#version 300 es\n"
+                    + "#extension GL_OES_EGL_image_external_essl3 : require\n"
+                    + "precision highp float;\n"
+                    + "uniform samplerExternalOES uTexture;\n"
+                    + "uniform mat4 uTransform;\n"
+                    + "in vec2 vUv;\n"
+                    + "out vec4 outColor;\n"
+                    + "void main() {\n"
+                    + "  vec2 uv = (uTransform * vec4(vUv, 0.0, 1.0)).xy;\n"
+                    + "  outColor = texture(uTexture, uv);\n"
+                    + "}\n";
+
+    private static final String COARSE_FLOW_SHADER =
+            "#version 310 es\n"
+                    + "precision highp float;\n"
+                    + "precision highp int;\n"
+                    + "layout(local_size_x=8, local_size_y=8) in;\n"
+                    + "layout(binding=0) uniform highp sampler2D uSource;\n"
+                    + "layout(binding=1) uniform highp sampler2D uTarget;\n"
+                    + "layout(rgba16f, binding=0) writeonly uniform highp image2D uOutFlow;\n"
+                    + "uniform ivec2 uImageSize;\n"
+                    + "uniform ivec2 uFlowSize;\n"
+                    + "float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+                    + "float px(sampler2D tex, ivec2 p) {\n"
+                    + "  p = clamp(p, ivec2(0), uImageSize - ivec2(1));\n"
+                    + "  return lum(texelFetch(tex, p, 4).rgb);\n"
+                    + "}\n"
+                    + "void main() {\n"
+                    + "  ivec2 cell = ivec2(gl_GlobalInvocationID.xy);\n"
+                    + "  if (any(greaterThanEqual(cell, uFlowSize))) return;\n"
+                    + "  const int block = 4;\n"
+                    + "  const int radius = 8;\n"
+                    + "  ivec2 center = min(cell * block + ivec2(block / 2), uImageSize - ivec2(1));\n"
+                    + "  float best = 1e9;\n"
+                    + "  float secondBest = 1e9;\n"
+                    + "  ivec2 bestOffset = ivec2(0);\n"
+                    + "  for (int oy = -radius; oy <= radius; ++oy) {\n"
+                    + "    for (int ox = -radius; ox <= radius; ++ox) {\n"
+                    + "      ivec2 off = ivec2(ox, oy);\n"
+                    + "      float e = 0.0;\n"
+                    + "      for (int sy = -1; sy <= 1; ++sy) {\n"
+                    + "        for (int sx = -1; sx <= 1; ++sx) {\n"
+                    + "          ivec2 tap = ivec2(sx, sy);\n"
+                    + "          e += abs(px(uTarget, center + tap) - px(uSource, center + tap + off));\n"
+                    + "        }\n"
+                    + "      }\n"
+                    + "      e *= 0.11111111;\n"
+                    + "      if (e < best) { secondBest = best; best = e; bestOffset = off; }\n"
+                    + "      else if (e < secondBest) { secondBest = e; }\n"
+                    + "    }\n"
+                    + "  }\n"
+                    + "  vec2 motion = -vec2(bestOffset) * 16.0;\n"
+                    + "  float unique = clamp((secondBest - best) / (secondBest + 0.008) * 4.0, 0.0, 1.0);\n"
+                    + "  float quality = clamp(1.0 - best * 3.0, 0.0, 1.0);\n"
+                    + "  imageStore(uOutFlow, cell, vec4(motion, unique * quality, best));\n"
+                    + "}\n";
+
+    private static final String REFINE_FLOW_SHADER =
+            "#version 310 es\n"
+                    + "precision highp float;\n"
+                    + "precision highp int;\n"
+                    + "layout(local_size_x=8, local_size_y=8) in;\n"
+                    + "layout(binding=0) uniform highp sampler2D uSource;\n"
+                    + "layout(binding=1) uniform highp sampler2D uTarget;\n"
+                    + "layout(binding=2) uniform highp sampler2D uCoarseFlow;\n"
+                    + "layout(rgba16f, binding=0) writeonly uniform highp image2D uOutFlow;\n"
+                    + "uniform ivec2 uImageSize;\n"
+                    + "uniform ivec2 uFlowSize;\n"
+                    + "uniform ivec2 uCoarseFlowSize;\n"
+                    + "float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+                    + "float px(sampler2D tex, ivec2 p) {\n"
+                    + "  p = clamp(p, ivec2(0), uImageSize - ivec2(1));\n"
+                    + "  return lum(texelFetch(tex, p, 3).rgb);\n"
+                    + "}\n"
+                    + "void main() {\n"
+                    + "  ivec2 cell = ivec2(gl_GlobalInvocationID.xy);\n"
+                    + "  if (any(greaterThanEqual(cell, uFlowSize))) return;\n"
+                    + "  vec2 uv = (vec2(cell) + 0.5) / vec2(uFlowSize);\n"
+                    + "  vec2 coarseTexel = 1.0 / vec2(max(uCoarseFlowSize, ivec2(1)));\n"
+                    + "  vec2 baseMotion = vec2(0.0);\n"
+                    + "  float baseConfidence = 0.0;\n"
+                    + "  float weightSum = 0.0;\n"
+                    + "  for (int y = -1; y <= 1; ++y) {\n"
+                    + "    for (int x = -1; x <= 1; ++x) {\n"
+                    + "      vec4 c = texture(uCoarseFlow, clamp(uv + vec2(x, y) * coarseTexel, vec2(0.0), vec2(1.0)));\n"
+                    + "      float w = max(0.08, c.z);\n"
+                    + "      baseMotion += c.xy * w;\n"
+                    + "      baseConfidence += c.z * w;\n"
+                    + "      weightSum += w;\n"
+                    + "    }\n"
+                    + "  }\n"
+                    + "  baseMotion /= max(weightSum, 0.0001);\n"
+                    + "  baseConfidence /= max(weightSum, 0.0001);\n"
+                    + "  ivec2 center = min(cell * 4 + ivec2(2), uImageSize - ivec2(1));\n"
+                    + "  ivec2 baseOffset = ivec2(round(-baseMotion / 8.0));\n"
+                    + "  const int radius = 4;\n"
+                    + "  float best = 1e9;\n"
+                    + "  float secondBest = 1e9;\n"
+                    + "  ivec2 bestOffset = baseOffset;\n"
+                    + "  for (int oy = -radius; oy <= radius; ++oy) {\n"
+                    + "    for (int ox = -radius; ox <= radius; ++ox) {\n"
+                    + "      ivec2 off = baseOffset + ivec2(ox, oy);\n"
+                    + "      float e = 0.0;\n"
+                    + "      for (int sy = -1; sy <= 1; ++sy) {\n"
+                    + "        for (int sx = -1; sx <= 1; ++sx) {\n"
+                    + "          ivec2 tap = ivec2(sx, sy);\n"
+                    + "          e += abs(px(uTarget, center + tap) - px(uSource, center + tap + off));\n"
+                    + "        }\n"
+                    + "      }\n"
+                    + "      e *= 0.11111111;\n"
+                    + "      if (e < best) { secondBest = best; best = e; bestOffset = off; }\n"
+                    + "      else if (e < secondBest) { secondBest = e; }\n"
+                    + "    }\n"
+                    + "  }\n"
+                    + "  vec2 motion = -vec2(bestOffset) * 8.0;\n"
+                    + "  float unique = clamp((secondBest - best) / (secondBest + 0.006) * 4.5, 0.0, 1.0);\n"
+                    + "  float quality = clamp(1.0 - best * 3.4, 0.0, 1.0);\n"
+                    + "  float confidence = clamp(mix(baseConfidence, unique * quality, 0.78), 0.0, 1.0);\n"
+                    + "  imageStore(uOutFlow, cell, vec4(motion, confidence, best));\n"
+                    + "}\n";
+
+    private static final String DETAIL_FLOW_SHADER =
+            "#version 310 es\n"
+                    + "precision highp float;\n"
+                    + "precision highp int;\n"
+                    + "layout(local_size_x=8, local_size_y=8) in;\n"
+                    + "layout(binding=0) uniform highp sampler2D uSource;\n"
+                    + "layout(binding=1) uniform highp sampler2D uTarget;\n"
+                    + "layout(binding=2) uniform highp sampler2D uFineFlow;\n"
+                    + "layout(rgba16f, binding=0) writeonly uniform highp image2D uOutFlow;\n"
+                    + "uniform ivec2 uImageSize;\n"
+                    + "uniform ivec2 uFlowSize;\n"
+                    + "uniform ivec2 uFineFlowSize;\n"
+                    + "float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+                    + "float px(sampler2D tex, vec2 p) {\n"
+                    + "  vec2 clamped = clamp(p, vec2(0.0), vec2(uImageSize) - vec2(1.0));\n"
+                    + "  vec2 uv = (clamped + vec2(0.5)) / vec2(uImageSize);\n"
+                    + "  return lum(textureLod(tex, uv, 2.0).rgb);\n"
+                    + "}\n"
+                    + "float patchError(sampler2D a, sampler2D b, vec2 center, vec2 off) {\n"
+                    + "  float e = 0.0;\n"
+                    + "  for (int sy = -1; sy <= 1; ++sy) {\n"
+                    + "    for (int sx = -1; sx <= 1; ++sx) {\n"
+                    + "      vec2 tap = vec2(sx, sy);\n"
+                    + "      e += abs(px(b, center + tap) - px(a, center + tap + off));\n"
+                    + "    }\n"
+                    + "  }\n"
+                    + "  return e * 0.11111111;\n"
+                    + "}\n"
+                    + "void main() {\n"
+                    + "  ivec2 cell = ivec2(gl_GlobalInvocationID.xy);\n"
+                    + "  if (any(greaterThanEqual(cell, uFlowSize))) return;\n"
+                    + "  vec2 uv = (vec2(cell) + 0.5) / vec2(uFlowSize);\n"
+                    + "  vec4 fineData = texture(uFineFlow, uv);\n"
+                    + "  vec2 center = min(vec2(cell * 4 + ivec2(2)), vec2(uImageSize - ivec2(1)));\n"
+                    + "  vec2 baseOffset = -fineData.xy * 0.25;\n"
+                    + "  float best = 1e9;\n"
+                    + "  float secondBest = 1e9;\n"
+                    + "  vec2 bestOffset = baseOffset;\n"
+                    + "  for (int oy = -2; oy <= 2; ++oy) {\n"
+                    + "    for (int ox = -2; ox <= 2; ++ox) {\n"
+                    + "      vec2 off = baseOffset + vec2(ox, oy);\n"
+                    + "      float e = patchError(uSource, uTarget, center, off);\n"
+                    + "      if (e < best) { secondBest = best; best = e; bestOffset = off; }\n"
+                    + "      else if (e < secondBest) { secondBest = e; }\n"
+                    + "    }\n"
+                    + "  }\n"
+                    + "  vec2 integerBest = bestOffset;\n"
+                    + "  for (int fy = -1; fy <= 1; ++fy) {\n"
+                    + "    for (int fx = -1; fx <= 1; ++fx) {\n"
+                    + "      vec2 off = integerBest + vec2(fx, fy) * 0.5;\n"
+                    + "      float e = patchError(uSource, uTarget, center, off);\n"
+                    + "      if (e < best) { secondBest = best; best = e; bestOffset = off; }\n"
+                    + "      else if (e < secondBest) { secondBest = e; }\n"
+                    + "    }\n"
+                    + "  }\n"
+                    + "  vec2 motion = -bestOffset * 4.0;\n"
+                    + "  float unique = clamp((secondBest - best) / (secondBest + 0.004) * 5.0, 0.0, 1.0);\n"
+                    + "  float quality = clamp(1.0 - best * 3.8, 0.0, 1.0);\n"
+                    + "  float confidence = clamp(mix(fineData.z, unique * quality, 0.72), 0.0, 1.0);\n"
+                    + "  imageStore(uOutFlow, cell, vec4(motion, confidence, best));\n"
+                    + "}\n";
+
+    private static final String STABILIZE_FLOW_SHADER =
+            "#version 310 es\n"
+                    + "precision highp float;\n"
+                    + "precision highp int;\n"
+                    + "layout(local_size_x=8, local_size_y=8) in;\n"
+                    + "layout(binding=0) uniform highp sampler2D uRawFlow;\n"
+                    + "layout(binding=1) uniform highp sampler2D uHistory;\n"
+                    + "layout(binding=2) uniform highp sampler2D uGuide;\n"
+                    + "layout(rgba16f, binding=0) writeonly uniform highp image2D uOutFlow;\n"
+                    + "uniform ivec2 uFlowSize;\n"
+                    + "uniform ivec2 uGuideSize;\n"
+                    + "uniform int uHasHistory;\n"
+                    + "vec3 guideAt(ivec2 flowCell) {\n"
+                    + "  ivec2 p = min(flowCell * 4 + ivec2(2), uGuideSize - ivec2(1));\n"
+                    + "  return texelFetch(uGuide, p, 2).rgb;\n"
+                    + "}\n"
+                    + "void main() {\n"
+                    + "  ivec2 p = ivec2(gl_GlobalInvocationID.xy);\n"
+                    + "  if (any(greaterThanEqual(p, uFlowSize))) return;\n"
+                    + "  vec4 center = texelFetch(uRawFlow, p, 0);\n"
+                    + "  vec3 centerColor = guideAt(p);\n"
+                    + "  vec2 motionSum = vec2(0.0);\n"
+                    + "  float confidenceSum = 0.0;\n"
+                    + "  float weightSum = 0.0;\n"
+                    + "  for (int y = -1; y <= 1; ++y) {\n"
+                    + "    for (int x = -1; x <= 1; ++x) {\n"
+                    + "      ivec2 q = clamp(p + ivec2(x, y), ivec2(0), uFlowSize - ivec2(1));\n"
+                    + "      vec4 n = texelFetch(uRawFlow, q, 0);\n"
+                    + "      vec3 nColor = guideAt(q);\n"
+                    + "      float edgeWeight = 1.0 / (1.0 + 15.0 * length(nColor - centerColor));\n"
+                    + "      float motionWeight = 1.0 / (1.0 + 0.045 * length(n.xy - center.xy));\n"
+                    + "      float spatialWeight = (x == 0 && y == 0) ? 2.25 : 1.0;\n"
+                    + "      float confidenceWeight = 0.12 + 0.88 * n.z;\n"
+                    + "      float w = edgeWeight * motionWeight * spatialWeight * confidenceWeight;\n"
+                    + "      motionSum += n.xy * w;\n"
+                    + "      confidenceSum += n.z * w;\n"
+                    + "      weightSum += w;\n"
+                    + "    }\n"
+                    + "  }\n"
+                    + "  vec2 filteredMotion = motionSum / max(weightSum, 0.0001);\n"
+                    + "  float filteredConfidence = confidenceSum / max(weightSum, 0.0001);\n"
+                    + "  if (uHasHistory != 0) {\n"
+                    + "    vec2 uv = (vec2(p) + 0.5) / vec2(uFlowSize);\n"
+                    + "    vec4 history = texture(uHistory, uv);\n"
+                    + "    float agreement = 1.0 - smoothstep(5.0, 52.0, length(history.xy - filteredMotion));\n"
+                    + "    float temporal = 0.42 * agreement * (0.25 + 0.75 * min(history.z, filteredConfidence));\n"
+                    + "    filteredMotion = mix(filteredMotion, history.xy, temporal);\n"
+                    + "    filteredConfidence = mix(filteredConfidence, max(filteredConfidence, history.z), 0.28 * agreement);\n"
+                    + "  }\n"
+                    + "  imageStore(uOutFlow, p, vec4(filteredMotion, clamp(filteredConfidence, 0.0, 1.0), center.w));\n"
+                    + "}\n";
+
+    private static final String INTERPOLATE_SHADER =
+            "#version 300 es\n"
+                    + "precision highp float;\n"
+                    + "uniform sampler2D uPrev;\n"
+                    + "uniform sampler2D uCurr;\n"
+                    + "uniform sampler2D uForward;\n"
+                    + "uniform sampler2D uBackward;\n"
+                    + "uniform vec2 uFrameSize;\n"
+                    + "uniform float uT;\n"
+                    + "uniform int uHasFlow;\n"
+                    + "in vec2 vUv;\n"
+                    + "out vec4 outColor;\n"
+                    + "float inside(vec2 uv) {\n"
+                    + "  vec2 low = step(vec2(0.0), uv);\n"
+                    + "  vec2 high = step(uv, vec2(1.0));\n"
+                    + "  return low.x * low.y * high.x * high.y;\n"
+                    + "}\n"
+                    + "void main() {\n"
+                    + "  if (uHasFlow == 0) { outColor = texture(uCurr, vUv); return; }\n"
+                    + "  vec4 forwardData = texture(uForward, vUv);\n"
+                    + "  vec4 backwardData = texture(uBackward, vUv);\n"
+                    + "  vec2 forwardUv = forwardData.xy / uFrameSize;\n"
+                    + "  vec2 backwardUv = backwardData.xy / uFrameSize;\n"
+                    + "  vec2 previousMatch = vUv - forwardUv;\n"
+                    + "  vec2 currentMatch = vUv - backwardUv;\n"
+                    + "  vec4 backwardAtPrevious = texture(uBackward, clamp(previousMatch, vec2(0.0), vec2(1.0)));\n"
+                    + "  vec4 forwardAtCurrent = texture(uForward, clamp(currentMatch, vec2(0.0), vec2(1.0)));\n"
+                    + "  float forwardError = length(forwardData.xy + backwardAtPrevious.xy);\n"
+                    + "  float backwardError = length(backwardData.xy + forwardAtCurrent.xy);\n"
+                    + "  float forwardConsistency = (1.0 - smoothstep(5.0, 48.0, forwardError)) * inside(previousMatch);\n"
+                    + "  float backwardConsistency = (1.0 - smoothstep(5.0, 48.0, backwardError)) * inside(currentMatch);\n"
+                    + "  float forwardReliability = clamp(forwardData.z * forwardConsistency, 0.0, 1.0);\n"
+                    + "  float backwardReliability = clamp(backwardData.z * backwardConsistency, 0.0, 1.0);\n"
+                    + "  vec2 prevUv = clamp(vUv - uT * forwardUv, vec2(0.0), vec2(1.0));\n"
+                    + "  vec2 currUv = clamp(vUv - (1.0 - uT) * backwardUv, vec2(0.0), vec2(1.0));\n"
+                    + "  vec4 warpedPrev = texture(uPrev, prevUv);\n"
+                    + "  vec4 warpedCurr = texture(uCurr, currUv);\n"
+                    + "  float prevWeight = (1.0 - uT) * (0.08 + 0.92 * forwardReliability);\n"
+                    + "  float currWeight = uT * (0.08 + 0.92 * backwardReliability);\n"
+                    + "  if (forwardReliability < 0.12 && backwardReliability > 0.32) prevWeight *= 0.12;\n"
+                    + "  if (backwardReliability < 0.12 && forwardReliability > 0.32) currWeight *= 0.12;\n"
+                    + "  vec4 generated = (warpedPrev * prevWeight + warpedCurr * currWeight)\n"
+                    + "      / max(prevWeight + currWeight, 0.0001);\n"
+                    + "  vec4 nearestOriginal = (uT < 0.5) ? texture(uPrev, vUv) : texture(uCurr, vUv);\n"
+                    + "  float mismatch = max(max(abs(warpedPrev.r - warpedCurr.r), abs(warpedPrev.g - warpedCurr.g)), abs(warpedPrev.b - warpedCurr.b));\n"
+                    + "  float photometric = 1.0 - smoothstep(0.20, 0.70, mismatch);\n"
+                    + "  float reliability = max(forwardReliability, backwardReliability);\n"
+                    + "  float trust = (0.76 + 0.24 * reliability) * (0.90 + 0.10 * photometric);\n"
+                    + "  if (prevWeight + currWeight < 0.025) trust = 0.0;\n"
+                    + "  outColor = mix(nearestOriginal, generated, clamp(trust, 0.0, 1.0));\n"
+                    + "}\n";
+}

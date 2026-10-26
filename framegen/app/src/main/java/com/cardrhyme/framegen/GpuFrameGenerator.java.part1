@@ -1,0 +1,418 @@
+package com.cardrhyme.framegen;
+
+import android.graphics.SurfaceTexture;
+import android.opengl.EGL14;
+import android.opengl.EGLConfig;
+import android.opengl.EGLContext;
+import android.opengl.EGLDisplay;
+import android.opengl.EGLExt;
+import android.opengl.EGLSurface;
+import android.opengl.GLES11Ext;
+import android.opengl.GLES30;
+import android.opengl.GLES31;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.SystemClock;
+import android.util.Log;
+import android.view.Choreographer;
+import android.view.Surface;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
+final class GpuFrameGenerator {
+    interface Callback {
+        void onCaptureSurfaceReady(Surface surface);
+        void onFirstOutputFrame();
+        void onStats(
+                float sourceFps,
+                float outputFps,
+                float generatedFps,
+                float captureFps,
+                boolean flowActive
+        );
+        void onFatalError(String message);
+    }
+
+    private static final String TAG = "FrameLiftGL";
+    private static final int COARSE_MIP = 4; // 1/16 linear resolution.
+    private static final int FINE_MIP = 3;   // 1/8 linear resolution.
+    private static final int DETAIL_MIP = 2; // 1/4 linear resolution.
+    private static final int FLOW_BLOCK = 4;
+
+    private final Callback callback;
+    private final AtomicInteger inputFps;
+    private final AtomicInteger outputFps;
+    private final AtomicBoolean paused = new AtomicBoolean(false);
+
+    private HandlerThread thread;
+    private Handler handler;
+    private Choreographer choreographer;
+    private Surface outputSurface;
+    private int width;
+    private int height;
+    private int coarseWidth;
+    private int coarseHeight;
+    private int fineWidth;
+    private int fineHeight;
+    private int detailWidth;
+    private int detailHeight;
+    private int coarseFlowWidth;
+    private int coarseFlowHeight;
+    private int fineFlowWidth;
+    private int fineFlowHeight;
+    private int flowWidth;
+    private int flowHeight;
+
+    private EGLDisplay eglDisplay = EGL14.EGL_NO_DISPLAY;
+    private EGLContext eglContext = EGL14.EGL_NO_CONTEXT;
+    private EGLSurface eglSurface = EGL14.EGL_NO_SURFACE;
+
+    private SurfaceTexture captureTexture;
+    private int externalTex;
+    private final float[] textureMatrix = new float[16];
+    private volatile boolean framePending;
+    private boolean stopped;
+
+    private int copyProgram;
+    private int coarseFlowProgram;
+    private int refineFlowProgram;
+    private int detailFlowProgram;
+    private int stabilizeFlowProgram;
+    private int interpolateProgram;
+    private int vao;
+
+    private int prevTex;
+    private int currTex;
+    private int prevFbo;
+    private int currFbo;
+
+    private int coarseForwardTex;
+    private int fineForwardTex;
+    private int rawForwardTex;
+    private int forwardFlowTex;
+    private int forwardHistoryTex;
+
+    private int coarseBackwardTex;
+    private int fineBackwardTex;
+    private int rawBackwardTex;
+    private int backwardFlowTex;
+    private int backwardHistoryTex;
+
+    private int sourceFrames;
+    private boolean hasFlow;
+    private boolean hasFlowHistory;
+    private long latestSourceArrivalNs;
+    private long nextSourceSampleNs;
+    private long nextOutputFrameNs;
+    private boolean firstOutputReported;
+
+    private long statsWindowStartNs;
+    private int captureSignalsWindow;
+    private int acceptedSourcesWindow;
+    private int outputsWindow;
+    private int generatedWindow;
+
+    GpuFrameGenerator(int inputFps, int outputFps, Callback callback) {
+        this.inputFps = new AtomicInteger(clampFps(inputFps));
+        this.outputFps = new AtomicInteger(clampFps(outputFps));
+        this.callback = callback;
+    }
+
+    void start(Surface outputSurface, int width, int height) {
+        this.outputSurface = outputSurface;
+        this.width = width;
+        this.height = height;
+
+        coarseWidth = Math.max(1, width >> COARSE_MIP);
+        coarseHeight = Math.max(1, height >> COARSE_MIP);
+        fineWidth = Math.max(1, width >> FINE_MIP);
+        fineHeight = Math.max(1, height >> FINE_MIP);
+        detailWidth = Math.max(1, width >> DETAIL_MIP);
+        detailHeight = Math.max(1, height >> DETAIL_MIP);
+
+        coarseFlowWidth = ceilDiv(coarseWidth, FLOW_BLOCK);
+        coarseFlowHeight = ceilDiv(coarseHeight, FLOW_BLOCK);
+        fineFlowWidth = ceilDiv(fineWidth, FLOW_BLOCK);
+        fineFlowHeight = ceilDiv(fineHeight, FLOW_BLOCK);
+        flowWidth = ceilDiv(detailWidth, FLOW_BLOCK);
+        flowHeight = ceilDiv(detailHeight, FLOW_BLOCK);
+
+        thread = new HandlerThread("FrameLift-GLES");
+        thread.start();
+        handler = new Handler(thread.getLooper());
+        handler.post(this::initializeSafely);
+    }
+
+    void setInputFps(int fps) {
+        inputFps.set(clampFps(fps));
+        Handler localHandler = handler;
+        if (localHandler != null) {
+            localHandler.post(() -> {
+                nextSourceSampleNs = 0L;
+                hasFlowHistory = false;
+            });
+        }
+    }
+
+    void setOutputFps(int fps) {
+        outputFps.set(clampFps(fps));
+        Handler localHandler = handler;
+        if (localHandler != null) localHandler.post(() -> nextOutputFrameNs = 0L);
+    }
+
+    void setPaused(boolean value) {
+        paused.set(value);
+        if (!value) {
+            Handler localHandler = handler;
+            if (localHandler != null) localHandler.post(() -> nextOutputFrameNs = 0L);
+        }
+    }
+
+    void resizeCaptureBuffer(int newWidth, int newHeight) {
+        final int safeWidth = Math.max(1, newWidth);
+        final int safeHeight = Math.max(1, newHeight);
+        Handler localHandler = handler;
+        if (localHandler == null) return;
+        localHandler.post(() -> {
+            if (captureTexture == null || stopped) return;
+            captureTexture.setDefaultBufferSize(safeWidth, safeHeight);
+            framePending = false;
+            sourceFrames = 0;
+            hasFlow = false;
+            hasFlowHistory = false;
+            nextSourceSampleNs = 0L;
+            nextOutputFrameNs = 0L;
+            acceptedSourcesWindow = 0;
+            generatedWindow = 0;
+        });
+    }
+
+    void stop() {
+        stopAndWait(0L);
+    }
+
+    boolean stopAndWait(long timeoutMs) {
+        Handler localHandler = handler;
+        if (localHandler == null) return true;
+        CountDownLatch finished = new CountDownLatch(1);
+        handler = null;
+        localHandler.post(() -> {
+            stopped = true;
+            if (choreographer != null) {
+                choreographer.removeFrameCallback(frameCallback);
+            }
+            releaseGl();
+            if (thread != null) thread.quitSafely();
+            finished.countDown();
+        });
+        if (timeoutMs <= 0L) return false;
+        try {
+            return finished.await(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private void initializeSafely() {
+        try {
+            initializeEgl();
+            initializeGlObjects();
+            initializeCapture();
+            statsWindowStartNs = System.nanoTime();
+            choreographer = Choreographer.getInstance();
+            choreographer.postFrameCallback(frameCallback);
+        } catch (Throwable error) {
+            Log.e(TAG, "Initialization failed", error);
+            callback.onFatalError(shortError(error));
+            releaseGl();
+        }
+    }
+
+    private void initializeEgl() {
+        eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
+        if (eglDisplay == EGL14.EGL_NO_DISPLAY) throw new IllegalStateException("No EGL display");
+
+        int[] versions = new int[2];
+        if (!EGL14.eglInitialize(eglDisplay, versions, 0, versions, 1)) {
+            throw new IllegalStateException("eglInitialize failed");
+        }
+
+        int[] configAttrs = {
+                EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
+                EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT,
+                EGL14.EGL_RED_SIZE, 8,
+                EGL14.EGL_GREEN_SIZE, 8,
+                EGL14.EGL_BLUE_SIZE, 8,
+                EGL14.EGL_ALPHA_SIZE, 8,
+                EGL14.EGL_NONE
+        };
+        EGLConfig[] configs = new EGLConfig[1];
+        int[] count = new int[1];
+        if (!EGL14.eglChooseConfig(eglDisplay, configAttrs, 0, configs, 0, 1, count, 0)
+                || count[0] == 0) {
+            throw new IllegalStateException("No GLES 3 EGL config");
+        }
+
+        int[] contextAttrs = {
+                EGL14.EGL_CONTEXT_CLIENT_VERSION, 3,
+                EGL14.EGL_NONE
+        };
+        eglContext = EGL14.eglCreateContext(
+                eglDisplay,
+                configs[0],
+                EGL14.EGL_NO_CONTEXT,
+                contextAttrs,
+                0
+        );
+        checkEgl("eglCreateContext");
+
+        int[] surfaceAttrs = {EGL14.EGL_NONE};
+        int lastError = EGL14.EGL_SUCCESS;
+        for (int attempt = 0; attempt < 5; attempt++) {
+            eglSurface = EGL14.eglCreateWindowSurface(
+                    eglDisplay,
+                    configs[0],
+                    outputSurface,
+                    surfaceAttrs,
+                    0
+            );
+            lastError = EGL14.eglGetError();
+            if (eglSurface != EGL14.EGL_NO_SURFACE && lastError == EGL14.EGL_SUCCESS) break;
+            eglSurface = EGL14.EGL_NO_SURFACE;
+            SystemClock.sleep(70L + attempt * 45L);
+        }
+        if (eglSurface == EGL14.EGL_NO_SURFACE) {
+            throw new IllegalStateException(
+                    "eglCreateWindowSurface failed after retries: 0x"
+                            + Integer.toHexString(lastError)
+            );
+        }
+
+        if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+            throw new IllegalStateException("eglMakeCurrent failed");
+        }
+        EGL14.eglSwapInterval(eglDisplay, 1);
+
+        String version = GLES30.glGetString(GLES30.GL_VERSION);
+        Log.i(TAG, "GL version: " + version);
+        if (version == null || (!version.contains("OpenGL ES 3.1") && !version.contains("OpenGL ES 3.2"))) {
+            throw new IllegalStateException("GLES 3.1 compute is unavailable");
+        }
+    }
+
+    private void initializeGlObjects() {
+        copyProgram = linkGraphics(VERTEX_SHADER, COPY_EXTERNAL_SHADER);
+        coarseFlowProgram = linkCompute(COARSE_FLOW_SHADER);
+        refineFlowProgram = linkCompute(REFINE_FLOW_SHADER);
+        detailFlowProgram = linkCompute(DETAIL_FLOW_SHADER);
+        stabilizeFlowProgram = linkCompute(STABILIZE_FLOW_SHADER);
+        interpolateProgram = linkGraphics(VERTEX_SHADER, INTERPOLATE_SHADER);
+
+        int[] ids = new int[1];
+        GLES30.glGenVertexArrays(1, ids, 0);
+        vao = ids[0];
+        GLES30.glBindVertexArray(vao);
+
+        prevTex = createFrameTexture();
+        currTex = createFrameTexture();
+        prevFbo = createFbo(prevTex);
+        currFbo = createFbo(currTex);
+
+        coarseForwardTex = createFlowTexture(coarseFlowWidth, coarseFlowHeight);
+        fineForwardTex = createFlowTexture(fineFlowWidth, fineFlowHeight);
+        rawForwardTex = createFlowTexture(flowWidth, flowHeight);
+        forwardFlowTex = createFlowTexture(flowWidth, flowHeight);
+        forwardHistoryTex = createFlowTexture(flowWidth, flowHeight);
+
+        coarseBackwardTex = createFlowTexture(coarseFlowWidth, coarseFlowHeight);
+        fineBackwardTex = createFlowTexture(fineFlowWidth, fineFlowHeight);
+        rawBackwardTex = createFlowTexture(flowWidth, flowHeight);
+        backwardFlowTex = createFlowTexture(flowWidth, flowHeight);
+        backwardHistoryTex = createFlowTexture(flowWidth, flowHeight);
+
+        checkGl("initializeGlObjects");
+    }
+
+    private void initializeCapture() {
+        int[] ids = new int[1];
+        GLES30.glGenTextures(1, ids, 0);
+        externalTex = ids[0];
+        GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, externalTex);
+        GLES30.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+                GLES30.GL_TEXTURE_MIN_FILTER,
+                GLES30.GL_LINEAR
+        );
+        GLES30.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+                GLES30.GL_TEXTURE_MAG_FILTER,
+                GLES30.GL_LINEAR
+        );
+        GLES30.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+                GLES30.GL_TEXTURE_WRAP_S,
+                GLES30.GL_CLAMP_TO_EDGE
+        );
+        GLES30.glTexParameteri(
+                GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+                GLES30.GL_TEXTURE_WRAP_T,
+                GLES30.GL_CLAMP_TO_EDGE
+        );
+
+        captureTexture = new SurfaceTexture(externalTex);
+        captureTexture.setDefaultBufferSize(width, height);
+        captureTexture.setOnFrameAvailableListener(texture -> {
+            framePending = true;
+            captureSignalsWindow++;
+        }, handler);
+        callback.onCaptureSurfaceReady(new Surface(captureTexture));
+    }
+
+    private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
+        @Override
+        public void doFrame(long frameTimeNanos) {
+            if (stopped) return;
+            try {
+                long sourcePeriodNs = 1_000_000_000L / Math.max(1, inputFps.get());
+                if (framePending
+                        && (sourceFrames == 0
+                        || nextSourceSampleNs == 0L
+                        || frameTimeNanos >= nextSourceSampleNs)) {
+                    consumeLatestSourceFrame(frameTimeNanos);
+                    nextSourceSampleNs = frameTimeNanos + sourcePeriodNs;
+                }
+                if (isOutputFrameDue(frameTimeNanos)) {
+                    render(frameTimeNanos);
+                }
+                reportStatsIfDue(frameTimeNanos);
+            } catch (Throwable error) {
+                Log.e(TAG, "Render failed", error);
+                paused.set(true);
+                callback.onFatalError(shortError(error));
+            }
+            if (!stopped && choreographer != null) choreographer.postFrameCallback(this);
+        }
+    };
+
+    private boolean isOutputFrameDue(long frameTimeNanos) {
+        if (paused.get()) return false;
+        long periodNs = 1_000_000_000L / Math.max(1, outputFps.get());
+        if (nextOutputFrameNs == 0L) nextOutputFrameNs = frameTimeNanos;
+        if (frameTimeNanos + 250_000L < nextOutputFrameNs) return false;
+        do {
+            nextOutputFrameNs += periodNs;
+        } while (nextOutputFrameNs <= frameTimeNanos);
+        return true;
+    }
+
+    private static int clampFps(int value) {
+        return Math.max(1, Math.min(120, value));
+    }
+
+    private static int ceilDiv(int value, int divisor) {
+        return (value + divisor - 1) / divisor;
+    }
