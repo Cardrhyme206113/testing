@@ -1,0 +1,21 @@
+name: Publish screen translator release
+on:
+  push:
+    branches: [feature/paddle-screen-translator]
+    paths: [".github/workflows/publish-screen-translator-release.yml"]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/$GITHUB_REPOSITORY/actions/artifacts/8010504578/zip > artifact.zip
+          unzip -q artifact.zip -d artifact
+          APK=PP-OCRv6-Tiny-Low-Latency-Translator-v0.2.1.apk
+          cp "$(find artifact -name '*.apk' | head -1)" "$APK"
+          gh release upload screen-translator-v0.2.1 "$APK" --clobber || gh release create screen-translator-v0.2.1 "$APK" --target feature/paddle-screen-translator --title "Screen Translator v0.2.1" --notes "Tiny full-resolution OCR with fast scoring, large-range scroll tracking, and translations running asynchronously outside the OCR critical path."

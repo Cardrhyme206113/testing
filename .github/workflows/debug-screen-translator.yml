@@ -1,0 +1,51 @@
+name: Debug screen translator
+
+on:
+  push:
+    branches:
+      - feature/paddle-screen-translator
+    paths:
+      - ".github/workflows/debug-screen-translator.yml"
+      - "screen-translator/**"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/debug-screen-translator.yml"
+      - "screen-translator/**"
+
+jobs:
+  debug-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Prepare PaddleOCR
+        run: |
+          mkdir -p vendor/PaddleOCR
+          git -C vendor/PaddleOCR init
+          git -C vendor/PaddleOCR remote add origin https://github.com/PaddlePaddle/PaddleOCR.git
+          git -C vendor/PaddleOCR fetch --depth 1 origin 211989f046cc1878460f9e65574690c00a127a1a
+          git -C vendor/PaddleOCR checkout FETCH_HEAD
+          PPROOT="$GITHUB_WORKSPACE/vendor/PaddleOCR/deploy/ppocr-android"
+          cp -R "$GITHUB_WORKSPACE/screen-translator/android-module" "$PPROOT/screen-translator"
+          printf '\ninclude(":screen-translator")\n' >> "$PPROOT/settings.gradle.kts"
+          mkdir -p "$PPROOT/ppocr-sdk/src/main/assets/models/det" "$PPROOT/ppocr-sdk/src/main/assets/models/rec"
+          curl -L --fail -o "$PPROOT/ppocr-sdk/src/main/assets/models/det/inference.onnx" "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_det_onnx/resolve/main/inference.onnx?download=true"
+          curl -L --fail -o "$PPROOT/ppocr-sdk/src/main/assets/models/rec/inference.onnx" "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx/resolve/main/inference.onnx?download=true"
+          curl -L --fail -o "$PPROOT/ppocr-sdk/src/main/assets/models/rec/inference.yml" "https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx/resolve/main/inference.yml?download=true"
+      - name: Compile and save output
+        working-directory: vendor/PaddleOCR/deploy/ppocr-android
+        continue-on-error: true
+        run: |
+          chmod +x gradlew
+          ./gradlew :screen-translator:compileDebugKotlin --stacktrace > "$GITHUB_WORKSPACE/compile-output.txt" 2>&1
+      - name: Upload compiler output
+        uses: actions/upload-artifact@v4
+        with:
+          name: screen-translator-compiler-output
+          path: compile-output.txt
+          if-no-files-found: error

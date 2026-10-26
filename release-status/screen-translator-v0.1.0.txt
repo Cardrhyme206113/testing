@@ -1,0 +1,5 @@
+tag=screen-translator-v0.1.0
+asset=PP-OCRv6-Screen-Translator-v0.1.0.apk
+sha256=b8281268fb8a3ed8b4cfcf850a29f4d2a9cc93105c0d6f2cf7bacc356e9f7357
+bytes=306486145
+published_at=2026-07-01T10:31:35Z
