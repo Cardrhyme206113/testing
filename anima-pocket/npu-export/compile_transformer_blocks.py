@@ -12,6 +12,8 @@ import argparse
 import gc
 import hashlib
 import json
+import zipfile
+import numpy as np
 from pathlib import Path
 import time
 
@@ -160,7 +162,33 @@ def sample_inputs(tokens, seed=123):
     )
 
 
-def export_block(model, index, tokens, platform, output):
+def read_real_calibration(archive, tokens):
+    # Android stores its actual graph-cut input arrays as little-endian FP32.
+    shapes = {
+        "x": (1, tokens, 2048),
+        "context": (1, 512, 1024),
+        "step": (1, 2048),
+        "temb": (1, 6144),
+        "cos": (tokens, 128),
+        "sin": (tokens, 128),
+    }
+    with zipfile.ZipFile(archive) as zipped:
+        inputs = []
+        for key, shape in shapes.items():
+            raw = zipped.read(key + ".f32")
+            expected = int(np.prod(shape)) * 4
+            if len(raw) != expected:
+                raise ValueError(f"{key}: expected {expected} bytes, got {len(raw)}")
+            tensor = torch.from_numpy(np.frombuffer(raw, dtype="<f4").copy()).reshape(shape)
+            if not torch.isfinite(tensor).all():
+                raise ValueError(f"Nonfinite real calibration values in {key}")
+            print(f"Real calibration {key}: rms={tensor.square().mean().sqrt().item():.5f}"
+                  f" max={tensor.abs().max().item():.5f}", flush=True)
+            inputs.append(tensor)
+    return tuple(inputs)
+
+
+def export_block(model, index, tokens, platform, output, calibration=None):
     inputs = sample_inputs(tokens)
     with torch.no_grad():
         print(f"Block {index}: torch.export graph capture at {tokens} latent tokens", flush=True)
@@ -168,9 +196,39 @@ def export_block(model, index, tokens, platform, output):
         quantizer = NeuropilotQuantizer()
         quantizer.setup_precision(Precision.A16W4)
         prepared = prepare_pt2e(captured, quantizer)
-        for seed in (13, 42, 101):
-            prepared(*sample_inputs(tokens, seed))
+        if calibration is not None:
+            print(f"Block {index}: calibrating INT16 activations from real Anima inputs",
+                  flush=True)
+            prepared(*calibration)
+        else:
+            # Synthetic calibration can clip real activations; hardware demo only.
+            print("WARNING: synthetic A16W4 calibration; NOT image-quality validated",
+                  flush=True)
+            for seed in (13, 42, 101):
+                prepared(*sample_inputs(tokens, seed))
         quantized = convert_pt2e(prepared, fold_quantize=False)
+        if calibration is not None:
+            # Prove that INT16/INT4 quantization is numerically sane BEFORE
+            # spending time compiling a device-specific PTE.
+            print(f"Block {index}: validating real-input PyTorch PT2E parity", flush=True)
+            reference = model(*calibration).float()
+            actual = quantized(*calibration).float()
+            delta = (actual - reference).float()
+            base_rms = reference.square().mean().sqrt().item()
+            output_rms = actual.square().mean().sqrt().item()
+            relative = delta.square().mean().sqrt().item() / max(base_rms, 1e-12)
+            cosine = torch.nn.functional.cosine_similarity(
+                reference.reshape(1, -1), actual.reshape(1, -1)).item()
+            print(f"Block {index}: PT2E_REAL_PARITY reference_rms={base_rms:.7f} "
+                  f"a16w4_rms={output_rms:.7f} relative_rms={relative:.6f} "
+                  f"cosine={cosine:.7f}", flush=True)
+            if not (torch.isfinite(actual).all() and relative < 0.25 and cosine > 0.90):
+                raise RuntimeError(
+                    f"A16W4 quantization still mismatches full-precision block {index}; "
+                    f"relative_rms={relative:.3f}, cosine={cosine:.3f}. "
+                    "Do NOT send this PTE to the phone; inspect the exporter/model mapping."
+                )
+            del reference, actual, delta
         exported = torch.export.export(quantized, inputs, strict=True)
         partitioner = NeuropilotPartitioner(
             [CompileSpec("platform-config", platform.encode())]
@@ -202,8 +260,25 @@ def main():
     parser.add_argument("--platform", default="mt6989")
     parser.add_argument("--tokens", type=int, default=576, help="384x384 latent tokens after patchification")
     parser.add_argument("--first", type=int, default=0)
+    parser.add_argument("--calibration-zip", type=Path,
+                        help="Real phone block-0 input capture ZIP; calibrates A16W4 on actual activations")
     parser.add_argument("--count", type=int, default=28)
+    parser.add_argument("--calibration-dir", type=Path,
+                        help="Per-block real captures: block_00.zip ... block_27.zip")
+    parser.add_argument("--allow-synthetic", action="store_true",
+                        help="UNSAFE: permit synthetic calibration for compiler diagnostics only")
     args = parser.parse_args()
+    if args.calibration_zip and args.calibration_dir:
+        parser.error("Choose --calibration-zip or --calibration-dir")
+    if args.calibration_zip and args.count != 1:
+        parser.error("Single ZIP only supports --count 1")
+    if not (args.calibration_zip or args.calibration_dir or args.allow_synthetic):
+        parser.error("Real activation captures required; --allow-synthetic is unsafe and diagnostic only")
+    if args.calibration_dir:
+        missing = [i for i in range(args.first, args.first + args.count)
+                   if not (args.calibration_dir / f"block_{i:02d}.zip").is_file()]
+        if missing:
+            parser.error(f"Missing per-block captures: {missing}")
     if args.first < 0 or args.count < 1 or args.first + args.count > 28:
         parser.error("Select blocks in [0,28)")
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -218,22 +293,33 @@ def main():
         "blocks": [],
         "complete_transformer": False,
         "complete_image_generation": False,
+        "device_parity_verified": False,
+        "quality_validated": False,
     }
     started = time.monotonic()
     with safe_open(str(args.checkpoint), framework="pt", device="cpu") as handle:
         for index in range(args.first, args.first + args.count):
             t0 = time.monotonic()
             block, mapped = load_block(handle, index)
+            capture = (args.calibration_dir / f"block_{index:02d}.zip"
+                       if args.calibration_dir else args.calibration_zip)
+            calibration = read_real_calibration(capture, args.tokens) if capture else None
             filename = f"anima_block_{index:02d}_{args.tokens}_{args.platform}_a16w4.pte"
-            info = export_block(block, index, args.tokens, args.platform, args.out_dir / filename)
+            info = export_block(block, index, args.tokens, args.platform,
+                                args.out_dir / filename, calibration=calibration)
+            info["calibration"] = str(capture) if capture else "SYNTHETIC_UNVALIDATED"
+            info["pt2e_parity_passed"] = calibration is not None
+            info["device_parity_passed"] = False
             info["filename"] = filename
             info["source_parameters"] = len(mapped)
             info["compile_seconds"] = round(time.monotonic() - t0, 1)
             manifest["blocks"].append(info)
             manifest["complete_transformer"] = len(manifest["blocks"]) == 28 and args.first == 0
+            manifest["quality_validated"] = (manifest["complete_transformer"]
+                and all(b["pt2e_parity_passed"] for b in manifest["blocks"]))
             (args.out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
             print(f"Compiled block {index} in {info['compile_seconds']}s ({info['bytes']:,} bytes)", flush=True)
-            del block
+            del block, calibration
             gc.collect()
     print(f"Finished {len(manifest['blocks'])}/28 blocks in {time.monotonic()-started:.1f}s", flush=True)
     if args.count == 28 and not manifest["complete_transformer"]:
