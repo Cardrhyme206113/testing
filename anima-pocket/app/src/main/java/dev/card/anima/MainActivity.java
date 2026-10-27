@@ -51,6 +51,7 @@ public class MainActivity extends Activity {
         "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true"
     };
     SharedPreferences preferences;
+    PocketUi pocketUi;
     final TextView[] files = new TextView[3];
     TextView status, outputs, devices, logView, liveMetrics;
     final StringBuilder diagnostics=new StringBuilder();
@@ -133,6 +134,7 @@ public class MainActivity extends Activity {
         }else if(s.startsWith("Returning")){
             setStage(s);
         }
+        if(pocketUi!=null)pocketUi.status(s);
         // Never force a synchronous status update for each weight-loading callback.
         scheduleLogUiRefresh();
     }
@@ -290,7 +292,7 @@ public class MainActivity extends Activity {
         }
         add(root,text("Decoder mode",13,hint),10);
         decoderType=spinner(new String[]{"TAEW2.1 (quality; slow)","Full Qwen VAE (very slow)","Fast latent → RGB (rough preview; no VAE compute)"},
-            Math.min(2,Math.max(0,preferences.getInt("decoder_choice",preferences.getBoolean("use_npu_dit",false)?2:0))));add(root,decoderType,2);
+            Math.min(2,Math.max(0,preferences.getInt("decoder_choice",2))));add(root,decoderType,2);
         add(root,text("Fast RGB skips the ~45s TAE decoder. It is a rough latent visualization, not a fully decoded image. Keep the 21 MiB TAE file selected for engine initialization.",12,0xffffc278),3);
         add(root,button("Inspect model headers (no ADB)",this::inspectModelFiles),12);
         add(root,text("GENERATION",17,accent),22);
@@ -299,9 +301,9 @@ public class MainActivity extends Activity {
         prompt.setPadding(dp(14),dp(14),dp(14),dp(14));prompt.setBackground(shape(panel));add(root,prompt,5);
         add(root,text("Resolution",13,hint),12);
         resolution=spinner(new String[]{"384 × 384","512 × 512","512 × 384","384 × 512",
-            "256 × 256 (performance test)","320 × 320 (performance test)"},0);add(root,resolution,2);
+            "256 × 256 (performance test)","320 × 320 (performance test)"},1);add(root,resolution,2);
         add(root,text("Sampling steps",13,hint),12);
-        steps=spinner(new String[]{"4","2","3","6","8","10"},0);add(root,steps,2);
+        steps=spinner(new String[]{"1","2","3","4","5","6","7","8","9","10","11","12"},2);add(root,steps,2);
         add(root,text("2 or 3 steps are faster but can reduce output quality. Original 4 steps remain default.",12,hint),2);
         add(root,text("Backend",13,hint),12);
         backend=spinner(new String[]{"Vulkan auto (no explicit VRAM limit)",
@@ -313,7 +315,7 @@ public class MainActivity extends Activity {
         useNpuDiT=new CheckBox(this);
         useNpuDiT.setText("Enable real A16W4 MediaTek NPU diffusion (512×512 only)");
         useNpuDiT.setTextColor(0xff94e1a8);
-        useNpuDiT.setChecked(preferences.getBoolean("use_npu_dit",false));
+        useNpuDiT.setChecked(preferences.getBoolean("use_npu_dit",true));
         add(root,useNpuDiT,4);
         qwenVulkan=new CheckBox(this);
         qwenVulkan.setText("Experimental: run Qwen3-0.6B prompt encoder on Vulkan (NPU mode)");
@@ -338,7 +340,7 @@ public class MainActivity extends Activity {
         lowRamEncoder.setTextColor(hint);
         add(root,lowRamEncoder,6);
         flash=new CheckBox(this);flash.setText("Experimental diffusion Flash Attention");
-        flash.setChecked(preferences.getBoolean("flash_enabled",false));
+        flash.setChecked(preferences.getBoolean("flash_enabled",true));
         flash.setTextColor(hint);add(root,flash,7);
         q4Fp16=new CheckBox(this);
         q4Fp16.setText("EXPERIMENTAL: Q4_0 -> temporary FP16 Vulkan matrix compute");
@@ -352,7 +354,7 @@ public class MainActivity extends Activity {
         add(root,text("Can skip entire transformer passes when successive steps are similar. Quality may change; four-step models may not benefit. Engine logs report skips.",12,0xffffc278),4);
         add(root,text("CPU threads (Qwen / TAE decoder)",13,hint),10);
         cpuThreads=spinner(new String[]{"2 original","4","6"},
-            Math.min(2,Math.max(0,preferences.getInt("cpu_threads_choice",0))));
+            Math.min(2,Math.max(0,preferences.getInt("cpu_threads_choice",2))));
         add(root,cpuThreads,4);
         profileLayers=new CheckBox(this);
         profileLayers.setText("DIAGNOSTIC: profile individual Anima transformer layers (slower; changes GPU execution)");
@@ -425,6 +427,8 @@ public class MainActivity extends Activity {
         if(savedLog(false).isFile()){
             appendDiagnostic("Recovered prior log: "+savedLog(false).length()+" bytes; tap Copy saved run");
         }
+        pocketUi=new PocketUi(this);
+        setContentView(pocketUi.webView);
     }
     void chooseNpuDiTFolder(){
         Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -443,6 +447,7 @@ public class MainActivity extends Activity {
             preferences.edit().putString("npu_dit_folder",uri.toString())
                 .putString("npu_dit_folder_name",title).apply();
             npuDiTFolderLabel.setText(title+" · NPU directory selected");
+            if(pocketUi!=null)pocketUi.modelSelected(3,title);
             appendDiagnostic("ANIMA_NPU_DIT_FOLDER_SELECTED "+title);
             return;
         }
@@ -465,6 +470,7 @@ public class MainActivity extends Activity {
         String name=fileName(uri);
         preferences.edit().putString(KEYS[n],uri.toString()).putString(KEYS[n]+"_name",name).apply();
         files[n].setText(name+" · checking header...");
+        if(pocketUi!=null)pocketUi.modelSelected(n,name);
         final String selectedUri=uri.toString();
         executor.execute(()->{
             String warning=null;
@@ -497,7 +503,7 @@ public class MainActivity extends Activity {
         return String.valueOf(uri.getLastPathSegment());
     }
     void busy(boolean b){
-        running=b;runOnUiThread(()->{go.setEnabled(!b);stop.setEnabled(b);
+        running=b;runOnUiThread(()->{if(pocketUi!=null)pocketUi.busy(b);go.setEnabled(!b);stop.setEnabled(b);
             if(benchmarkButton!=null)benchmarkButton.setEnabled(!b);
             if(matmulButton!=null)matmulButton.setEnabled(!b);
             if(npuButton!=null)npuButton.setEnabled(!b);
@@ -512,19 +518,27 @@ public class MainActivity extends Activity {
         if(active==null)throw new IllegalStateException("NPU hybrid bridge was not prepared");
         long tick=SystemClock.elapsedRealtime();
         float[] result=active.forward(index,x,context,step,temb);
+        if(pocketUi!=null)pocketUi.blockProgress(active.getForwardedCount(),desiredSteps);
         appendDiagnostic("ANIMA_NPU_DIT_BLOCK_OK index="+index+" ms="+
             (SystemClock.elapsedRealtime()-tick)+" count="+active.getForwardedCount());
         return result;
+    }
+    @SuppressWarnings("unused") public void onNativePreview(int step,int total,int width,int height,int[] pixels){
+        if(pocketUi!=null && pixels!=null && pixels.length==width*height){
+            Bitmap snapshot=Bitmap.createBitmap(pixels,width,height,Bitmap.Config.ARGB_8888);
+            pocketUi.preview(snapshot,step,total);
+        }
     }
     void start(){startWithMode(false);}
     void startWithMode(boolean benchmark){
         if(running)return;
         if(useNpuDiT!=null && useNpuDiT.isChecked()){
+            if(preferences.getBoolean("npu_warning_ack",false)){startUnchecked(benchmark);return;}
             new android.app.AlertDialog.Builder(this)
                 .setTitle("Experimental 28-block NeuroPilot generation")
                 .setMessage("The unzipped A16W4 models will be staged into app storage (~1.3 GiB), and native NPU modules will execute in the generating process. A vendor driver failure can close the app. Test while the phone is cool and well charged.")
                 .setNegativeButton("Cancel",null)
-                .setPositiveButton("Proceed",(dialog,which)->startUnchecked(benchmark))
+                .setPositiveButton("Proceed",(dialog,which)->{preferences.edit().putBoolean("npu_warning_ack",true).apply();startUnchecked(benchmark);})
                 .show();
         }else if(backend.getSelectedItemPosition()!=2){
             new android.app.AlertDialog.Builder(this)
@@ -595,6 +609,7 @@ public class MainActivity extends Activity {
         lastNativeEventMs=generationStartMs;
         stageStartMs=generationStartMs;
         completedSteps=0; desiredSteps=s; workerTid=0;
+        if(pocketUi!=null)pocketUi.begin(s,id);
         benchmarkRun=benchmark;
         lastStepSeconds=new double[33];
         runBackend=target; runWeights=residentWeights?"resident":"disk";
@@ -639,7 +654,9 @@ public class MainActivity extends Activity {
                 if(benchmark)recordBenchmarkResult(true,"OK");
                 runOnUiThread(()->{image.setImageBitmap(bmp);
                     status.setText((benchmark?"Benchmark complete":"Complete")+" in "+seconds+"s · seed "+id);
-                    outputs.setText("Saved "+saved);});
+                    outputs.setText("Saved "+saved);
+                     if(pocketUi!=null)pocketUi.finished(bmp,id,saved,p);
+                 });
             }catch(Throwable e){
                 runOnUiThread(()->{
                     setStage("Generation error");
@@ -647,6 +664,7 @@ public class MainActivity extends Activity {
                     if(benchmark)recordBenchmarkResult(false,e.getClass().getSimpleName());
                     showDiagnostics();
                     status.setText("Error: "+e.getMessage()+" — tap Copy log below.");
+                     if(pocketUi!=null)pocketUi.error(e.getMessage());
                 });
             }
             finally{

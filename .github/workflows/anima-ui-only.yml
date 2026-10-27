@@ -1,0 +1,62 @@
+name: Anima Pocket UI-only APK (reuse v0.6.14 native binaries)
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - name: Download compiled v0.6.14 native runtime and matching ExecuTorch AAR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/native"
+          gh release download anima-pocket-v0.6.14 --repo "$GITHUB_REPOSITORY" \
+            --pattern 'AnimaPocket-v0.6.14.apk' --dir "$RUNNER_TEMP/native"
+          APK="$RUNNER_TEMP/native/AnimaPocket-v0.6.14.apk"
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/executorch.aar" \
+            https://repo.maven.apache.org/maven2/org/pytorch/executorch-android/1.5.1/executorch-android-1.5.1.aar
+          mkdir -p "$RUNNER_TEMP/etaar/jni/arm64-v8a" anima-pocket/app/libs anima-pocket/app/src/main/jniLibs/arm64-v8a
+          unzip -q "$RUNNER_TEMP/executorch.aar" -d "$RUNNER_TEMP/etaar"
+          find "$RUNNER_TEMP/etaar/jni" -name '*.so' -type f -delete || true
+          for lib in libexecutorch.so libneuron_backend.so; do
+            unzip -p "$APK" "lib/arm64-v8a/$lib" > "$RUNNER_TEMP/etaar/jni/arm64-v8a/$lib"
+            test -s "$RUNNER_TEMP/etaar/jni/arm64-v8a/$lib"
+          done
+          for lib in libexecutorch_jni.so libneuron_buffer_allocator.so; do
+            if unzip -Z1 "$APK" | grep -Fxq "lib/arm64-v8a/$lib"; then
+              unzip -p "$APK" "lib/arm64-v8a/$lib" > "$RUNNER_TEMP/etaar/jni/arm64-v8a/$lib"
+            fi
+          done
+          (cd "$RUNNER_TEMP/etaar" && zip -qr "$GITHUB_WORKSPACE/anima-pocket/app/libs/executorch.aar" .)
+          # Existing native .so binaries are copied byte-for-byte: no CMake, NDK, or shader compiles.
+          for lib in libanimabridge.so libnpusymbols.so libc++_shared.so libmatmulbench.so; do
+            if unzip -Z1 "$APK" | grep -Fxq "lib/arm64-v8a/$lib"; then
+              unzip -p "$APK" "lib/arm64-v8a/$lib" > "anima-pocket/app/src/main/jniLibs/arm64-v8a/$lib"
+            fi
+          done
+          test -s anima-pocket/app/src/main/jniLibs/arm64-v8a/libanimabridge.so
+      - name: Build Java and HTML only
+        run: |
+          cd anima-pocket
+          gradle --no-daemon -PpocketUiOnly=true assembleRelease
+          test -s app/build/outputs/apk/release/app-release.apk
+          unzip -l app/build/outputs/apk/release/app-release.apk | grep -F lib/arm64-v8a/libanimabridge.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AnimaPocket-UI-only-APK
+          path: anima-pocket/app/build/outputs/apk/release/app-release.apk
+          retention-days: 14

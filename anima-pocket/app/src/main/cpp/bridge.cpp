@@ -64,6 +64,36 @@ void logs(sd_log_level_t level,const char* msg,void*){
     env->DeleteLocalRef(cls);
     if(attached)vm->DetachCurrentThread();
 }
+void preview(int step,int frameCount,sd_image_t* frames,bool isNoisy,void*){
+    if(cancelled || !vm || !activity || isNoisy || !frames || frameCount<1)return;
+    const sd_image_t& img=frames[0];
+    if(!img.data || img.channel<3 || !img.width || !img.height ||
+        img.width>1024 || img.height>1024)return;
+    JNIEnv* env=nullptr;bool attached=false;
+    if(vm->GetEnv(reinterpret_cast<void**>(&env),JNI_VERSION_1_6)!=JNI_OK){
+        if(vm->AttachCurrentThread(&env,nullptr)!=JNI_OK)return;
+        attached=true;
+    }
+    const size_t count=(size_t)img.width*img.height;
+    std::vector<jint> argb(count);
+    for(size_t i=0;i<count;++i){
+        const size_t n=i*img.channel;
+        argb[i]=(jint)(0xff000000u | ((uint32_t)img.data[n]<<16) |
+                        ((uint32_t)img.data[n+1]<<8) | img.data[n+2]);
+    }
+    jintArray pixels=env->NewIntArray((jsize)count);
+    if(pixels){
+        env->SetIntArrayRegion(pixels,0,(jsize)count,argb.data());
+        jclass cls=env->GetObjectClass(activity);
+        jmethodID cb=cls?env->GetMethodID(cls,"onNativePreview","(IIII[I)V"):nullptr;
+        if(cb)env->CallVoidMethod(activity,cb,(jint)step,(jint)requestedSteps.load(),
+                                (jint)img.width,(jint)img.height,pixels);
+        if(env->ExceptionCheck())env->ExceptionClear();
+        if(cls)env->DeleteLocalRef(cls);
+        env->DeleteLocalRef(pixels);
+    }
+    if(attached)vm->DetachCurrentThread();
+}
 void progress(int step,int total,float elapsed,void*){
     std::ostringstream number;
     number<<std::fixed<<std::setprecision(3)<<elapsed;
@@ -186,6 +216,7 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
     else unsetenv("ANIMA_VK_Q4_F16");
     sd_set_log_callback(logs,nullptr);
     sd_set_progress_callback(progress,nullptr);
+    sd_set_preview_callback(preview,PREVIEW_PROJ,1,true,false,nullptr);
     const bool gpu=(backend=="vulkan-auto" || backend=="vulkan-1.5" || backend=="vulkan-2.5");
     if(!gpu && backend!="cpu"){
         env->DeleteGlobalRef(activity);activity=nullptr;
@@ -318,6 +349,7 @@ extern "C" JNIEXPORT jintArray JNICALL Java_dev_card_anima_MainActivity_generate
         if(output)env->SetIntArrayRegion(output,0,(jsize)argb.size(),argb.data());
     }
     if(results)free_sd_images(results,count);
+    sd_set_preview_callback(nullptr,PREVIEW_NONE,0,false,false,nullptr);
     {
         std::lock_guard<std::mutex> guard(mutex);
         active=nullptr;

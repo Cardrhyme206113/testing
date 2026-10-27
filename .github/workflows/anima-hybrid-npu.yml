@@ -1,4 +1,4 @@
-name: Anima Pocket v0.6.13 NPU hybrid fast preview APK
+name: Anima Pocket v0.6.14 native live step previews
 on:
   push:
     branches: [anima-pocket-fast-preview]
@@ -6,7 +6,8 @@ on:
       - '.github/workflows/anima-hybrid-npu.yml'
       - 'anima-pocket/tools/patch_hybrid.py'
       - 'anima-pocket/tools/patch_fast_preview.py'
-      - 'anima-pocket/app/src/main/java/dev/card/anima/**'
+      - 'anima-pocket/app/src/main/cpp/CMakeLists.txt'
+      - 'anima-pocket/app/src/main/assets/**'
       - 'anima-pocket/app/src/main/cpp/bridge.cpp'
       - 'anima-pocket/app/src/main/cpp/instrument_upstream.py'
       - 'anima-pocket/app/build.gradle'
@@ -109,26 +110,26 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimaPocket-v0.6.13-HybridNpu-FastRGB-APK
+          name: AnimaPocket-v0.6.14-HybridNpu-FastRGB-APK
           path: anima-pocket/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish v0.6.13 experimental fast-preview hybrid APK
+      - name: Publish v0.6.14 experimental fast-preview hybrid APK
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          TAG=anima-pocket-v0.6.13
+          TAG=anima-pocket-v0.6.14
           APK=anima-pocket/app/build/outputs/apk/release/app-release.apk
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release already exists; refusing accidental overwrite" >&2
             exit 1
           fi
-          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.13.apk"
-          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.13.apk" \
+          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.14.apk"
+          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.14.apk" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Anima Pocket v0.6.13 - NPU hybrid, fast latent RGB preview, Vulkan Qwen option" \
-            --notes "Based on v0.6.9 tested 28-block Neuron dispatch, without later parity-stop logic. New toggles: experimental Mali Vulkan Qwen3 prompt encoder (disk-backed weights) and near-instant approximate latent-to-RGB output instead of the 45-second TAE decoder. Standard TAE remains selectable. Three model files and 28 PTEs remain required. IMPORTANT: the original PTE quant calibration is inaccurate and will still produce corrupted/patterned images until regenerated with real data. GPU memory and device execution are unverified; expect possible native crashes." \
+            --title "Anima Pocket v0.6.14 - Live Latent2RGB, minimal dark UI, NPU progress" \
+            --notes "New pixel-matched Anima Pocket UI with 3-step 512x512 NPU defaults, native Latent2RGB frames after every denoiser step, 28-block smooth progress, model selection and generation history. Includes CPU-Qwen default and fast final RGB. NOTE: existing quantized A16W4 PTE output values may still be inaccurate; regenerate PTE calibration for image quality. Existing files and folder selections are retained; new first-time install may require selecting model files." \
             --prerelease
