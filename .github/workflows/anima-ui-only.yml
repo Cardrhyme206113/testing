@@ -1,5 +1,11 @@
 name: Anima Pocket UI-only APK (reuse v0.6.14 native binaries)
 on:
+  push:
+    branches: [anima-pocket-fast-preview]
+    paths:
+      - 'anima-pocket/app/src/main/java/dev/card/anima/**'
+      - 'anima-pocket/app/src/main/assets/**'
+      - '.github/workflows/anima-ui-only.yml'
   workflow_dispatch:
 
 permissions:

@@ -3,11 +3,9 @@ on:
   push:
     branches: [anima-pocket-fast-preview]
     paths:
-      - '.github/workflows/anima-hybrid-npu.yml'
       - 'anima-pocket/tools/patch_hybrid.py'
       - 'anima-pocket/tools/patch_fast_preview.py'
       - 'anima-pocket/app/src/main/cpp/CMakeLists.txt'
-      - 'anima-pocket/app/src/main/assets/**'
       - 'anima-pocket/app/src/main/cpp/bridge.cpp'
       - 'anima-pocket/app/src/main/cpp/instrument_upstream.py'
       - 'anima-pocket/app/build.gradle'
