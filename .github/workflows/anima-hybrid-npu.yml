@@ -1,4 +1,4 @@
-name: Anima Pocket v0.6.12 refreshed PTE cache and real calibration
+name: Anima Pocket v0.6.13 selective precision PTE loader
 on:
   push:
     branches: [anima-pocket]
@@ -107,26 +107,26 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AnimaPocket-v0.6.12-HybridNpu-APK
+          name: AnimaPocket-v0.6.13-MixedPrecision-APK
           path: anima-pocket/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish v0.6.12 cache-refresh APK
+      - name: Publish v0.6.13 mixed-precision APK
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          TAG=anima-pocket-v0.6.12
+          TAG=anima-pocket-v0.6.13
           APK=anima-pocket/app/build/outputs/apk/release/app-release.apk
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release already exists; refusing accidental overwrite" >&2
             exit 1
           fi
-          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.12.apk"
-          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.12.apk" \
+          cp "$APK" "$RUNNER_TEMP/AnimaPocket-v0.6.13.apk"
+          gh release create "$TAG" "$RUNNER_TEMP/AnimaPocket-v0.6.13.apk" \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Anima Pocket v0.6.12 - refreshed NPU model cache" \
-            --notes "v0.6.12 improves NPU model caching: always restages the first PTE, even if its size is unchanged, and offers a Refresh ALL 28 cached PTEs checkbox for later model replacements. Retains real activation calibration capture, CPU-vs-NPU parity logs, and early rejection of corrupted output. The converter now computes PT2E A16W4 parity on real calibration tensors and refuses to export low-fidelity blocks. Experimental. The APK does not bundle or create new calibrated models." \
+            --title "Anima Pocket v0.6.13 - A16W16 / selective INT4 PTE loader" \
+            --notes "v0.6.13 accepts a clean 28-block MT6989 PTE folder with one A16W16, A16W8 or A16W4 file per block. File size ceiling raised to 512 MiB for 16-bit PTEs; module cache reduced to two; ambiguous precision variants are rejected. Retains previous calibration and native NPU logging. Experimental: compatible file selection does not establish true hardware execution, image quality or memory safety. No model weights bundled." \
             --prerelease

@@ -307,22 +307,22 @@ public class MainActivity extends Activity {
             "Vulkan 2.5 GiB managed budget (experiment)"},
             Math.min(3,Math.max(0,preferences.getInt("backend_choice",0))));
         add(root,text("Vulkan uses shared RAM. Auto removes the app's Vulkan budget, but can still freeze or restart this phone. No 5 GiB free-RAM requirement.",12,0xffffc278),6);add(root,backend,2);
-        add(root,text("NPU HYBRID · 28 REAL INT4 DIT BLOCKS",15,accent),14);
+        add(root,text("NPU HYBRID · 28 TRANSFORMER BLOCKS",15,accent),14);
         useNpuDiT=new CheckBox(this);
-        useNpuDiT.setText("Enable real A16W4 MediaTek NPU diffusion (512×512 only)");
+        useNpuDiT.setText("Enable MediaTek NPU diffusion · A16W16 / mixed INT4 (512×512)");
         useNpuDiT.setTextColor(0xff94e1a8);
         useNpuDiT.setChecked(preferences.getBoolean("use_npu_dit",false));
         add(root,useNpuDiT,4);
         npuDiTFolderLabel=text(preferences.getString("npu_dit_folder_name",
             "No 28-block model directory selected"),12,hint);
         add(root,npuDiTFolderLabel,2);
-        add(root,button("Choose unzipped out-512 folder (all 28 .pte)",this::chooseNpuDiTFolder),4);
+        add(root,button("Choose 28-block PTE folder (one precision per block)",this::chooseNpuDiTFolder),4);
         refreshNpuPtes=new CheckBox(this);
         refreshNpuPtes.setText("Refresh ALL 28 cached NPU PTEs after replacing models");
         refreshNpuPtes.setTextColor(hint);
         refreshNpuPtes.setChecked(false);
         add(root,refreshNpuPtes,4);
-        add(root,text("NPU mode keeps existing Qwen/T5 prompt conditioning, Euler sampling and TAE decoding. The 28 diffusion blocks run on the phone's Neuron delegate; other operations stay CPU. Requires ~1.3 GiB extra local storage for cached PTEs. Experimental; may terminate the app under memory pressure.",12,0xffffc278),4);
+        add(root,text("Use a clean export folder with 28 MT6989 PTEs: A16W16, A16W8, A16W4, or a deliberate mix. NPU blocks keep existing conditioning, sampler and TAE; other operations remain CPU. Storage and RAM depend on precision; 16-bit blocks are much larger. NPU execution is experimental and may crash.",12,0xffffc278),4);
         add(root,text("Anima weight residency",13,hint),10);
         weightsMode=spinner(new String[]{"Disk-backed (original, more memory-flexible)",
             "GPU-resident weights (experimental; more memory)"},0);
@@ -378,8 +378,8 @@ public class MainActivity extends Activity {
         add(root,button("E · Inspect public Neuron Adapter ABI (no model)",()->runIsolatedLoaderTest("vendor_symbols")),4);
         add(root,button("F · Run real MediaTek MDLA FP16 matrix (no CPU fallback)",()->runIsolatedLoaderTest("vendor_fp16")),4);
         add(root,text("F checks native FP16 inference with generated weights; it does not yet accelerate full Anima image generation. Experimental ExecuTorch INT4 .pte below may still crash on this firmware.",12,hint),4);
-        add(root,text("NEUROPILOT / ANIMA A16W4 PTE BLOCK TEST",15,accent),16);
-        add(root,text("INSTRUMENTED REAL-TIME TRACE: Select the 45.6 MiB anima_block_00_1024_mt6989_a16w4.pte. Performs three passes and counts actual vendor NeuronExecution_compute calls inside the MediaTek delegate. Isolated worker; no synthetic inference.",12,hint),3);
+        add(root,text("NEUROPILOT / ANIMA SINGLE PTE BLOCK TEST",15,accent),16);
+        add(root,text("INSTRUMENTED TRACE: Select a compiled MT6989 block .pte (A16W16 / A16W8 / A16W4). Runs three passes in an isolated worker and checks the vendor Neuron delegate. This tests execution, not image quality.",12,hint),3);
         compiledNpuFile=text(preferences.getString("npu_pte_name","No compiled .pte selected"),12,hint);
         add(root,compiledNpuFile,4);
         add(root,button("Select compiled .pte model",()->pick(3)),5);
@@ -521,7 +521,7 @@ public class MainActivity extends Activity {
         if(useNpuDiT!=null && useNpuDiT.isChecked()){
             new android.app.AlertDialog.Builder(this)
                 .setTitle("Experimental 28-block NeuroPilot generation")
-                .setMessage("The unzipped A16W4 models will be staged into app storage (~1.3 GiB), and native NPU modules will execute in the generating process. A vendor driver failure can close the app. Test while the phone is cool and well charged.")
+                .setMessage("The 28 selected transformer PTEs (A16W16 / A16W8 / A16W4) will be cached locally. Larger-precision blocks increase storage and memory use. NPU execution has NOT yet been verified for this export; a vendor driver failure can close the app. Test while the phone is cool and well charged.")
                 .setNegativeButton("Cancel",null)
                 .setPositiveButton("Proceed",(dialog,which)->startUnchecked(benchmark))
                 .show();
@@ -889,7 +889,7 @@ public class MainActivity extends Activity {
                 try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.SIZE},null,null,null)){
                     if(c!=null&&c.moveToFirst()&&!c.isNull(0))size=c.getLong(0);
                 }
-                if(size>100L*1048576L)throw new IOException("Select one .pte under 100 MiB, not a ZIP. File is "+(size/1048576L)+" MiB.");
+                if(size>512L*1048576L)throw new IOException("Select one .pte under 512 MiB, not a ZIP. File is "+(size/1048576L)+" MiB.");
                 if(size>0 && dir.getUsableSpace()<size+32L*1048576L)throw new IOException("Insufficient free storage for .pte cache");
                 File temporary=new File(dir,"anima-projection.part");
                 long copied=0;
@@ -900,7 +900,7 @@ public class MainActivity extends Activity {
                     int n;
                     while((n=input.read(buffer))>=0){
                         copied+=n;
-                        if(copied>100L*1048576L)throw new IOException("Unexpectedly large .pte file");
+                        if(copied>512L*1048576L)throw new IOException("Unexpectedly large .pte file");
                         output.write(buffer,0,n);
                     }
                     output.getFD().sync();

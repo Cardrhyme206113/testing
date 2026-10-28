@@ -74,13 +74,13 @@ public final class NpuPteTest {
         return report.toString();
     }
 
-    /** Execute one real 1024-token A16W4 transformer block in disposable process.
+    /** Execute one real 1024-token A16W16/A16W8/A16W4 block in disposable process.
      * Six inputs match compile_transformer_blocks.py exactly.
      * A successful forward is not, by itself, proof every graph op was NPU-delegated.
      */
     private static String runTransformerBlock(File modelFile, boolean backendFirst) {
         long start = System.nanoTime();
-        StringBuilder report = new StringBuilder("ANIMA_REAL_DIT_BLOCK_A16W4_TEST\n");
+        StringBuilder report = new StringBuilder("ANIMA_REAL_DIT_BLOCK_MIXED_PRECISION_TEST\n");
         report.append("model_bytes=").append(modelFile.length()).append("\n");
         report.append("inputs=x[1,1024,2048],context[1,512,1024],step[1,2048],");
         report.append("temb[1,6144],cos[1024,128],sin[1024,128] FP32\n");

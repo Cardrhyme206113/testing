@@ -32,7 +32,8 @@ import org.pytorch.executorch.Tensor;
 /**
  * Android-side half of the Anima native/Neuron hybrid.
  * Input vectors are the actual ggml graph-cut outputs from the existing Anima
- * conditioner. Only the 28 genuine A16W4 diffusion transformer PTEs run here.
+ * conditioner. The 28 transformer PTEs may be A16W16, A16W8 or A16W4,
+ * individually selected from an unambiguous, complete model directory.
  * All other model operations remain in stable-diffusion.cpp.
  *
  * This interface is fixed at 512x512 / 1024 spatial tokens. On any mismatch
@@ -41,8 +42,10 @@ import org.pytorch.executorch.Tensor;
 final class NpuDiTBackend implements AutoCloseable {
     static final int BLOCKS = 28;
     private static final int TOKENS = 1024, WIDTH = 2048, CTX_TOKENS = 512, CTX_WIDTH = 1024;
-    private static final long MAX_PTE_BYTES = 100L * 1024L * 1024L;
-    private static final int MAX_OPEN_MODULES = 4;
+    // A16W16 PTEs are much larger than the former 100 MiB INT4 ceiling.
+    private static final long MAX_PTE_BYTES = 512L * 1024L * 1024L;
+    private static final int MAX_OPEN_MODULES = 2;
+    private static final String[] PRECISIONS = {"a16w16", "a16w8", "a16w4"};
     private final File[] files = new File[BLOCKS];
     private final Module[] opened = new Module[BLOCKS];
     private final ArrayDeque<Integer> lru = new ArrayDeque<>();
@@ -153,15 +156,15 @@ final class NpuDiTBackend implements AutoCloseable {
         }
     }
 
-    static String filename(int i) {
-        return String.format(Locale.US, "anima_block_%02d_1024_mt6989_a16w4.pte", i);
+    static String filename(int i, String precision) {
+        return String.format(Locale.US, "anima_block_%02d_1024_mt6989_%s.pte", i, precision);
     }
 
     void prepare(Context context, Uri folder, boolean refreshAll, java.util.function.Consumer<String> onStatus)
             throws IOException {
         if (ready) throw new IllegalStateException("NPU model directory already prepared");
         appContext = context.getApplicationContext();
-        if (folder == null) throw new IOException("Select the directory containing all 28 A16W4 PTE files.");
+        if (folder == null) throw new IOException("Select the directory containing all 28 transformer PTE files.");
         ContentResolver resolver = context.getContentResolver();
         String treeId = DocumentsContract.getTreeDocumentId(folder);
         Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(folder, treeId);
@@ -181,20 +184,43 @@ final class NpuDiTBackend implements AutoCloseable {
                 sourceSizes.put(name, cursor.isNull(3) ? -1L : cursor.getLong(3));
             }
         }
+        // Do not silently choose an INT4 file when an A16W16 file is also
+        // present. Mixed precision is allowed; ambiguous blocks are not.
+        String[] selectedNames = new String[BLOCKS];
+        int wide = 0, medium = 0, narrow = 0;
+        for (int i = 0; i < BLOCKS; i++) {
+            for (String precision : PRECISIONS) {
+                String candidate = filename(i, precision);
+                if (!sources.containsKey(candidate)) continue;
+                if (selectedNames[i] != null) {
+                    throw new IOException("Ambiguous block " + i + ": both "
+                            + selectedNames[i] + " and " + candidate
+                            + " exist. Use a clean export folder containing one PTE per block.");
+                }
+                selectedNames[i] = candidate;
+                if ("a16w16".equals(precision)) wide++;
+                else if ("a16w8".equals(precision)) medium++;
+                else narrow++;
+            }
+            if (selectedNames[i] == null) {
+                throw new IOException("Missing transformer block " + i
+                        + ". Expected a16w16, a16w8 or a16w4 at 1024 tokens / MT6989.");
+            }
+        }
         File cache = new File(context.getFilesDir(), "npu-dit-512");
         if (!cache.isDirectory() && !cache.mkdirs()) throw new IOException("Cannot create NPU staging directory");
         long neededBytes = 0;
         for (int i = 0; i < BLOCKS; i++) {
-            String name = filename(i);
+            String name = selectedNames[i];
             Long length = sourceSizes.get(name);
-            if (!sources.containsKey(name)) throw new IOException("Missing " + name
-                + ". Select the unzipped out-512 directory containing all 28 transformer files.");
             if (length != null && length >= 0 && (length < 10000 || length > MAX_PTE_BYTES)) {
                 throw new IOException("Invalid PTE size for " + name + ": " + length);
             }
             File target = new File(cache, name);
             if (refreshAll || i == 0 || !target.isFile() || (length != null && length >= 0 && target.length() != length)) {
-                neededBytes += length != null && length >= 0 ? length : MAX_PTE_BYTES;
+                // Unknown SAF document sizes are checked while copying;
+                // don't reserve a fictitious 512 MiB per block up front.
+                neededBytes += length != null && length >= 0 ? length : 0;
             }
         }
         if (cache.getUsableSpace() < neededBytes + 128L * 1024L * 1024L) {
@@ -202,7 +228,7 @@ final class NpuDiTBackend implements AutoCloseable {
                 + ((neededBytes / 1048576L) + 128) + " MiB free.");
         }
         for (int i = 0; i < BLOCKS; i++) {
-            String name = filename(i);
+            String name = selectedNames[i];
             long length = sourceSizes.get(name);
             File target = new File(cache, name);
             if (refreshAll || i == 0 || !target.isFile() || (length >= 0 && target.length() != length)) {
@@ -233,7 +259,8 @@ final class NpuDiTBackend implements AutoCloseable {
         // The already-tested v0.6.8 instrumented backend is bundled with the APK.
         System.loadLibrary("neuron_backend");
         ready = true;
-        onStatus.accept("All 28 A16W4 models staged; hybrid NPU path ready.");
+        onStatus.accept("28 NPU blocks staged: " + wide + " A16W16 / "
+                + medium + " A16W8 / " + narrow + " A16W4. Ready for hardware validation.");
     }
 
     synchronized float[] forward(int index, float[] x, float[] context, float[] step, float[] temb) {

@@ -1,5 +1,24 @@
 # Anima Pocket — NPU transformer operation feasibility / v0.5.1
 
+### v0.6.13: 16-bit / selective INT4 Neuropilot PTE directory support
+
+The 512×512 hybrid loader now accepts exactly one compiled transformer PTE
+per block in a selected directory. The recognized suffixes are `a16w16`,
+`a16w8`, and `a16w4`, so all-A16W16 or a selective INT4 plan can be tested
+without recompiling the APK each time. If two precision variants for the same
+block are present, loading **fails** instead of guessing. Use a clean folder.
+
+A16W16 files are larger than the former 100 MiB INT4 limit; staging now
+accepts up to 512 MiB per file and keeps at most two ExecuTorch modules open.
+The model chooser validates names and sizes before attempting to run them.
+No native media engine or PTE ABI changed, and no new PTEs are bundled.
+
+**Unverified:** accepting A16W16 file names does NOT prove that an A16W16
+model was correctly compiled, delegated or executed on MT6989. Use the
+single-PTE hardware test first, then confirm all-block output parity on the
+device. A16W16 is 16-bit *integer*, not floating-point FP16. Per-block mixed
+precision must be validated with actual image comparisons before use.
+
 Experimental offline Anima image generation for Android ARM64 using stable-diffusion.cpp.
 
 ### Required files (not bundled in APK)
