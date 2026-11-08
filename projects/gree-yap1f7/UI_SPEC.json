@@ -1,0 +1,175 @@
+{
+  "artifact": "Gree YAP1F7 fullscreen phone variant",
+  "goal": "Fit a 1:2 portrait phone, retain the physical controls and native bridge.",
+  "remote_model": "Gree YAP1F7 (back label confirmed)",
+  "air_conditioner": {
+    "brand": "Gree",
+    "type": "wall-mounted split AC",
+    "approx_capacity_BTU": 22000,
+    "indoor_unit_model": "unknown"
+  },
+  "platform": {
+    "target": "Android",
+    "has_ir_emitter_required": true,
+    "transport": "local infrared",
+    "UI_technology": "HTML + inline SVG + CSS + JS rendered inside Android WebView",
+    "native_language": "Kotlin",
+    "offline": true
+  },
+  "reference_priority": [
+    "references/Gree_1x2_preview.png",
+    "references/YAP1F7_original_front.jpg",
+    "references/YAP1F7_original_back_model_label.jpg"
+  ],
+  "files": {
+    "edit": "editable_ui/index.html",
+    "sync_to_android": "android_project/app/src/main/assets/index.html",
+    "ir_bridge": "android_project/app/src/main/java/com/example/greeyap1f7/MainActivity.kt",
+    "candidate_encoder": "android_project/app/src/main/java/com/example/greeyap1f7/GreeEncoder.kt"
+  },
+  "visual": {
+    "orientation": "portrait",
+    "style": "Fullscreen tactile remote",
+    "body": "Edge-to-edge pale molded plastic",
+    "lcd": "gray-green nonbacklit segmented LCD with thin gridlines",
+    "button_labels": "near-black narrow sans-serif",
+    "background": "Pale gray",
+    "accent": "LIGHT key muted yellow-green",
+    "initial_display": {
+      "power": true,
+      "mode": "Heat",
+      "temperature_c": 30,
+      "fan_bars_visual": 5,
+      "fan_label": "OPER",
+      "clock": "12:08"
+    },
+    "viewBox": "0 0 400 800",
+    "lcd_active_opacity": 1,
+    "lcd_inactive_opacity": 0.3,
+    "power_key_position": "Right of control ring"
+  },
+  "controls": [
+    {
+      "key": "power",
+      "label": "ON/OFF",
+      "row": "under-LCD"
+    },
+    {
+      "key": "up",
+      "label": "\u25b2 temperature up",
+      "row": "control ring top"
+    },
+    {
+      "key": "down",
+      "label": "\u25bc temperature down",
+      "row": "control ring bottom"
+    },
+    {
+      "key": "turbo",
+      "label": "TURBO",
+      "row": "control ring left"
+    },
+    {
+      "key": "fan",
+      "label": "FAN",
+      "row": "control ring right"
+    },
+    {
+      "key": "mode",
+      "label": "MODE",
+      "row": "control ring center"
+    },
+    {
+      "key": "swingH",
+      "label": "horizontal swing icon",
+      "row": "lower 2-key #1 left"
+    },
+    {
+      "key": "swingV",
+      "label": "vertical swing icon",
+      "row": "lower 2-key #1 right"
+    },
+    {
+      "key": "ifeel",
+      "label": "I FEEL",
+      "row": "lower 2-key #2 left"
+    },
+    {
+      "key": "timer",
+      "label": "T-ON | T-OFF",
+      "row": "lower 2-key #2 right"
+    },
+    {
+      "key": "health",
+      "label": "health / air pictograms",
+      "row": "lower 3-key #1 left",
+      "unverified": true
+    },
+    {
+      "key": "tempDisplay",
+      "label": "TEMP",
+      "row": "lower 3-key #1 center"
+    },
+    {
+      "key": "clock",
+      "label": "CLOCK",
+      "row": "lower 3-key #1 right",
+      "ui_only": true
+    },
+    {
+      "key": "light",
+      "label": "LIGHT",
+      "row": "lower 3-key #2 left",
+      "accent": true
+    },
+    {
+      "key": "wifi",
+      "label": "WiFi",
+      "row": "lower 3-key #2 center"
+    },
+    {
+      "key": "sleep",
+      "label": "SLEEP",
+      "row": "lower 3-key #2 right"
+    }
+  ],
+  "state_contract": {
+    "power": "boolean",
+    "temp": "integer 16..30",
+    "mode": "integer 0 Auto 1 Cool 2 Dry 3 Fan 4 Heat",
+    "fan": "integer 0 Auto, 1..3 levels",
+    "turbo": "boolean",
+    "sleep": "boolean",
+    "light": "boolean",
+    "wifi": "boolean",
+    "ifeel": "boolean",
+    "swingV": "integer",
+    "swingH": "integer",
+    "displayTemp": "integer",
+    "timerOff": "minutes",
+    "clock": "HH:MM"
+  },
+  "bridge": {
+    "send": "Android.send(JSON.stringify({...state,key}))",
+    "cycle_variant": "Android.cycleModel() via GREE logo long-press",
+    "callback": "window.irResponse(message,ok)"
+  },
+  "caveats": [
+    "YAP1F7 IR protocol variant unverified on hardware",
+    "current IR encoder is a candidate 8-byte 38 kHz implementation",
+    "fan LCD five bars vs IR 3 nominal fan speeds",
+    "timer controls OFF countdown only",
+    "clock button changes UI only",
+    "health / air key not mapped to confirmed IR command",
+    "IR is one way, app state not synchronized to AC",
+    "no confirmed APK build/test"
+  ],
+  "nonnegotiables": [
+    "Preserve control order and labels in the 1:2 layout",
+    "Improve existing HTML/SVG instead of switching to generic remote UI",
+    "Preserve Android bridge/state keys",
+    "No misleading compatibility claims",
+    "Keep all buttons tappable",
+    "Responsive portrait layout"
+  ]
+}
