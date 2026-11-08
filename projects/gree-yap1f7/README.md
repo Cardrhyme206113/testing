@@ -33,3 +33,8 @@ Upload this directory as the repository root and push to `main`. Open **Actions 
 3. Check temperature, mode, fan and swing; if neither variant works, capture the original YAP1F7's IR signal with an ESP32/IR receiver or logic analyzer to identify the correct encoding.
 
 Sources: [Gree IR implementation](https://github.com/crankyoldgit/IRremoteESP8266/blob/master/src/ir_Gree.cpp) · [Gree protocol bitfields](https://github.com/crankyoldgit/IRremoteESP8266/blob/master/src/ir_Gree.h) · [Android IR manager](https://developer.android.com/reference/android/hardware/ConsumerIrManager).
+
+## Adaptive phone screen and startup behavior
+
+- The SVG control geometry remains 1:2; the casing finish is now painted as a continuous full-screen gradient for taller and wider phones, with no hard horizontal or vertical panel seam.
+- Every app launch defaults to **Power OFF** (the last temperature, mode, and other settings remain cached). Launching does **not** send an IR command.

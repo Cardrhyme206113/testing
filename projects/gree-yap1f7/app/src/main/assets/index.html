@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Gree YAP1F7 · Portrait</title><style>*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;height:100%;overflow:hidden;background:#e6e7e1;font-family:Arial,sans-serif}main{height:100%;height:100dvh;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);display:grid;place-items:center;background:linear-gradient(90deg,#d4d6cf,#e6e7e1 18%,#e6e7e1 82%,#d4d6cf);position:relative}#remote{width:100%;height:100%;display:block;user-select:none;touch-action:manipulation}svg text{pointer-events:none}.button{cursor:pointer;outline:none}.button:active .face{filter:brightness(.86)}.button:focus-visible .face{stroke:#46758c;stroke-width:3}.toast{position:absolute;left:50%;bottom:max(10px,env(safe-area-inset-bottom));transform:translateX(-50%);color:white;background:#262c27ed;border-radius:9px;padding:10px 14px;font:13px/1.3 system-ui;text-align:center;width:max-content;max-width:90%;opacity:0;pointer-events:none}.toast.show{opacity:1}[role="button"].demo-feature{pointer-events:bounding-box;cursor:pointer}.demo-feature:focus-visible{outline:1px solid #465449}#clockLCD[data-powered="false"]>path{opacity:.3}</style></head><body><main><svg xmlns="http://www.w3.org/2000/svg" id="remote" viewBox="0 0 400 800" role="group" aria-label="Gree YAP1F7 remote">
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Gree YAP1F7 · Portrait</title><style>*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;height:100%;overflow:hidden;background:#e6e7e1;font-family:Arial,sans-serif}main{height:100%;height:100dvh;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);display:grid;place-items:center;background:#e6e7e1;position:relative}#remote{width:100%;height:100%;display:block;user-select:none;touch-action:manipulation}svg text{pointer-events:none}.button{cursor:pointer;outline:none}.button:active .face{filter:brightness(.86)}.button:focus-visible .face{stroke:#46758c;stroke-width:3}.toast{position:absolute;left:50%;bottom:max(10px,env(safe-area-inset-bottom));transform:translateX(-50%);color:white;background:#262c27ed;border-radius:9px;padding:10px 14px;font:13px/1.3 system-ui;text-align:center;width:max-content;max-width:90%;opacity:0;pointer-events:none}.toast.show{opacity:1}[role="button"].demo-feature{pointer-events:bounding-box;cursor:pointer}.demo-feature:focus-visible{outline:1px solid #465449}#clockLCD[data-powered="false"]>path{opacity:.3}</style></head><body><main><svg xmlns="http://www.w3.org/2000/svg" id="remote" viewBox="0 0 400 800" role="group" aria-label="Gree YAP1F7 remote">
 <defs>
 <linearGradient id="body" x2="1" y2="0"><stop offset="0" stop-color="#bcbeb9"/><stop offset="0.025" stop-color="#e0e1dc"/><stop offset="0.09" stop-color="#eeeee9"/><stop offset="0.48" stop-color="#e6e7e1"/><stop offset="0.92" stop-color="#dcded7"/><stop offset="0.985" stop-color="#ced0c9"/><stop offset="1" stop-color="#a8aaa4"/></linearGradient>
 <linearGradient id="key" x2="0" y2="1"><stop offset="0" stop-color="#fffef6"/><stop offset="0.12" stop-color="#f5f4ed"/><stop offset="0.8" stop-color="#e8e7df"/><stop offset="1" stop-color="#cfcec7"/></linearGradient>
@@ -10,7 +10,7 @@
   <g id="snow" fill="none" stroke="#26312e" stroke-width="2.2" stroke-linecap="round"><path d="M0 -15V15M-13 -7.5L13 7.5M-13 7.5L13 -7.5 M-4 -11L0 -8L4 -11 M-4 11L0 8L4 11"/></g>
   <g id="fan" fill="none" stroke="#26312e" stroke-width="1.8"><circle r="10.5"/><path d="M0 -1C-14 -18 10 -17 5 -4 C3 0 1 0 0 -1 Z M1 1C18 -7 18 13 5 8 C1 7 0 3 1 1 Z M-1 1C-4 20 -19 6 -8 -3 C-5 -5 -2 -2 -1 1Z" fill="#29332e" stroke="none"/></g>
 
-</defs><rect width="400" height="800" fill="url(#body)"/>
+</defs><!-- Full-bleed responsive case finish is drawn by main, not boxed to the 1:2 SVG. -->
 <g id="logo"><g transform="translate(149 17) scale(.93)" fill="#575c59" aria-hidden="true">
 <path d="M23.8 10.2C22.7 4.2 18.1 1.3 12.8 1.3 6 1.3.4 6.8.4 13.4c0 4.1 2.3 8.1 5.7 10.1l3.6-10.2c.7-2 2-3.1 4.3-3.1Z M24 12.2H15c-1.8 0-2.6.8-3.2 2.4l-3.4 9.9c1.3.5 2.8.8 4.2.8 6.7 0 12-5.7 11.4-13.1Z"/>
 <g transform="translate(34 5) skewX(-14)">
@@ -80,10 +80,37 @@
 </svg><div id="toast" class="toast" role="status"></div></main><script>
 'use strict';
 const MODES=[{name:'Auto',id:0},{name:'Cool',id:1},{name:'Dry',id:2},{name:'Fan',id:3},{name:'Heat',id:4}];
-const DEFAULT={power:true,temp:30,mode:4,fan:3,turbo:false,sleep:false,light:true,wifi:false,ifeel:false,swingV:1,swingH:0,displayTemp:0,timerOff:0,clock:'12:08'};
+const DEFAULT={power:false,temp:30,mode:4,fan:3,turbo:false,sleep:false,light:true,wifi:false,ifeel:false,swingV:1,swingH:0,displayTemp:0,timerOff:0,clock:'12:08'};
 let state={...DEFAULT};
 try {const saved=JSON.parse(localStorage.getItem('gree-yap1f7-state')||'{}'); state={...state,...saved};}catch(e){}
+// Each new app session starts OFF, regardless of the previously cached power state.
+// Other remembered settings are kept. No IR command is sent on startup.
+state.power=false;
 const $=x=>document.getElementById(x);
+// Blend the remote's plastic casing across unused viewport space rather than
+// letterboxing a solid 400 x 800 rectangle on non-1:2 screens.
+function fitBodyGradient(){
+  const stage=document.querySelector('main');
+  const stageRect=stage.getBoundingClientRect();
+  const bounds=document.getElementById('remote').getBoundingClientRect();
+  if(!bounds.width||!bounds.height)return;
+  const artWidth=Math.min(bounds.width,bounds.height/2);
+  const left=bounds.left-stageRect.left+(bounds.width-artWidth)/2;
+  const right=left+artWidth;
+  const swatches=[
+    [0,'#bcbeb9'],[.025,'#e0e1dc'],[.09,'#eeeee9'],
+    [.48,'#e6e7e1'],[.92,'#dcded7'],[.985,'#ced0c9'],[1,'#a8aaa4']
+  ];
+  const gradient=[];
+  if(left>0)gradient.push('#e6e7e1 0px');
+  for(const [fraction,color] of swatches)
+    gradient.push(`${color} ${(left+fraction*artWidth).toFixed(2)}px`);
+  if(right<stageRect.width)gradient.push(`#e6e7e1 ${stageRect.width.toFixed(2)}px`);
+  stage.style.backgroundImage=`linear-gradient(to right,${gradient.join(',')})`;
+}
+window.addEventListener('resize',fitBodyGradient,{passive:true});
+fitBodyGradient();
+
 const SEGS={0:'abcdef',1:'bc',2:'abged',3:'abgcd',4:'fgbc',5:'afgcd',6:'afgecd',7:'abc',8:'abcdefg',9:'abfgcd'};
 // Dark active LCD segments, faint inactive outlines, sloped to resemble original segmented glass.
 function drawDigit(n, x, lit=true) {
