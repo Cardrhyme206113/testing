@@ -29,10 +29,11 @@ jobs:
           packages: 'platform-tools'
       - name: Install SDK 35
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
-      - name: Gradle 8.10.2
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.10.2'
+      - name: Install Gradle 8.10.2 from direct CDN
+        run: |
+          curl --fail --location --retry 6 --retry-all-errors --retry-delay 3 --connect-timeout 30 'https://downloads.gradle.org/distributions/gradle-8.10.2-bin.zip' -o "$RUNNER_TEMP/gradle-8.10.2.zip"
+          unzip -q "$RUNNER_TEMP/gradle-8.10.2.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.10.2/bin" >> "$GITHUB_PATH"
       - name: Test & compile APK
         run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
       - name: Upload installable APK
