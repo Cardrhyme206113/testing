@@ -1,0 +1,19 @@
+{
+  "format": "dreamlite-onnx-mobile-v1",
+  "text_encoder": "te_fp16.onnx",
+  "unet": "unet_masked.onnx",
+  "vae_decoder": "vae_decoder.onnx",
+  "tokenizer": "tokenizer.json",
+  "prefix": "[Generate]: ",
+  "max_tokens": 200,
+  "latent_channels": 4,
+  "latent_downsample": 8,
+  "vae_range": "minus_one_to_one",
+  "scheduler": "flow_euler",
+  "sample_input": "sample",
+  "timestep_input": "timestep",
+  "embedding_input": "encoder_hidden_states",
+  "ids_input": "input_ids",
+  "mask_input": "attention_mask",
+  "vae_input": "latent_sample"
+}
