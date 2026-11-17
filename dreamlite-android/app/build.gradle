@@ -1,0 +1,25 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'io.cardrhyme.dreamlitemtk'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'io.cardrhyme.dreamlitemtk'
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0-dev'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildTypes {
+        release { minifyEnabled false }
+        debug { minifyEnabled false }
+    }
+    packaging { jniLibs { useLegacyPackaging = false } }
+}
+dependencies {
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.27.0'
+}
