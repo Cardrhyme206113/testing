@@ -7,6 +7,7 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,14 +16,15 @@ import java.util.regex.Pattern;
 
 /**
  * Local byte-level BPE tokenizer for Qwen3 tokenizer.json exports.
- * No network calls. Does not handle image/video tokens (T2I only).
- * Exact Qwen3-VL chat-template packing is export-dependent and belongs in model-pack.json.
+ * Recognizes explicit special tokens in templates. No image/video processing.
  */
 public final class QwenTokenizer {
     private static final Pattern PIECES = Pattern.compile(
         "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+");
     private final Map<String, Integer> vocab = new HashMap<>();
     private final Map<String, Integer> merges = new HashMap<>();
+    private final Map<String, Integer> special = new HashMap<>();
+    private final List<String> specialKeys = new ArrayList<>();
     private final String[] byteToUnicode = new String[256];
     private final int unknown;
 
@@ -44,8 +46,15 @@ public final class QwenTokenizer {
         JSONArray added = root.optJSONArray("added_tokens");
         if (added != null) for (int i = 0; i < added.length(); ++i) {
             JSONObject a = added.getJSONObject(i);
-            vocab.put(a.getString("content"), a.getInt("id"));
+            String token = a.getString("content");
+            int id = a.getInt("id");
+            vocab.put(token, id);
+            if (a.optBoolean("special", false)) {
+                special.put(token, id);
+                specialKeys.add(token);
+            }
         }
+        specialKeys.sort(Comparator.comparingInt(String::length).reversed());
         unknown = vocab.getOrDefault("<|endoftext|>", 0);
         makeByteMap();
     }
@@ -64,6 +73,25 @@ public final class QwenTokenizer {
 
     public long[] tokenize(String text, int maxTokens, int padId) {
         List<Integer> out = new ArrayList<>();
+        int pos = 0;
+        while (pos < text.length() && out.size() < maxTokens) {
+            int nearest = text.length();
+            String matched = null;
+            for (String token : specialKeys) {
+                int i = text.indexOf(token, pos);
+                if (i >= 0 && i < nearest) { nearest = i; matched = token; }
+            }
+            appendRegular(text.substring(pos, nearest), out, maxTokens);
+            if (matched == null || out.size() >= maxTokens) break;
+            out.add(special.get(matched));
+            pos = nearest + matched.length();
+        }
+        long[] result = new long[maxTokens];
+        for (int i = 0; i < maxTokens; i++) result[i] = i < out.size() ? out.get(i) : padId;
+        return result;
+    }
+
+    private void appendRegular(String text, List<Integer> out, int maxTokens) {
         Matcher matcher = PIECES.matcher(text);
         while (matcher.find() && out.size() < maxTokens) {
             byte[] bytes = matcher.group().getBytes(StandardCharsets.UTF_8);
@@ -84,8 +112,5 @@ public final class QwenTokenizer {
                 if (out.size() == maxTokens) break;
             }
         }
-        long[] result = new long[maxTokens];
-        for (int i = 0; i < maxTokens; i++) result[i] = i < out.size() ? out.get(i) : padId;
-        return result;
     }
 }
