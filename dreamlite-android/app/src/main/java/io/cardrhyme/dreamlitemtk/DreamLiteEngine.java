@@ -297,11 +297,32 @@ public final class DreamLiteEngine {
         return (short) (sign | (exp << 10) | ((frac + 0x1000) >> 13));
     }
     private static float[] floats(OnnxTensor tensor) {
+        TensorInfo info = (TensorInfo) tensor.getInfo();
+        if (info.type == OnnxJavaType.FLOAT16) {
+            ShortBuffer buffer = tensor.getShortBuffer();
+            if (buffer == null) throw new IllegalArgumentException("Could not read FP16 ONNX output");
+            float[] out = new float[buffer.remaining()];
+            for (int i = 0; i < out.length; i++) out[i] = fp16ToFloat(buffer.get());
+            return out;
+        }
         FloatBuffer buffer = tensor.getFloatBuffer();
-        if (buffer == null) throw new IllegalArgumentException("ONNX output is not floating point");
+        if (buffer == null) throw new IllegalArgumentException("ONNX output is not floating point: " + info.type);
         float[] out = new float[buffer.remaining()];
         buffer.get(out);
         return out;
+    }
+    private static float fp16ToFloat(short value) {
+        int bits = value & 0xffff;
+        int sign = (bits & 0x8000) << 16;
+        int exponent = (bits >>> 10) & 31;
+        int mantissa = bits & 1023;
+        if (exponent == 0) {
+            if (mantissa == 0) return Float.intBitsToFloat(sign);
+            float subnormal = (float)(mantissa * Math.scalb(1.0, -24));
+            return (bits & 0x8000) == 0 ? subnormal : -subnormal;
+        }
+        if (exponent == 31) return Float.intBitsToFloat(sign | 0x7f800000 | (mantissa << 13));
+        return Float.intBitsToFloat(sign | ((exponent + 112) << 23) | (mantissa << 13));
     }
     private static Bitmap toBitmap(float[] data, long[] shape, String range) {
         if (shape.length != 4 || shape[0] != 1 || shape[1] < 3)
