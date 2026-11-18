@@ -236,8 +236,8 @@ public final class MainActivity extends Activity {
             config.put("embedding_input","encoder_hidden_states");
             config.put("ids_input","input_ids");
             config.put("mask_input","attention_mask");
-            Files.writeString(new File(folder,"model-pack.json").toPath(),
-                config.toString(2), StandardCharsets.UTF_8);
+            Files.write(new File(folder,"model-pack.json").toPath(),
+                config.toString(2).getBytes(StandardCharsets.UTF_8));
         }
         ModelPack pack = new ModelPack(folder);
         show("Imported " + copied + " files; model contract present.\n" +
