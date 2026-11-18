@@ -6,6 +6,12 @@ on:
     paths:
       - 'dreamlite-android/**'
       - '.github/workflows/dreamlite-mediatek-apk.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'dreamlite-android/**'
+      - '.github/workflows/dreamlite-mediatek-apk.yml'
   workflow_dispatch:
 permissions:
   contents: read
