@@ -29,10 +29,10 @@ public final class QwenTokenizer {
     private final int unknown;
 
     public QwenTokenizer(File file) throws Exception {
-        JSONObject root = new JSONObject(Files.readString(file.toPath(), StandardCharsets.UTF_8));
+        JSONObject root = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
         JSONObject model = root.getJSONObject("model");
         JSONObject v = model.getJSONObject("vocab");
-        for (String key : v.keySet()) vocab.put(key, v.getInt(key));
+        for (java.util.Iterator<String> it = v.keys(); it.hasNext(); ) { String key = it.next(); vocab.put(key, v.getInt(key)); }
         JSONArray mergeList = model.getJSONArray("merges");
         for (int i = 0; i < mergeList.length(); ++i) {
             Object raw = mergeList.get(i);
