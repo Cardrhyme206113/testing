@@ -15,7 +15,7 @@ public final class ModelPack {
         File manifest = new File(dir, "model-pack.json");
         if (!manifest.isFile()) throw new IllegalArgumentException(
             "Missing model-pack.json. The pack must describe its ONNX I/O contract.");
-        config = new JSONObject(Files.readString(manifest.toPath(), StandardCharsets.UTF_8));
+        config = new JSONObject(new String(Files.readAllBytes(manifest.toPath()), StandardCharsets.UTF_8));
         if (!"dreamlite-onnx-mobile-v1".equals(config.optString("format")))
             throw new IllegalArgumentException("Unsupported pack format. Expected dreamlite-onnx-mobile-v1");
         for (String name : new String[]{"text_encoder","unet","vae_decoder","tokenizer"}) getFile(name);
