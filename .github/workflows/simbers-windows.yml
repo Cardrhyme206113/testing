@@ -1,0 +1,40 @@
+name: Compile Simbers Native Windows EXE
+on:
+  workflow_dispatch:
+  push:
+    branches: [simbers-native]
+    paths:
+      - Cargo.toml
+      - src/**
+      - assets/**
+      - .github/workflows/simbers-windows.yml
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile native EXE
+        shell: pwsh
+        run: |
+          cargo build --release 2>&1 | Tee-Object -FilePath build-log.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/simbers-native.exe dist/SimbersNative.exe
+      - name: Upload EXE
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimbersNative-Windows
+          path: dist/SimbersNative.exe
+          if-no-files-found: error
+      - name: Upload compiler log if build fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimbersNative-BuildLog
+          path: build-log.txt
+          if-no-files-found: ignore
